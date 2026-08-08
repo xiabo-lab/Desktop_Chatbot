@@ -1,0 +1,33 @@
+[Desktop Entry]
+Type=Application
+Name=AI Assistant
+GenericName=Voice assistant
+Comment=Open the AI Assistant screen
+Icon=aipi5
+
+# Starts the *service*, not the browser.
+#
+# The same rule Kodama-Lite's own README insists on, for the same reason. A
+# desktop entry that ran `scripts/aipi5-ui.sh` directly would put a second
+# Chromium on the display behind systemd's back — its own window, sharing the
+# profile directory with the managed one — and then `systemctl --user restart
+# aipi5` would tear down one of the two and leave the other. Keeping one launch
+# path is what makes stop and restart behave predictably.
+#
+# Starting an already-running unit is a no-op, so tapping this when the screen
+# is already up costs nothing. It is really a *re*-start button: the way back
+# after `systemctl --user stop aipi5-ui`, which is the only way out of a
+# full-screen window on a display with no keyboard.
+Exec=systemctl --user start aipi5-ui.service
+Terminal=false
+
+# Matches the `--class=aipi5-ui` the launcher passes to Chromium, so the
+# taskbar groups the window under this icon instead of under a second,
+# anonymous entry. It is also the identifier a labwc window rule would use.
+StartupWMClass=aipi5-ui
+
+# One main category only. `desktop-file-validate` warns that listing two
+# ("Utility;AudioVideo;") can put the launcher in the applications menu twice,
+# which on a touchscreen is two identical icons doing the same thing.
+Categories=Utility;
+Keywords=assistant;voice;ai;

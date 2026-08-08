@@ -1,0 +1,42 @@
+[Unit]
+Description=AIPI5 touchscreen UI (Chromium kiosk)
+
+# The page is served by the assistant, so there is nothing to show until it is
+# up. `Requires=` rather than `Wants=`: a browser pointed at a server that is
+# not running shows Chromium's "site can't be reached", and an --app window has
+# no address bar to get off it.
+Requires=aipi5.service
+After=aipi5.service
+
+# ...and `PartOf=` as well, which is the half that was missing and cost a
+# display. `Requires=` propagates a *stop* to this unit but not a *restart*, so
+# `systemctl --user restart aipi5` — which is the documented way to pick up a
+# code change, and is run constantly during development — stopped the browser
+# and never started it again. The assistant came back talking to an empty
+# screen, and the only sign was a unit sitting `inactive (success)`, which
+# looks deliberate.
+#
+# `PartOf=` propagates restart as well as stop, so the screen now follows the
+# assistant in both directions.
+PartOf=aipi5.service
+
+[Service]
+Type=simple
+Environment=WAYLAND_DISPLAY=wayland-0
+ExecStartPre=/bin/sh -c 'until [ -e "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; do sleep 1; done'
+ExecStart=%h/AIPI5/scripts/aipi5-ui.sh
+
+# `always`, not `on-failure`. Kodama-Lite's unit deliberately uses on-failure
+# because it has a Quit button and a deliberate exit must not be undone — but
+# this window has no Quit: it is full-screen with no titlebar and no binding
+# to close it, so every way it can end is one that should bring it back. A
+# Chromium that exited cleanly because something closed its Wayland surface
+# otherwise leaves the display dark with the unit reporting success.
+#
+# The way out is still `systemctl --user stop aipi5-ui`, which systemd does
+# not restart.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,44 @@
+# AIPI5's own dependencies.
+#
+# Short, because most of what this assistant runs on is AIA's — install AIA's
+# requirements too, into the same virtualenv:
+#
+#     pip install -r ~/AI_Assit/requirements.txt
+#     pip install -r requirements.txt
+#
+# That brings numpy, sounddevice, webrtcvad, vosk, pypinyin, sherpa-onnx and
+# requests, which is the whole of the voice path. Nothing below duplicates any
+# of it.
+
+# The configuration file. The one dependency that is purely this project's.
+PyYAML
+
+# The conversational model. Version 1.x — the client is `openai.OpenAI(...)`
+# and the 0.x module-level API is not compatible with anything in
+# aipi5/llm/client.py.
+openai>=1.0
+
+# Requests is already pulled in by AIA, and is named here because this project
+# uses it directly for the weather and the news feeds. Listing a transitive
+# dependency you import is not redundancy — it is what stops an unrelated
+# change in AIA from breaking this one silently.
+requests
+
+# ── on the Pi, and not from PyPI ──────────────────────────────────────
+#
+# Two things this project needs are Debian packages rather than wheels, and
+# installing them with pip either fails or produces something that does not
+# work against the system libraries:
+#
+#     sudo apt install python3-picamera2      # the camera
+#     sudo apt install hailo-all              # HailoRT, for the AI HAT+ 2
+#
+# Both are optional. Without picamera2 there is no camera and no person
+# detection; without hailo-all, person detection needs `backend: cpu` and the
+# package below.
+#
+# onnxruntime is only needed for that CPU fallback, and is deliberately not a
+# hard requirement — it is 50 MB of wheel for a code path a Pi with an AI HAT+
+# never executes. Install it if you need it:
+#
+#     pip install onnxruntime

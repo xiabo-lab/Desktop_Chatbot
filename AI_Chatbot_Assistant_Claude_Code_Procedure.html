@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Chatbot Assistant — Claude Code Project Implementation Procedure</title>
+<style>
+  body { font-family: Arial, sans-serif; line-height: 1.55; max-width: 1100px; margin: 0 auto; padding: 32px; color: #222; }
+  h1, h2, h3 { line-height: 1.2; }
+  h1 { border-bottom: 3px solid #333; padding-bottom: 12px; }
+  h2 { margin-top: 36px; border-bottom: 1px solid #ccc; padding-bottom: 6px; }
+  h3 { margin-top: 24px; }
+  code, pre { font-family: Consolas, monospace; }
+  code { background: #f3f3f3; padding: 2px 5px; border-radius: 3px; }
+  pre { background: #f6f6f6; padding: 16px; overflow-x: auto; border: 1px solid #ddd; border-radius: 6px; }
+  ul, ol { margin-top: 6px; }
+  .note { background: #fff8dc; border-left: 4px solid #d4a017; padding: 12px 16px; margin: 18px 0; }
+  .important { background: #eef6ff; border-left: 4px solid #2878c8; padding: 12px 16px; margin: 18px 0; }
+</style>
+</head>
+<body>
+
+<h1>AI Chatbot Assistant — Claude Code Project Implementation Procedure</h1>
+
+<h2>1. Project Overview</h2>
+<p>Build a new voice-controlled <strong>AI Chatbot Assistant</strong> for a Raspberry Pi 5.</p>
+<ul>
+<li>Raspberry Pi 5 — 8GB RAM</li>
+<li>Raspberry Pi AI HAT+ 2</li>
+<li>Raspberry Pi Camera Module 3</li>
+<li>Texas Instruments microphone</li>
+<li>Speaker</li>
+<li>Touchscreen: <strong>1280×800</strong></li>
+<li>Network connection</li>
+<li>SSH: <code>fuwenxu@aipi5.local</code></li>
+</ul>
+
+<p>The system combines AIA's voice-assistant architecture, Kodama-Lite's music control, OpenAI GPT-5.6 Terra through API, camera vision, local person detection, weather, local news, and a touchscreen UI.</p>
+
+<h3>Reference Projects</h3>
+<ul>
+<li>AIA: <a href="https://github.com/xiabo-lab/AIA">https://github.com/xiabo-lab/AIA</a></li>
+<li>Kodama-Lite: <a href="https://github.com/xiabo-lab/Kodama-Lite">https://github.com/xiabo-lab/Kodama-Lite</a></li>
+</ul>
+
+<div class="important"><strong>Important:</strong> Do not blindly copy either project. First inspect both repositories, understand their architecture and interfaces, then reuse the appropriate components.</div>
+
+<h2>2. Main Objective</h2>
+<p>Create a voice-controlled AI assistant that can:</p>
+<ol>
+<li>Use the same wake word as AIA.</li>
+<li>Understand English, Mandarin, and Cantonese.</li>
+<li>Have normal conversations with the user.</li>
+<li>Use OpenAI GPT-5.6 Terra through API as the conversational LLM.</li>
+<li>Tell the user current weather for San Jose, CA 95127.</li>
+<li>Provide current local news.</li>
+<li>Tell child-friendly bedtime stories.</li>
+<li>Open Kodama-Lite.</li>
+<li>Use the same voice commands currently supported by AIA/Kodama-Lite.</li>
+<li>Control music through Kodama-Lite.</li>
+<li>Use Raspberry Pi Camera Module 3 to see and describe the user's surroundings.</li>
+<li>Detect whether a person is present using the camera.</li>
+<li>When nobody is present, display a weather/time screensaver.</li>
+<li>Return to the normal UI when a person comes back.</li>
+<li>Automatically start after Raspberry Pi boot.</li>
+</ol>
+
+<h2>3. Important Design Principle</h2>
+<p>Do not build everything as one large Python program. Use a modular architecture.</p>
+<pre>
+Microphone
+    ↓
+Wake Word
+    ↓
+STT
+    ↓
+Command / Intent Router
+    ├── Kodama Commands → Kodama-Lite
+    ├── Weather Tool
+    ├── News Tool
+    ├── Camera / Vision Tool
+    └── General Conversation → GPT-5.6 Terra
+    ↓
+Response / Action
+    ↓
+Piper TTS
+    ↓
+Speaker
+</pre>
+
+<p>Known commands should use deterministic local routing whenever possible. General conversation should go to GPT.</p>
+
+<h2>4. Inspect AIA Before Coding</h2>
+<p>First inspect the AIA repository:</p>
+<p><a href="https://github.com/xiabo-lab/AIA">https://github.com/xiabo-lab/AIA</a></p>
+<p>Pay particular attention to:</p>
+<ul>
+<li>Wake word</li>
+<li>Audio capture</li>
+<li>VAD / endpointing</li>
+<li>STT</li>
+<li>Intent routing</li>
+<li>Kodama-Lite control</li>
+<li>Piper TTS</li>
+<li>Configuration</li>
+<li>Logging</li>
+<li>Systemd startup</li>
+<li>UI architecture</li>
+</ul>
+<p>Use AIA's existing implementations as the baseline instead of creating competing implementations.</p>
+
+<h2>5. Inspect Kodama-Lite Before Coding</h2>
+<p>Inspect:</p>
+<p><a href="https://github.com/xiabo-lab/Kodama-Lite">https://github.com/xiabo-lab/Kodama-Lite</a></p>
+<p>Understand how it starts, communicates, and handles music, search, lyrics, karaoke, volume, shuffle/repeat, like, exit, shutdown, and reboot.</p>
+<p>AIA's existing Kodama integration should be reused rather than replaced with a new communication protocol.</p>
+
+<h2>6. Do Not Break Existing Kodama Commands</h2>
+<p>Retain existing Kodama voice-control behavior, including applicable commands for:</p>
+<ul>
+<li>Play / pause / next / previous / stop</li>
+<li>What's playing</li>
+<li>Song search</li>
+<li>Volume</li>
+<li>Shuffle / repeat</li>
+<li>Like</li>
+<li>Show/search/save lyrics</li>
+<li>Karaoke</li>
+<li>Close Kodama</li>
+<li>Shutdown / reboot</li>
+</ul>
+<p>Verify English and Mandarin commands. Do not duplicate Kodama's internal functionality unnecessarily.</p>
+
+<h2>7. Wake Word</h2>
+<p>Use the <strong>same wake word as AIA</strong>. Do not create a new wake-word system.</p>
+<p>Expected flow:</p>
+<pre>
+Assistant idle
+     ↓
+Wake word detected
+     ↓
+Start recording
+     ↓
+User speaks command
+     ↓
+Endpoint detected
+     ↓
+STT
+</pre>
+<p>The microphone should not continuously send user speech to GPT.</p>
+
+<h2>8. Language Support</h2>
+<p>Support:</p>
+<ul>
+<li>English</li>
+<li>Mandarin</li>
+<li>Cantonese</li>
+</ul>
+<p>Language should be determined per utterance following AIA's architecture. Do not force the user to select a language mode.</p>
+
+<h2>9. STT</h2>
+<p>Reuse AIA's STT architecture as much as possible. Use the existing tested implementation first and benchmark alternatives before replacing it.</p>
+
+<h2>10. TTS</h2>
+<p>Reuse AIA's Piper TTS implementation. The assistant should speak responses appropriately for English, Mandarin, and Cantonese interactions.</p>
+
+<h2>11. OpenAI GPT-5.6 Terra</h2>
+<p>The conversational LLM is <strong>OpenAI GPT-5.6 Terra through API</strong>.</p>
+<pre>
+User Speech
+    ↓
+STT
+    ↓
+Command Router
+    ↓
+OpenAI API
+    ↓
+GPT-5.6 Terra
+    ↓
+Response
+    ↓
+Piper
+    ↓
+Speaker
+</pre>
+<p>Initialize the API client during startup. Do not create a new client for every request. Store credentials securely and never hard-code API keys.</p>
+
+<h2>12. "LLM Loaded to RAM at Boot"</h2>
+<p>Because GPT-5.6 Terra is accessed through an API, it cannot literally be loaded into Raspberry Pi RAM like a local model.</p>
+<p>Interpret the requirement as:</p>
+<ul>
+<li>Initialize the OpenAI API client at boot.</li>
+<li>Initialize persistent HTTP/API resources at boot.</li>
+<li>Load local application resources at boot.</li>
+<li>Keep the API client ready for requests.</li>
+<li>Do not repeatedly initialize expensive resources for every conversation.</li>
+</ul>
+<p>Do not download GPT-5.6 Terra to the Raspberry Pi.</p>
+
+<h2>13. General Conversation</h2>
+<p>The assistant should support normal conversation and reasonable short-term context, including follow-up questions. Do not retain unlimited history; use a configurable context/window limit.</p>
+
+<h2>14. Tool-Based Architecture</h2>
+<p>Use controlled tools/functions such as:</p>
+<pre>
+get_weather()
+get_local_news()
+capture_camera_image()
+describe_camera_image()
+open_kodama()
+execute_kodama_command()
+get_current_time()
+</pre>
+<p>GPT must not directly execute arbitrary shell commands.</p>
+
+<h2>15. Weather</h2>
+<p>Location: <strong>San Jose, CA 95127</strong>.</p>
+<p>Use a current online weather source rather than relying on GPT's static knowledge. Support current conditions and forecast requests. Cache weather data for a short period so the screensaver does not continuously hit the API.</p>
+
+<h2>16. Local News</h2>
+<p>Implement current local news focused on San Jose, Santa Clara County, and Silicon Valley. Retrieve current information online and have GPT summarize the results. Prefer 3–5 concise stories instead of reading entire articles through TTS.</p>
+
+<h2>17. Bedtime Story</h2>
+<p>Generate child-friendly, calm, positive bedtime stories suitable for TTS. Allow the user to specify characters, themes, length, and setting.</p>
+
+<h2>18. Camera</h2>
+<p>Use Raspberry Pi Camera Module 3. Support requests such as "What do you see?", "Describe what the camera sees", and "What's in front of me?"</p>
+<pre>
+Voice command
+    ↓
+Camera capture
+    ↓
+OpenAI vision-capable API
+    ↓
+Description
+    ↓
+TTS
+</pre>
+<p>Do not continuously upload camera frames to OpenAI. Capture/send an image when the user requests visual understanding.</p>
+
+<h2>19. Camera Image Description</h2>
+<ol>
+<li>Capture a new image.</li>
+<li>Do not use an old cached image unless explicitly requested.</li>
+<li>Send the image to the OpenAI vision-capable API.</li>
+<li>Ask for a concise description.</li>
+<li>Return the response through TTS.</li>
+<li>Show the description on the 1280×800 display if appropriate.</li>
+</ol>
+
+<h2>20. Person Detection</h2>
+<p>Use Camera Module 3 for local person detection. This is separate from GPT image understanding.</p>
+<p>Do not continuously send camera images to OpenAI for presence detection. Prefer local detection using the Raspberry Pi AI HAT+ 2 and an appropriate accelerated model.</p>
+
+<h2>21. Person Detection State Machine</h2>
+<p>Use hysteresis/debounce so one missed frame does not immediately change the UI state.</p>
+<pre>
+No person
+    ↓
+Person detected in several consecutive frames
+    ↓
+PERSON_PRESENT
+</pre>
+<pre>
+Person present
+    ↓
+No person detected for several frames/seconds
+    ↓
+PERSON_NOT_PRESENT
+</pre>
+<p>Make thresholds configurable and tune them on the actual Raspberry Pi.</p>
+
+<h2>22. Screen Size</h2>
+<h3>1280 × 800</h3>
+<p>All new UI design must target <strong>1280×800</strong>. Do not use the previous 1920×440 layout.</p>
+
+<h2>23. Main UI</h2>
+<p>Design specifically for a 1280×800 touchscreen. Prioritize functionality over visual polish during the first implementation phase.</p>
+<pre>
+┌────────────────────────────────────────────────────────────┐
+│                    AI ASSISTANT                            │
+│                                                            │
+│             Conversation / status                         │
+│                                                            │
+│                                                            │
+│       [Camera]     [Kodama]     [Weather]                 │
+│                                                            │
+│                 Listening / Thinking                       │
+└────────────────────────────────────────────────────────────┘
+</pre>
+
+<h2>24. Screensaver</h2>
+<p>When nobody is present, eventually transition to a screensaver showing:</p>
+<ul>
+<li>Current local time</li>
+<li>Current San Jose weather</li>
+</ul>
+<p>Use the full 1280×800 screen. Time should update continuously. Weather should refresh periodically, not every second.</p>
+
+<h2>25. Screensaver Entry</h2>
+<pre>
+Person detected
+      ↓
+Normal UI
+      ↓
+No person detected
+      ↓
+Configurable timeout
+      ↓
+Screensaver
+</pre>
+<p>The timeout must be configurable.</p>
+
+<h2>26. Screensaver Exit</h2>
+<pre>
+Screensaver
+     ↓
+Person detected
+     ↓
+Exit screensaver
+     ↓
+Restore normal UI
+</pre>
+<p>Do not require the user to touch the screen to exit.</p>
+
+<h2>27. Kodama Launch</h2>
+<p>The assistant must open Kodama-Lite by voice using the existing application launch mechanism.</p>
+
+<h2>28. Kodama Command Routing</h2>
+<pre>
+                STT
+                 │
+                 ▼
+             ROUTER
+                 │
+       ┌─────────┼─────────┐
+       │         │         │
+       ▼         ▼         ▼
+    Kodama     Tools      Chat
+       │         │         │
+       ▼         ▼         ▼
+   Kodama-Lite Weather   GPT-5.6
+               News
+               Camera
+</pre>
+<p>Known commands should be routed deterministically. General conversational questions should be routed to GPT.</p>
+
+<h2>29. Command Safety</h2>
+<p>Commands affecting the operating system must retain confirmation behavior. GPT must not directly execute shutdown, reboot, or other destructive commands.</p>
+
+<h2>30. Startup</h2>
+<p>The assistant should automatically start after Raspberry Pi boot. Follow the AIA approach for systemd/user-session startup where appropriate.</p>
+<pre>
+Raspberry Pi boot
+       ↓
+AI Assistant service
+       ↓
+Initialize configuration
+       ↓
+Initialize microphone / speaker / camera
+       ↓
+Initialize AI HAT+ 2
+       ↓
+Initialize STT / Piper / OpenAI client
+       ↓
+Initialize wake word
+       ↓
+Initialize Kodama integration
+       ↓
+Initialize weather/news services
+       ↓
+Start person detection
+       ↓
+Start UI
+       ↓
+READY
+</pre>
+
+<h2>31. Startup Verification</h2>
+<p>At boot, verify:</p>
+<ul>
+<li>Microphone</li>
+<li>Speaker</li>
+<li>Camera</li>
+<li>AI HAT+ 2</li>
+<li>Display</li>
+<li>Network</li>
+<li>STT model</li>
+<li>Piper voice</li>
+<li>OpenAI API configuration</li>
+<li>Kodama-Lite</li>
+<li>Wake-word engine</li>
+</ul>
+<p>If a non-critical service fails, continue running in degraded mode where practical.</p>
+
+<h2>32. Suggested Software Architecture</h2>
+<pre>
+ai-assistant/
+│
+├── main.py
+├── core/
+│   ├── config.py
+│   ├── state.py
+│   ├── router.py
+│   ├── intents.py
+│   └── logging.py
+├── audio/
+│   ├── capture.py
+│   ├── wake.py
+│   ├── stt.py
+│   └── tts.py
+├── llm/
+│   ├── openai_client.py
+│   ├── conversation.py
+│   ├── tools.py
+│   └── prompts.py
+├── tools/
+│   ├── weather.py
+│   ├── news.py
+│   ├── camera.py
+│   └── time.py
+├── vision/
+│   ├── camera.py
+│   └── person_detection.py
+├── kodama/
+│   ├── launcher.py
+│   ├── client.py
+│   └── commands.py
+├── ui/
+│   ├── app.py
+│   ├── main_screen.py
+│   ├── conversation.py
+│   └── screensaver.py
+├── tests/
+├── scripts/
+└── systemd/
+</pre>
+<p>This organization is only a starting point. If AIA provides a better structure, follow AIA's established design.</p>
+
+<h2>33. Configuration</h2>
+<pre>
+display:
+  width: 1280
+  height: 800
+
+location:
+  city: San Jose
+  state: CA
+  zip: 95127
+
+openai:
+  model: GPT-5.6-Terra
+
+screensaver:
+  enabled: true
+  timeout_seconds: 60
+
+camera:
+  enabled: true
+
+person_detection:
+  enabled: true
+
+kodama:
+  enabled: true
+</pre>
+<p>API credentials must be supplied through environment variables or secure local configuration. Never commit API credentials.</p>
+
+<h2>34. Performance</h2>
+<p>The assistant should feel responsive. Avoid sending every request through GPT.</p>
+<pre>
+Fast path:
+Wake → STT → Known command → Kodama/local action
+
+LLM path:
+Wake → STT → Open-ended question → OpenAI API → Response → TTS
+</pre>
+<p>Measure:</p>
+<pre>
+wake_detection_ms
+capture_ms
+stt_ms
+routing_ms
+kodama_ms
+weather_ms
+news_ms
+camera_capture_ms
+vision_api_ms
+llm_ms
+tts_ms
+total_ms
+</pre>
+<p>Measure performance on the actual Raspberry Pi 5.</p>
+
+<h2>35. Development Procedure</h2>
+
+<h3>Phase 1 — Repository Analysis</h3>
+<ol>
+<li>Inspect AIA.</li>
+<li>Inspect Kodama-Lite.</li>
+<li>Map the architecture.</li>
+<li>Identify reusable components.</li>
+<li>Identify AIA/Kodama interfaces.</li>
+<li>Identify systemd services.</li>
+<li>Identify UI architecture.</li>
+<li>Identify existing voice commands.</li>
+<li>Identify wake-word implementation.</li>
+<li>Identify STT/TTS implementations.</li>
+</ol>
+<p>Produce an architecture report before making major modifications.</p>
+
+<h3>Phase 2 — Raspberry Pi Hardware Verification</h3>
+<p>SSH into <code>fuwenxu@aipi5.local</code> and verify the Pi, AI HAT+ 2, Camera Module 3, TI microphone, speaker, 1280×800 display, network, Kodama-Lite, and AIA dependencies.</p>
+
+<h3>Phase 3 — Reproduce AIA Voice Loop</h3>
+<pre>
+Wake word → STT → Existing Kodama command → TTS
+</pre>
+<p>Verify English, Mandarin, Cantonese, microphone, speaker, and wake word before adding GPT.</p>
+
+<h3>Phase 4 — Build New Assistant Shell</h3>
+<p>Create the application, configuration, state machine, router, logging, and UI while preserving AIA's architecture.</p>
+
+<h3>Phase 5 — GPT-5.6 Terra Integration</h3>
+<p>Implement OpenAI API client, authentication, model requests, conversation context, timeout/retry policy, error handling, and response handling.</p>
+
+<h3>Phase 6 — Tool Calling</h3>
+<p>Add tools one at a time: Weather → News → Time → Camera. Unit-test each before integrating it into voice control.</p>
+
+<h3>Phase 7 — Kodama Integration</h3>
+<p>Connect the new assistant to Kodama-Lite and verify all existing commands in English and Mandarin.</p>
+
+<h3>Phase 8 — Camera Vision</h3>
+<p>Implement camera capture → OpenAI vision request → description → TTS. Test camera and API failure behavior.</p>
+
+<h3>Phase 9 — Person Detection</h3>
+<p>Implement local person detection and tune debounce behavior on the actual Pi.</p>
+
+<h3>Phase 10 — Screensaver</h3>
+<p>Implement no-person timeout → 1280×800 weather/time screen → person return → normal UI.</p>
+
+<h3>Phase 11 — Boot Integration</h3>
+<p>Install as a service and test cold boot, reboot, and service restart.</p>
+
+<h2>36. Test Matrix</h2>
+<h3>Voice</h3>
+<ul><li>Wake word</li><li>English</li><li>Mandarin</li><li>Cantonese</li><li>Mixed-language speech</li><li>STT accuracy</li><li>TTS</li></ul>
+
+<h3>Conversation</h3>
+<ul><li>Basic conversation</li><li>Follow-up questions</li><li>Context</li><li>Long responses</li><li>API timeout</li><li>Network failure</li></ul>
+
+<h3>Weather</h3>
+<ul><li>Current weather</li><li>Forecast</li><li>API/network failure</li><li>Screensaver weather</li></ul>
+
+<h3>News</h3>
+<ul><li>Current local news</li><li>Multiple stories</li><li>News failure</li></ul>
+
+<h3>Bedtime Story</h3>
+<ul><li>Short story</li><li>Long story</li><li>User-selected character</li><li>Child-friendly output</li></ul>
+
+<h3>Kodama</h3>
+<ul><li>Music</li><li>Search</li><li>Lyrics</li><li>Karaoke</li><li>Volume</li><li>Shuffle/repeat</li><li>Like</li><li>Exit</li><li>Shutdown/reboot</li></ul>
+
+<h3>Camera</h3>
+<ul><li>Image capture</li><li>Image description</li><li>Vision API failure</li><li>Camera disconnected</li></ul>
+
+<h3>Person Detection</h3>
+<ul><li>Person present</li><li>Person absent</li><li>Person enters</li><li>Person leaves</li><li>False detection</li><li>Multiple people</li></ul>
+
+<h3>UI</h3>
+<ul><li>1280×800 rendering</li><li>Touch interaction</li><li>Screensaver</li><li>Screensaver exit</li><li>Weather/time display</li></ul>
+
+<h3>Boot</h3>
+<ul><li>Cold boot</li><li>Reboot</li><li>Service restart</li><li>Network unavailable at startup</li></ul>
+
+<h2>37. Acceptance Criteria</h2>
+<h3>Voice</h3>
+<ul><li>Same AIA wake word works.</li><li>English, Mandarin, and Cantonese work.</li><li>Piper TTS works.</li></ul>
+
+<h3>AI</h3>
+<ul><li>GPT-5.6 Terra works through OpenAI API.</li><li>General conversation works.</li><li>Follow-up questions work.</li><li>Conversation context is controlled.</li></ul>
+
+<h3>Information</h3>
+<ul><li>Current San Jose 95127 weather works.</li><li>Current local San Jose/Santa Clara news works.</li><li>Child-friendly bedtime stories can be generated and spoken.</li></ul>
+
+<h3>Kodama</h3>
+<ul><li>Kodama-Lite opens by voice.</li><li>Existing Kodama commands continue to work.</li><li>English and Mandarin commands work.</li></ul>
+
+<h3>Camera</h3>
+<ul><li>Camera Module 3 works.</li><li>User can ask what the camera sees.</li><li>Image is sent to the vision-capable OpenAI API.</li><li>Description is returned through TTS.</li></ul>
+
+<h3>Person Detection</h3>
+<ul><li>Local person detection works.</li><li>Person absence activates screensaver.</li><li>Person return exits screensaver.</li></ul>
+
+<h3>Display</h3>
+<ul><li>All UI is designed for 1280×800.</li><li>Screensaver uses the full 1280×800 display.</li><li>Current local time is shown.</li><li>Current weather is shown.</li></ul>
+
+<h3>Reliability</h3>
+<ul>
+<li>Automatically starts after boot.</li>
+<li>Does not get stuck after API failure.</li>
+<li>Does not get stuck after STT failure.</li>
+<li>Camera failure does not kill the assistant.</li>
+<li>Kodama failure does not kill general conversation.</li>
+<li>OpenAI failure does not kill local Kodama commands.</li>
+</ul>
+
+<h2>38. Final Deliverable</h2>
+<p>At the end of implementation, Claude Code must provide a final engineering report containing:</p>
+<ol>
+<li>Project architecture</li>
+<li>AIA components reused</li>
+<li>Kodama-Lite components reused</li>
+<li>Files created</li>
+<li>Files modified</li>
+<li>Wake-word implementation</li>
+<li>STT implementation</li>
+<li>TTS implementation</li>
+<li>GPT-5.6 Terra API implementation</li>
+<li>Conversation context implementation</li>
+<li>Weather implementation</li>
+<li>Local-news implementation</li>
+<li>Bedtime-story implementation</li>
+<li>Camera implementation</li>
+<li>Person-detection implementation</li>
+<li>1280×800 UI implementation</li>
+<li>Screensaver implementation</li>
+<li>Kodama integration</li>
+<li>systemd/startup implementation</li>
+<li>Configuration and API-key setup</li>
+<li>Test results</li>
+<li>Measured latency</li>
+<li>CPU/RAM usage</li>
+<li>AI HAT+ 2 utilization</li>
+<li>Known issues</li>
+<li>Recovery/error handling</li>
+<li>Commands to start/stop/restart/debug</li>
+<li>Instructions for future development</li>
+</ol>
+
+<h2>39. Final Rules for Claude Code</h2>
+<ol>
+<li><strong>Inspect before modifying.</strong></li>
+<li>Use the current AIA repository as the primary voice architecture reference.</li>
+<li>Use the current Kodama-Lite repository as the music-control/application reference.</li>
+<li>Reuse the AIA wake word.</li>
+<li>Reuse AIA STT unless testing proves a better alternative is required.</li>
+<li>Reuse AIA Piper TTS.</li>
+<li>Preserve existing Kodama voice commands.</li>
+<li>Do not duplicate Kodama's internal functionality unnecessarily.</li>
+<li>Use GPT-5.6 Terra through the OpenAI API.</li>
+<li>Do not attempt to download GPT-5.6 Terra onto the Raspberry Pi.</li>
+<li>Initialize reusable resources at startup.</li>
+<li>Use deterministic routing for known commands.</li>
+<li>Use GPT for open-ended conversation and tool selection.</li>
+<li>Do not allow GPT to directly execute arbitrary shell commands.</li>
+<li>Protect shutdown/reboot/destructive commands with explicit confirmation.</li>
+<li>Use local person detection rather than continuously uploading camera frames.</li>
+<li>Use AI HAT+ 2 where it provides meaningful local acceleration.</li>
+<li>Design the UI specifically for 1280×800.</li>
+<li>Do not use the old 1920×440 Kodama display assumption for the new assistant UI.</li>
+<li>Keep weather/news/camera functionality modular.</li>
+<li>Keep API keys out of source control.</li>
+<li>Measure performance on the actual Raspberry Pi 5.</li>
+<li>Test each subsystem before integrating the next one.</li>
+<li>Do not declare completion until all acceptance criteria pass.</li>
+<li>If a major architectural change is necessary, explain why before making it.</li>
+<li>Do not remove existing functionality simply to make implementation easier.</li>
+</ol>
+
+<h2>40. Important Architecture Clarification</h2>
+<div class="note">
+<p>The current AIA repository should be treated primarily as the <strong>voice/control foundation</strong>. The new project should add GPT-5.6 Terra as the conversational and vision layer rather than assuming an existing local LLM implementation that needs to be replaced.</p>
+<p>The new assistant UI must target <strong>1280×800</strong>. Do not inherit the old 1920×440 display geometry from Kodama-Lite.</p>
+</div>
+
+</body>
+</html>

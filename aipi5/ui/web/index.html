@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<!-- Fixed to the panel this device has. `user-scalable=no` because it is a
+     kiosk on a capacitive touchscreen: a pinch that zooms the UI has no way
+     back on a screen with no keyboard, and every layout here is already sized
+     for the display rather than reflowed to it. -->
+<meta name="viewport" content="width=1280, height=800, initial-scale=1.0, user-scalable=no">
+<title>AI Assistant</title>
+<style>
+  /* 1280 x 800. Sizes below are in px against that panel deliberately — this
+     is not a responsive page, it is one screen, and a rem-based scale would
+     only add a layer of indirection between a number here and a pixel there. */
+  :root {
+    --bg: #0e1116;
+    --panel: #161b23;
+    --panel-edge: #232a35;
+    --ink: #e8edf4;
+    --ink-dim: #92a0b4;
+    --accent: #4da3ff;
+    --accent-warm: #ffb454;
+    --user: #1d2b3d;
+    --aia: #1b2620;
+    --danger: #ff6b6b;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0;
+    width: 1280px; height: 800px;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Noto Sans CJK SC", "Noto Sans", "DejaVu Sans", system-ui, sans-serif;
+    /* Nothing on this page is text anybody selects, and a long-press on a
+       touchscreen otherwise raises a selection handle over the UI. */
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ── the main screen ─────────────────────────────────────────── */
+
+  #main {
+    display: flex; flex-direction: column;
+    width: 1280px; height: 800px; padding: 20px 28px 24px;
+  }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-bottom: 14px; border-bottom: 1px solid var(--panel-edge);
+  }
+  h1 {
+    margin: 0; font-size: 30px; font-weight: 600; letter-spacing: 0.08em;
+  }
+  #headline-weather {
+    font-size: 20px; color: var(--ink-dim); display: flex; gap: 16px;
+    align-items: baseline;
+  }
+  #headline-weather b { color: var(--ink); font-size: 26px; font-weight: 600; }
+
+  /* Degraded subsystems. Present in the markup at all times and hidden when
+     empty, so the layout does not jump when a subsystem drops out mid-session
+     — the conversation would scroll under the reader's eyes. */
+  #degraded {
+    margin-top: 10px; padding: 8px 14px; border-radius: 8px;
+    background: #2a1d1d; color: var(--danger); font-size: 16px;
+  }
+  #degraded:empty { display: none; }
+
+  /* ── the conversation ────────────────────────────────────────── */
+
+  #feed {
+    flex: 1; margin: 16px 0; overflow-y: auto; padding-right: 8px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  /* A 1280x800 panel is touched, not moused. The bar is wide enough to drag
+     with a finger; the alternative is a 6 px bar nobody can hit. */
+  #feed::-webkit-scrollbar { width: 12px; }
+  #feed::-webkit-scrollbar-thumb { background: var(--panel-edge); border-radius: 6px; }
+
+  .msg {
+    max-width: 78%; padding: 14px 20px; border-radius: 16px;
+    font-size: 23px; line-height: 1.45; word-wrap: break-word;
+  }
+  .msg.user { align-self: flex-end; background: var(--user); border-bottom-right-radius: 4px; }
+  .msg.aia  { align-self: flex-start; background: var(--aia); border-bottom-left-radius: 4px; }
+  .msg .who { display: block; font-size: 14px; color: var(--ink-dim); margin-bottom: 4px; }
+
+  #empty {
+    margin: auto; color: var(--ink-dim); font-size: 24px; text-align: center;
+  }
+  #empty span { display: block; font-size: 34px; color: var(--ink); margin-bottom: 12px; }
+
+  /* ── status and buttons ──────────────────────────────────────── */
+
+  #status {
+    display: flex; align-items: center; gap: 14px; height: 46px;
+    font-size: 24px; color: var(--ink-dim);
+  }
+  #dot {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--panel-edge); flex: 0 0 auto;
+  }
+  /* One class per assistant state, so the CSS says what each looks like
+     rather than the script setting colours inline. */
+  .s-listening #dot { background: var(--accent); animation: pulse 1.1s infinite; }
+  .s-thinking  #dot { background: var(--accent-warm); animation: pulse 0.7s infinite; }
+  .s-speaking  #dot { background: #59d98e; }
+  .s-acting    #dot { background: #59d98e; animation: pulse 0.9s infinite; }
+  .s-error     #dot { background: var(--danger); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+  #buttons { display: flex; gap: 16px; margin-top: 14px; }
+  button {
+    flex: 1; height: 96px; border: 1px solid var(--panel-edge); border-radius: 14px;
+    background: var(--panel); color: var(--ink);
+    font-size: 22px; font-family: inherit; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px;
+  }
+  /* The glyph is emoji, which needs a colour emoji font present — Pi OS does
+     not install one by default and the buttons render as tofu boxes without
+     it (`sudo apt install fonts-noto-color-emoji`). The font stack names it
+     explicitly rather than relying on the generic fallback, and the label
+     under each glyph is what actually identifies the button, so a missing
+     font costs decoration rather than usability. */
+  button .glyph {
+    font-size: 30px; line-height: 1;
+    font-family: "Noto Color Emoji", "Noto Emoji", "Segoe UI Emoji", sans-serif;
+  }
+  /* :active rather than :hover — there is no pointer on this display, and a
+     hover state on a touchscreen sticks to whatever was touched last. */
+  button:active { background: #202836; border-color: var(--accent); }
+  button[disabled] { opacity: 0.4; }
+
+  /* ── the screensaver ─────────────────────────────────────────── */
+
+  /* Full 1280x800, over everything. Section 24: the time and the weather, and
+     nothing else — it is what a dark room looks at, so it carries no
+     conversation and no controls. */
+  #screensaver {
+    position: fixed; inset: 0; width: 1280px; height: 800px;
+    background: radial-gradient(ellipse at 50% 35%, #16202e 0%, #080a0e 75%);
+    display: none; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center;
+  }
+  #screensaver.on { display: flex; }
+  #ss-time {
+    font-size: 210px; font-weight: 200; line-height: 1;
+    letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+  }
+  #ss-date { font-size: 34px; color: var(--ink-dim); margin-top: 18px; }
+  #ss-weather {
+    margin-top: 66px; display: flex; align-items: baseline; gap: 26px;
+    font-size: 40px; color: var(--ink-dim);
+  }
+  #ss-temp { font-size: 84px; font-weight: 300; color: var(--ink); }
+  #ss-place { margin-top: 22px; font-size: 24px; color: #566274; }
+  /* Somebody may still touch the screen. Presence is what takes the
+     screensaver away — section 26 — but a touch is proof of a person even
+     when the camera disagrees, so it wakes too. */
+  #ss-hint { position: absolute; bottom: 30px; font-size: 18px; color: #3b4553; }
+</style>
+</head>
+<body>
+
+<div id="main">
+  <header>
+    <h1>AI ASSISTANT</h1>
+    <div id="headline-weather"></div>
+  </header>
+
+  <div id="degraded"></div>
+
+  <div id="feed">
+    <div id="empty"><span>小艾同学</span>Say the wake word, or tap a button below</div>
+  </div>
+
+  <div id="status">
+    <div id="dot"></div>
+    <div id="status-text">Ready</div>
+  </div>
+
+  <div id="buttons">
+    <button data-action="wake"><span class="glyph">🎙</span>Talk</button>
+    <button data-action="camera"><span class="glyph">📷</span>Camera</button>
+    <button data-action="weather"><span class="glyph">🌤</span>Weather</button>
+    <button data-action="news"><span class="glyph">📰</span>News</button>
+    <button data-action="kodama"><span class="glyph">🎵</span>Music</button>
+  </div>
+</div>
+
+<div id="screensaver">
+  <div id="ss-time">--:--</div>
+  <div id="ss-date"></div>
+  <div id="ss-weather">
+    <div id="ss-temp">--</div>
+    <div id="ss-conditions"></div>
+  </div>
+  <div id="ss-place"></div>
+  <div id="ss-hint">Touch the screen or say 小艾同学</div>
+</div>
+
+<script>
+"use strict";
+
+// How often the page asks the assistant what it is doing. Twice a second is
+// fast enough that "Listening…" appears while the person is still speaking,
+// and slow enough to be invisible on a device whose four cores are spoken for.
+const STATE_POLL_MS = 500;
+// The transcript changes only when a turn ends, so it is asked for less often.
+const FEED_POLL_MS = 1000;
+
+const el = (id) => document.getElementById(id);
+const feed = el("feed");
+const main = el("main");
+const screensaver = el("screensaver");
+
+let lastMessageId = 0;
+let screensaverOn = false;
+// Set when a touch dismisses the screensaver, so the next poll — which still
+// carries the server's older opinion — does not immediately put it back. The
+// server learns about the touch through the action it queued.
+let dismissedAt = 0;
+
+// ── the clock ───────────────────────────────────────────────────────
+//
+// Drawn from the browser's own clock and redrawn every second, which is the
+// one thing on this page that must not wait for a poll. The server's time is
+// used to correct for a browser whose clock has drifted from the Pi's — they
+// genuinely differ on a device where one has network time and the other does
+// not — and that correction is only refreshed when the state poll answers.
+let clockSkewMs = 0;
+
+function now() {
+  return new Date(Date.now() + clockSkewMs);
+}
+
+function drawClock() {
+  const t = now();
+  let hours = t.getHours() % 12;
+  if (hours === 0) hours = 12;
+  const minutes = String(t.getMinutes()).padStart(2, "0");
+  el("ss-time").textContent = `${hours}:${minutes}`;
+  el("ss-date").textContent = t.toLocaleDateString(undefined, {
+    weekday: "long", month: "long", day: "numeric",
+  });
+}
+
+// ── state ───────────────────────────────────────────────────────────
+
+const STATUS_TEXT = {
+  idle: "Ready",
+  listening: "Listening…",
+  thinking: "Thinking…",
+  acting: "Working…",
+  speaking: "Speaking",
+  error: "Something went wrong",
+};
+
+function applyState(state) {
+  if (typeof state.now === "number") {
+    clockSkewMs = state.now * 1000 - Date.now();
+  }
+
+  // The class carries the state; the CSS decides what that looks like.
+  main.className = "s-" + (state.assistant || "idle");
+  el("status-text").textContent =
+    state.listening_text || STATUS_TEXT[state.assistant] || "Ready";
+
+  // A description of what the camera saw belongs on the screen as well as in
+  // the ear — section 19 — and the conversation feed is where it lands, since
+  // the assistant said it out loud too.
+
+  const weather = state.weather;
+  if (weather && weather.current) {
+    const unit = weather.unit || "F";
+    el("headline-weather").innerHTML =
+      `<span>${escapeHtml(weather.current.conditions)}</span>` +
+      `<b>${weather.current.temperature}°${unit}</b>`;
+    el("ss-temp").textContent = `${weather.current.temperature}°`;
+    el("ss-conditions").textContent = weather.current.conditions;
+    el("ss-place").textContent = weather.place || "";
+  }
+
+  const wanted = !!state.screensaver;
+  // A touch wins for a few seconds. Without this the screen the person just
+  // woke goes straight back to sleep on the next poll, because the server has
+  // not yet processed the action the touch queued.
+  const recentlyDismissed = Date.now() - dismissedAt < 3000;
+  setScreensaver(wanted && !recentlyDismissed);
+
+  const problems = state.degraded || [];
+  el("degraded").textContent = problems.length ? problems.join(" · ") : "";
+}
+
+function setScreensaver(on) {
+  if (on === screensaverOn) return;
+  screensaverOn = on;
+  screensaver.classList.toggle("on", on);
+  if (on) drawClock();
+}
+
+// ── the conversation ────────────────────────────────────────────────
+
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text == null ? "" : String(text);
+  return div.innerHTML;
+}
+
+function addMessage(message) {
+  const empty = el("empty");
+  if (empty) empty.remove();
+
+  const node = document.createElement("div");
+  node.className = "msg " + (message.role === "user" ? "user" : "aia");
+  const who = message.role === "user" ? "You" : "Assistant";
+  node.innerHTML = `<span class="who">${who}</span>${escapeHtml(message.text)}`;
+  feed.appendChild(node);
+
+  // Keep the DOM bounded. The transcript is kept for 24 hours on the device
+  // and a browser left open all day would hold every line of it in memory for
+  // a screen that shows six.
+  while (feed.children.length > 80) feed.removeChild(feed.firstChild);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+// ── polling ─────────────────────────────────────────────────────────
+//
+// Chained timeouts rather than setInterval. An interval on a device that has
+// been asleep, or whose server is briefly not answering, queues up every tick
+// it missed and fires them in a burst the moment it comes back.
+
+async function pollState() {
+  try {
+    const response = await fetch("/api/state", { cache: "no-store" });
+    if (response.ok) applyState(await response.json());
+  } catch (err) {
+    // The assistant restarting. Nothing to show — the page keeps its last
+    // state and picks up again when the server answers.
+  }
+  setTimeout(pollState, STATE_POLL_MS);
+}
+
+async function pollFeed() {
+  try {
+    const response = await fetch(`/api/feed?since=${lastMessageId}`,
+                                 { cache: "no-store" });
+    if (response.ok) {
+      const payload = await response.json();
+      for (const message of payload.messages || []) {
+        addMessage(message);
+        lastMessageId = Math.max(lastMessageId, message.id);
+      }
+    }
+  } catch (err) { /* as above */ }
+  setTimeout(pollFeed, FEED_POLL_MS);
+}
+
+// ── input ───────────────────────────────────────────────────────────
+
+async function send(action) {
+  try {
+    await fetch("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+  } catch (err) {
+    console.warn("action %s did not reach the assistant", action);
+  }
+}
+
+for (const button of document.querySelectorAll("button[data-action]")) {
+  button.addEventListener("click", () => send(button.dataset.action));
+}
+
+// Touching the screensaver takes it down. Presence is the normal way out —
+// section 26 requires that no touch be necessary — but somebody speaking to
+// the device from outside the camera's view has no other way to see it react.
+screensaver.addEventListener("pointerdown", () => {
+  dismissedAt = Date.now();
+  setScreensaver(false);
+  send("wake");
+});
+
+setInterval(drawClock, 1000);
+drawClock();
+pollState();
+pollFeed();
+</script>
+</body>
+</html>

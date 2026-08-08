@@ -1,0 +1,25 @@
+# Credentials. The first three lines are the whole of the specification's
+# "never commit API credentials" requirement, and `aipi5/core/config.py`'s
+# KEY_FILES must never grow a name that is not listed here.
+openai API.txt
+openai_api_key.txt
+.openai_key
+.env
+
+# Models. Fetched on the device with scripts/, several hundred megabytes, and
+# deploys go over `git archive | ssh` — the same reason AIA keeps its own out.
+models/
+vendor/
+
+# Runtime state
+conversation_history.db
+conversation_history.db-wal
+conversation_history.db-shm
+.bench/
+*.log
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/

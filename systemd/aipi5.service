@@ -1,0 +1,98 @@
+[Unit]
+Description=AIPI5 voice assistant
+Documentation=file:%h/AIPI5/README.md
+
+# A *user* service, not a system one, for three reasons that are all
+# load-bearing on this device:
+#
+#   * it drives Kodama-Lite over MPRIS, which lives on the session bus;
+#   * it starts Kodama-Lite through `systemctl --user`, which needs the same;
+#   * the UI is a Chromium window on the Wayland session.
+#
+# A system service has none of those and would have to be handed all three.
+
+# Ordering only, and deliberately no `Wants=`. AIPI5 starts Kodama-Lite on
+# request rather than depending on it — the assistant is useful with the music
+# player closed, and pulling it in here would start a music app on every boot
+# whether or not anybody wanted one.
+After=kodama-lite.service
+
+# Conflicts, not ordering. AIA and AIPI5 both open the microphone and the
+# microphone allows exactly one reader; whichever loses the race fails with a
+# PortAudio error that says nothing about the other one being up. This makes
+# starting AIPI5 stop AIA, which is the intended relationship — AIPI5 *is*
+# AIA's voice loop, with a conversational layer on top.
+Conflicts=aia.service
+
+# Retry forever. On a device that starts with the room the right response to a
+# failed start is to keep trying, rather than to give up after systemd's
+# default of 5 starts in 10 s and stay dead until somebody notices.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+
+# The UI is a browser window on the Wayland session, and a user service can
+# start before the compositor has created its socket — the same race
+# kodama-lite.service and aia.service both solve this way. Without it the UI
+# server comes up, the browser cannot, and the assistant runs blind: still
+# listening and answering, with nothing on screen and no obvious reason why.
+Environment=WAYLAND_DISPLAY=wayland-0
+ExecStartPre=/bin/sh -c 'until [ -e "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; do sleep 1; done'
+
+ExecStart=%h/AIPI5/.venv/bin/python -m aipi5.main
+WorkingDirectory=%h/AIPI5
+
+# Where AIA lives. AIPI5 imports its wake word, capture, VAD, SenseVoice,
+# Piper, router and Kodama commands rather than copying them, and this is the
+# one place that pairing is stated. `aipi5/core/aia_bridge.py` would find
+# ~/AI_Assit on its own; naming it here means a checkout somewhere else is a
+# one-line change to a drop-in rather than an edit to the code.
+Environment=AIA_HOME=%h/AI_Assit
+
+# The OpenAI key. Read from the environment first and from a key file beside
+# the project second — see `credentials()` in aipi5/core/config.py. This unit
+# supplies neither, deliberately: the file is the deployed mechanism and it is
+# in .gitignore. To use the environment instead, put the key in a drop-in that
+# is not in source control:
+#
+#     systemctl --user edit aipi5
+#     [Service]
+#     Environment=OPENAI_API_KEY=sk-...
+#
+# EnvironmentFile is the other option and is better if more than one service
+# needs it:
+#     EnvironmentFile=-%h/.config/aipi5/env
+
+# Keep captured utterances. The only honest input for diagnosing a
+# misrecognition after the fact, since the alternative is asking the user to
+# reproduce it, which they often cannot. Bounded by `keep_utterances` in AIA's
+# config at ~30 MB, and expired after 24 hours by the retention sweep.
+#
+# It is also a standing recording of everything said in the room. Drop this
+# line if that is unwanted.
+Environment=AIA_SAVE_AUDIO=1
+
+# Unbuffered, so `journalctl -f` shows a turn as it happens rather than in
+# 4 KB bursts. This is the log you read when someone says "it didn't hear me".
+Environment=PYTHONUNBUFFERED=1
+
+# The microphone is exclusive: exactly one reader. A crashed instance that
+# systemd restarts too eagerly can collide with the dying one still holding the
+# device, so the restart is unhurried.
+Restart=on-failure
+RestartSec=5
+
+# Loading the Vosk wake model, the SenseVoice graph, both Piper voices, the
+# camera, the Hailo device, and one round trip to the OpenAI API to check the
+# model name. Cold, on an SD card, this is not fast.
+TimeoutStartSec=180
+
+# Speech recognition, the wake word and person detection are all CPU-hungry,
+# but the foreground app must stay responsive — the specification asks for
+# exactly this. A positive nice value keeps the assistant off the display's
+# back under load.
+Nice=5
+
+[Install]
+WantedBy=default.target

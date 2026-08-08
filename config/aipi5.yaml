@@ -1,0 +1,194 @@
+# AIPI5 — the settings a person changes.
+#
+# Everything about *voice* — the wake word, the microphone gains, the VAD
+# thresholds, the STT model, the Piper voices — deliberately is NOT here. Those
+# live in AIA's `aia/core/config.py`, where they were measured on this hardware,
+# and this project reads them from there rather than restating them. Restating
+# them is how two files come to disagree about which microphone gain is correct.
+#
+# What is here is what this project adds: a display of a different size, a
+# location, a camera, a screen that goes away when nobody is in the room, and
+# a language model reached over a network.
+
+display:
+  width: 1280
+  height: 800
+  # The UI is a local web page opened in Chromium. Loopback only: it shows a
+  # transcript of everything said in the room and has no authentication, the
+  # same reasoning AIA's :8090 page carries.
+  #
+  # Not 8090. AIA's own web UI has that port, and while the two assistants
+  # cannot run at once — the microphone allows exactly one reader — a stopped
+  # service that is merely `systemctl --user stop`ped comes back on the next
+  # login and takes the port with it.
+  host: 127.0.0.1
+  port: 8092
+
+location:
+  city: San Jose
+  state: CA
+  zip: "95127"
+  # 95127 is East San Jose (Alum Rock). Latitude and longitude rather than the
+  # ZIP because every weather API wants coordinates and geocoding a ZIP at
+  # startup is a network call that can fail on a device that boots before the
+  # link is up.
+  latitude: 37.3708
+  longitude: -121.8163
+  timezone: America/Los_Angeles
+  units: fahrenheit          # fahrenheit | celsius
+
+openai:
+  # GPT-5.6 ships in three tiers and this device wants the cheapest one, for
+  # reasons that are about latency as much as money. Priced per million tokens,
+  # input/output:
+  #
+  #     gpt-5.6-sol     $5.00 / $30.00   flagship
+  #     gpt-5.6-terra   $2.00 / $12.00   balanced — what the specification named
+  #     gpt-5.6-luna    $0.20 /  $1.20   fastest and cheapest
+  #
+  # This assistant's conversational turn is small and shaped like the work Luna
+  # is built for: a ~1,250-token cached prefix (the system prompt and the tool
+  # schemas), a one-sentence question, five tools with enum-constrained
+  # arguments, and a reply capped at about sixty words because everything said
+  # here is read aloud. At roughly thirty turns a day that is about $0.65 a
+  # month on Luna against $6.50 on Terra — and Luna supports vision and tool
+  # calling, which are the only two capabilities this project needs beyond
+  # plain text.
+  #
+  # Latency is the better argument. The model is on the *slow* path by design —
+  # every known command is matched in about nine milliseconds and never reaches
+  # it — so the API round trip is the whole of what a person waits for when
+  # they ask an open question. Luna is the tier tuned for that.
+  #
+  # Move to terra if answers come back thin, particularly for bedtime stories,
+  # which are the one thing here that is judged on prose rather than on being
+  # correct and short. It is one line and costs about six dollars a month.
+  model: gpt-5.6-luna
+  # The vision request may use a different model than conversation does.
+  # Empty means "the same one", which is the right answer here: describing a
+  # room is a reasoning task rather than an OCR one, and reasoning is Luna's
+  # strongest vision result rather than its weakest.
+  vision_model: ""
+  # A bound on a hang, not a target. The whole turn has a budget of a few
+  # seconds and a request that has not answered in this long has already lost;
+  # the user is told so rather than left listening to silence.
+  timeout_s: 20.0
+  vision_timeout_s: 30.0
+  # Retries are for the network being briefly unavailable, not for a model
+  # that refuses. Two attempts total.
+  max_retries: 1
+  # How much conversation is carried into the next request. Turns, not tokens:
+  # a turn is what the user perceives, and the tokens follow from it. Each turn
+  # is a user message and an assistant one, so 8 is 16 messages plus tools.
+  context_turns: 8
+  # Forget the thread entirely after this much silence. Somebody walking up to
+  # the device an hour later is starting a new conversation, and carrying the
+  # old one forward makes the first answer refer to something nobody said.
+  context_idle_s: 600
+  max_output_tokens: 400
+
+weather:
+  # Open-Meteo: no API key, no account, and no per-request quota to run out of
+  # in the middle of a screensaver. The URL is configurable so a household with
+  # a paid provider can point this elsewhere without a code change.
+  provider: open-meteo
+  # The screensaver redraws its clock every second and must not redraw its
+  # weather every second with it. Ten minutes is well inside how fast the
+  # weather actually changes and turns a day of screensaver into ~144 requests.
+  cache_seconds: 600
+  timeout_s: 8.0
+
+news:
+  # Local means local: these feeds are San Jose, Santa Clara County and the
+  # wider Bay Area. Order matters only as a tiebreak — stories are interleaved
+  # so one prolific feed cannot fill the whole answer.
+  feeds:
+    - https://news.google.com/rss/search?q=San+Jose+OR+%22Santa+Clara+County%22+when:1d&hl=en-US&gl=US&ceid=US:en
+    - https://www.mercurynews.com/location/california/bay-area/santa-clara-county/feed/
+    - https://sanjosespotlight.com/feed/
+  # Read out loud, not read. Three to five headlines with a sentence each is
+  # about forty seconds of speech; ten would be three minutes and nobody
+  # listens to the end of it.
+  max_stories: 5
+  cache_seconds: 900
+  timeout_s: 8.0
+
+story:
+  # Bedtime stories are the one place this assistant talks for a long time on
+  # purpose. Bounded anyway, because Piper synthesises a line at a time and an
+  # unbounded story is an unbounded turn.
+  default_minutes: 4
+  max_minutes: 10
+
+camera:
+  enabled: true
+  # What the vision request is sent. Larger costs upload time on a domestic
+  # connection and buys very little description quality.
+  capture_width: 1280
+  capture_height: 720
+  jpeg_quality: 80
+  # tmpfs. The Pi boots from flash and a capture-per-question write cycle is
+  # both slower and unkind to the card — the same reasoning AIA's Piper scratch
+  # directory carries.
+  scratch: /dev/shm/aipi5-camera
+  warmup_ms: 400
+
+person_detection:
+  enabled: true
+  # hailo   — the AI HAT+ 2, which is the point of having one
+  # cpu      — onnxruntime on the CPU, for a Pi with no accelerator
+  # disabled — no presence detection; the screensaver then never engages
+  backend: hailo
+  # An absolute path into the `hailo-models` package rather than a file this
+  # project downloads. The AI HAT+ 2 on this device is a **Hailo-10H**, not the
+  # Hailo-8 or 8L the Pi AI Kit carries, and their HEFs are not interchangeable
+  # — loading the wrong one fails at configure time with an architecture
+  # mismatch. `hailo-all` already installs `_h10` variants, so the right model
+  # is on the device before this project touches it.
+  #
+  # yolov8m rather than yolov8n: the nano model is not among the compiled h10
+  # HEFs, and at two frames a second on an accelerator the difference between
+  # medium and nano is not a cost anybody here can perceive. Only COCO class 0
+  # (person) is read.
+  model: /usr/share/hailo-models/yolov8m_h10.hef
+  cpu_model: models/ssd_mobilenet_v1.onnx
+  # Detections below this are not people.
+  confidence: 0.45
+  # How often a frame is looked at. Presence changes on the scale of somebody
+  # walking across a room, so twice a second is generous and leaves the four
+  # cores to the things with a latency budget.
+  interval_ms: 500
+  # Hysteresis. One frame must never move the UI: a person who blinks out of a
+  # single frame has not left, and a curtain that moves has not arrived.
+  # Asymmetric on purpose — arriving should feel instant, leaving should not be
+  # jumpy, and these are tuned on the actual Pi.
+  frames_to_appear: 2
+  frames_to_disappear: 8
+
+screensaver:
+  enabled: true
+  # From the moment presence is lost, not from the last frame seen. 60 s is
+  # the specification's number and it is a config value because the right one
+  # depends on the room.
+  timeout_seconds: 60
+
+kodama:
+  enabled: true
+  # How Kodama-Lite is started. Its own README is explicit that the systemd
+  # user unit is the only thing that should launch it — the desktop icon runs
+  # a second copy behind systemd's back, which gets its own stream server port
+  # and plays the last queue over the top of the first. So this is that unit,
+  # not the binary.
+  service: kodama-lite.service
+  # How long to wait for the app to answer MPRIS after being asked to start.
+  # Tauri plus a webview on this Pi is several seconds cold.
+  start_timeout_s: 20.0
+
+assistant:
+  # Everything the router does not recognise goes to the model. Turning this
+  # off makes AIPI5 behave exactly like AIA: known commands work, everything
+  # else is repeated back.
+  llm_enabled: true
+  # Where the conversation and the recordings are kept, and for how long. Same
+  # promise AIA makes, and the same 24 hours.
+  retention_hours: 24.0
