@@ -4,11 +4,14 @@ The report section 38 of the implementation procedure asks for, written against
 what has actually been done on the device rather than against what the code
 intends.
 
-**Deployed and running on `aipi5.local`.** All ten startup checks pass; 144
+**Deployed and running on `aipi5.local`.** All ten startup checks pass; 184
 tests pass on the Pi as well as off it. Verified in the room: a spoken command,
 live weather and local news through the speaker, a camera description of the
 actual room, person detection on the accelerator, and the screensaver
-completing a full engage / clear / return cycle. What has *not* been done is in
+completing a full engage / clear / return cycle. Re-verified after the camera
+was replaced with a USB Brio 101 — the device opens by name, the detector reads
+it every 500 ms, and "what do you see" reached the speaker with a correct
+description of the room. What has *not* been done is in
 §25 — chiefly Cantonese, and most of the Kodama commands by voice.
 
 Verified in the room, from the journal: the wake word in Mandarin, a Chinese
@@ -35,7 +38,7 @@ Microphone ─→ Wake word ─→ VAD ─→ STT ─→ Intent router ─┬─
                                              │
                                           Speaker
 
-Camera Module 3 ─→ person detection (AI HAT+ 2, new) ─→ presence ─→ screensaver
+Brio 101 (USB) ─→ person detection (AI HAT+ 2, new) ─→ presence ─→ screensaver
                                                                        (new)
 1280×800 touchscreen ← local HTTP server (new)
 ```
@@ -109,7 +112,7 @@ aipi5/tools/weather.py            Open-Meteo, cached, stale-on-failure
 aipi5/tools/news.py               RSS/Atom, interleaved, de-duplicated
 aipi5/tools/clock.py              the device's clock, not the model's guess
 aipi5/tools/story.py              bedtime story length, subject and safety rules
-aipi5/vision/camera.py            one Picamera2, two streams
+aipi5/vision/camera.py            one V4L2 handle, shared by both readers
 aipi5/vision/describe.py          capture → vision model → sentence
 aipi5/vision/person_detection.py  hailo / cpu / disabled + the watcher thread
 aipi5/kodama/launcher.py          the one command AIA lacks
@@ -124,7 +127,7 @@ scripts/check_hardware.sh         phase 2, to run on the Pi
 scripts/install-service.sh        install, with preflight
 scripts/get_person_model.sh       fetches the HEF for the fitted accelerator
 scripts/aipi5-ui.sh               Chromium, full-screen, waits for the server
-tests/ (10 modules, 144 tests)
+tests/ (12 modules, 184 tests)
 README.md, REPORT.md, requirements.txt, .gitignore
 ```
 
@@ -287,12 +290,148 @@ nothing frightening, nothing sad at the end, no romance or brands or real
 people, gentle pacing, TTS-friendly text, answer in the language asked. A test
 asserts every one of them reaches the model.
 
+## 13a. The screen's five pages, and what protects them
+
+Added after the first deployment, alongside the camera change.
+
+**Pages, not windows.** The five buttons — Talk, Camera, News, Weather, Music —
+each open a dedicated destination, and those destinations are views in the one
+kiosk document rather than browser windows. Chromium runs full-screen here
+under a compositor with no title bars and no taskbar: a second window is a page
+nobody can get back from. It also turns "no duplicate instances of the same
+page" from a rule into a property — `show()` is idempotent, so pressing Camera
+twice cannot produce two camera pages.
+
+Deep links (`/#weather`) navigate without posting the action. That exists for
+the device rather than for anybody using it: the panel is Wayland with no way
+to inject a tap over ssh, so without it there is no way to look at a page you
+have just changed without standing in front of the assistant.
+
+**A ten-second cooldown per button, on the server.** `UiState.request` refuses a
+repeat and publishes the seconds remaining, which the button draws as a
+countdown — a button that is merely dead reads as broken, which is what makes
+somebody press it again. Independent per action, so Camera never disables
+Weather. `wake` is deliberately exempt: rationing the way a person gets the
+assistant's attention would mean a device that ignores somebody who tried to
+talk to it twice.
+
+**The camera page** streams `multipart/x-mixed-replace` from the shared camera
+at 6 fps, which an `<img src>` understands natively — no decoding code, no
+reconnection logic. 6 rather than 15 because the budget being spent is the
+camera *lock*, not the network: the person detector wants the same lock twice a
+second. Measured with a preview open, the detector held its full 2.0 fps and
+the stream ran at 5.4.
+
+The answer is drawn over the picture it is about and fades ten seconds after
+the speaking stops — the timer starts on the edge out of `speaking`, so a long
+reply holds its text for its whole length and the ten seconds is ten seconds of
+silence rather than ten seconds total. Descriptions carry an incrementing id
+rather than being compared by text, because two identical descriptions of an
+unchanged room are two answers and the second must re-show.
+
+**The weather and news pages speak less than they show.** The weather page
+displays temperature, high/low, feels-like, UV index, humidity, wind and chance
+of rain; `Weather.brief` says the sky, the temperature, the day's range and at
+most one thing worth acting on — an umbrella at 40% rain, sunscreen at UV 6.
+Reading back a screen somebody is already looking at is the most common way a
+device like this becomes tiresome. The news page shows the stories and the
+assistant summarises the important ones in two sentences.
+
+Page-spoken lines are recorded under their own role (`aia:weather`,
+`aia:news`, `aia:camera`, `aia:music`) and `/api/feed?roles=user,aia` filters
+them out of the Talk page. They stay in the 24-hour transcript because they
+were audible in the room and that record should not lie; they are kept out of
+the conversation because a conversation is a conversation.
+
+**Music raises rather than relaunches.** `KodamaLauncher.raise_window` runs the
+binary — the one place that is allowed — because Kodama-Lite is built with
+`tauri-plugin-single-instance`, so a second launch hands its argv to the
+running process, which raises its window, and exits. Verified rather than
+assumed: with the player running, the process count stayed at 1, the launched
+copy exited on its own, and `playerctl -l` still listed one `kodamalite`.
+`wmctrl` and `xdotool` are both installed and both are X11 clients on a Wayland
+session, so there is no alternative on this hardware.
+
+## 13b. Audio priority
+
+`aipi5/core/audio_priority.py`. The assistant's voice outranks everything else
+in the room: whatever is playing is paused for the duration and resumed where
+it stopped. Pausing over MPRIS rather than muting is AIA's existing decision
+and the right one — a muted song keeps playing and loses the seconds it was
+silent for.
+
+What is new is that **every** path that speaks holds it. The voice loop already
+ducked around a whole turn; a button never went through the voice loop, so
+until now a Weather or News press talked straight over the music.
+
+Making the button paths duck introduces a subtler bug than it fixes, which is
+what this module is for. `Ducker.duck()` begins by clearing its memory of what
+it paused, so two overlapping ducks — a button pressed mid-turn, a page
+speaking while the loop holds the floor — leave the inner call remembering
+nothing and the outer call's memory gone with it. The music never comes back,
+and never comes back *silently*. `AudioPriority` counts holders behind a lock
+and only the outermost touches the bus.
+
+Measured on the device: playing at 106.5 s, `Paused` at 108.7 when the Weather
+page spoke, `Playing` again at 108.9 nine seconds later — resumed from
+position, not restarted.
+
 ## 14. Camera implementation
 
-`aipi5/vision/camera.py`. **One `Picamera2` with two streams** — `main` at
-1280×720 for the still, `lores` at 640×480 for the detector — because the camera
-allows one owner and two consumers want frames. libcamera produces both from the
-same sensor read.
+`aipi5/vision/camera.py`. **One `cv2.VideoCapture` on a V4L2 node**, opened
+once and shared under a lock, because the camera allows one owner and two
+consumers want frames — the detector twice a second and the vision question
+when asked.
+
+The hardware changed after the first deployment: the CSI **Camera Module 3 was
+replaced with a USB Logitech Brio 101**, so picamera2 (which speaks to
+libcamera on the ribbon connector and does not see a webcam at all) gave way to
+OpenCV over V4L2. Three things followed from that and none of them is a
+like-for-like port:
+
+*The two-stream trick is gone.* picamera2 produced a 1280×720 `main` and a
+640×480 `lores` from one sensor read. UVC gives one stream at one size, and the
+loss is nil: the detector resizes to its model's input as its first step, so
+`lores` was only ever pixels it threw away.
+
+*Frames have to be drained, and not for the obvious reason.* V4L2 is a queue
+and returns the oldest filled buffer, so the first instinct is to walk to the
+end of the queue. That is not enough. Both readers arrive 500 ms apart at the
+soonest, the driver fills its queue within a few frame periods of the previous
+read and then drops frames until somebody returns — so *every* buffer in the
+queue was captured just after the last read, and the newest of them is still
+~450 ms old. `Camera._read` therefore drains the queue **empty** and takes the
+next frame the sensor produces: the one grab that blocks. Grabbing without
+retrieving costs no JPEG decode, so the whole call is one frame period.
+
+How many grabs that takes is asked of the device rather than assumed. This
+driver honours `CAP_PROP_BUFFERSIZE=1`, so two grabs suffice; OpenCV's default
+of four would need five. Assuming the default cost 200 ms a read against the 68
+ms it actually takes — most of what a person waits for after "what do you see".
+Measured on the Brio: `frame()` 59–70 ms (of which ~5 ms is decode; the rest is
+the wait, and the camera halves its own frame rate in a dim room),
+`capture_still()` 144 ms including the JPEG encode, Hailo inference 40–49 ms on
+top. picamera2 gave the current frame for nothing.
+
+*The device is found by driver, then by name.* `/dev/video0` is not a stable
+identity; the Brio claims two nodes and the metadata one opens cleanly and
+never yields an image. `_candidates` ranks on the sysfs driver (`uvcvideo` is
+every USB webcam and nothing else here), then `name_hint`, then the UVC node
+index — and `_try_open` accepts a node only once it has produced a decoded
+frame. The same reasoning AIA applies to matching the microphone by name rather
+than card number.
+
+The eighteen ISP and HEVC-decoder nodes this Pi also has are **dropped, not
+merely ranked last**, and that came out of a measurement: with the camera
+merely busy, refusing all of them took **81 seconds** — during which `open()`
+is on the startup path and the microphone is not up yet. An assistant that
+cannot see must not also be a minute of an assistant that cannot hear. After
+the filter, the same failure takes 0.8 s, and `SEARCH_BUDGET_S` bounds whatever
+is left.
+
+Warm-up became real reads rather than a sleep, because a UVC sensor does not
+stream — and so its auto-exposure does not converge — until buffers are being
+dequeued. A sleep there would have warmed up nothing.
 
 A still is captured fresh on every request (section 19), written to
 `/dev/shm/aipi5-camera`, base64'd at send time, pruned to the last ten. Frames
@@ -581,8 +720,8 @@ Measured: **28 ms** per inference, 640×640×3 UINT8 in, at `interval_ms: 500`.
    the token parameter, with `tests/test_client_negotiation.py` pinning it.
 8. **`libportaudio2` missing.** `sounddevice` is a binding, not the library;
    the service crash-looped on `OSError: PortAudio library not found`.
-9. **The venv could not see system packages.** `picamera2` and
-   `hailo_platform` are Debian packages with no usable wheel, so a venv built
+9. **The venv could not see system packages.** `cv2` (`python3-opencv`) and
+   `hailo_platform` are installed as Debian packages, so a venv built
    without `include-system-site-packages` reported no camera and no
    accelerator — a *degraded* start, not an error, which is the silent kind.
    The install script now checks for it.
@@ -613,19 +752,36 @@ Measured: **28 ms** per inference, 640×640×3 UINT8 in, at `interval_ms: 500`.
     line, naming what to plug in, with the service retrying until it appears.
 15. **A false "network unavailable" banner** — the 2 s probe overran under boot
     load while OpenAI answered in 2.3 s. Boot-time probes now allow 6 s.
+16. **The camera search took 81 seconds to fail.** Found while testing the new
+    USB camera's degraded path, with the camera merely busy: this Pi has twenty
+    `/dev/video*` nodes, eighteen of them the ISP and the HEVC decoder, and
+    OpenCV takes about two seconds to refuse each. `open()` runs before the
+    microphone does, so a camera somebody had unplugged would have cost a
+    minute of an assistant that could not hear either — the worst kind of
+    degraded mode, because it looks like a hang. Nodes are now filtered by
+    their sysfs driver before anything is opened (0.8 s), with a time budget
+    behind that.
+17. **The hardware check reported a format the camera offers.** `v4l2-ctl
+    --list-formats-ext | grep -q 1280x720` under `set -o pipefail`: `grep -q`
+    exits at the first match and SIGPIPEs `v4l2-ctl`, so the pipeline fails on
+    exactly the runs where the format *was* found. Read into a variable now.
 
 **Design limits, unchanged and deliberate:**
 
-16. The `interval_ms` sleep can drift when an inference takes longer than the
+18. The `interval_ms` sleep can drift when an inference takes longer than the
     interval; the remainder is what is slept, so it degrades to inference time.
-17. The button queue is depth 2 — tapping while the assistant speaks drops
+19. The button queue is depth 2 — tapping while the assistant speaks drops
     presses with a debug line.
-18. Story length is a target, not a contract. Nothing truncates, because
+20. Story length is a target, not a contract. Nothing truncates, because
     truncation is read aloud as a sentence stopping mid-word.
-19. No Cantonese Piper voice. Inherited from AIA: Cantonese is recognised as
+21. No Cantonese Piper voice. Inherited from AIA: Cantonese is recognised as
     Cantonese and answered in Mandarin.
-20. The UI accepts input, unlike AIA's. Mitigated by a fixed action tuple with
+22. The UI accepts input, unlike AIA's. Mitigated by a fixed action tuple with
     nothing destructive in it.
+23. Every camera read waits for a live frame rather than accepting a queued
+    one, so it costs one frame period — 35 ms in a lit room, ~70 ms in a dim
+    one where the camera has halved its own rate. Deliberate: the alternative
+    is a description of the room as it was half a second ago.
 
 ## 26. Recovery and error handling
 
@@ -656,10 +812,737 @@ AIPI5_NO_LLM=1 .venv/bin/python -m aipi5.main                   # as plain AIA
 AIA_NO_WAKE=1 AIA_DEBUG=1 .venv/bin/python -m aipi5.main        # no wake word
 
 ./scripts/check_hardware.sh                    # verify the Pi
-python -m unittest discover -s tests -t .      # 119 tests, anywhere
+python -m unittest discover -s tests -t .      # 184 tests, anywhere
 curl -s localhost:8092/api/system | python -m json.tool   # live settings
 ssh -L 8092:127.0.0.1:8092 fuwenxu@aipi5.local           # the screen, remotely
 ```
+
+## 27a. Remote video call — the Call button, and phase 1 on the device
+
+The Call button and its page exist. The call does not. What follows is the
+button, and then the hardware measurements the specification requires before
+any WebRTC pipeline is designed — taken on the actual Pi, not assumed.
+
+**The button.** `call` is a sixth entry in `ACTIONS`, a sixth button on the
+main page between Talk and Camera, and a sixth in-page view. It carries the
+same ten-second server-side cooldown as the other page buttons and is
+deliberately not on `UNTHROTTLED` with `wake`: starting a call will claim the
+camera, the microphone and the speaker away from the voice loop, which makes a
+repeated press the most expensive one on the screen rather than the least. Six
+buttons share the row at 191 px each on the 1280 px panel; no label overflows.
+
+`handle_button` returns on `call` before the state machine moves and before
+anything takes the audio floor — there is no spoken half of this page. The
+action still travels through the queue rather than being navigation the page
+does on its own, because the handoff that suspends the voice loop's ownership
+of the Brio and the microphone has to happen on the Python side, and this is
+where it will attach.
+
+Two behaviours on the page are already real, because both are failures that
+present silently. Leaving the page stops every track either `<video>` element
+holds — clearing `srcObject` alone detaches the stream and leaves the device
+claimed, and the next thing to want the Brio is the person detector, which
+fails quietly and takes the screensaver with it. And an active call suppresses
+the screensaver: presence is the camera's opinion of the room the *Pi* is in,
+and a caller who steps out of the Brio's view for ten seconds must not come
+back to a clock drawn over the person they are talking to.
+
+### Phase 1 — Brio 101 video, measured
+
+`v4l2-ctl` on `aipi5.local`, kernel 6.18.39, uvcvideo. USB ID `046d:094d`,
+serial `2501APQAUK08`.
+
+| node | device caps | use |
+|---|---|---|
+| `/dev/video0` | Video Capture, Streaming | the capture interface |
+| `/dev/video1` | **Metadata Capture**, Streaming | not an image source |
+
+This is the concrete form of the warning already in section 14: the Brio claims
+two nodes and the second one is metadata. It opens and it never yields a frame.
+
+**Stable identity:** `/dev/v4l/by-id/usb-046d_Brio_101_2501APQAUK08-video-index0`,
+which is a symlink to `video0` built from vendor, product and serial and is
+therefore stable across reboot and reconnection. `/dev/v4l/by-path/platform-
+xhci-hcd.0-usb-0:2:1.0-video-index0` is the port-stable alternative — it
+survives swapping the camera but not moving it to another socket. PipeWire
+exposes the same device as node `v4l2_input.platform-xhci-hcd.0-usb-0_2_1.0`,
+which is what `getUserMedia` in Chromium will select against.
+
+**Formats: `YUYV` and `MJPG`. There is no H.264.** The Brio 101 does not expose
+an encoded stream, so nothing on the camera can be offloaded to and the Pi
+encodes.
+
+**The measurement that decides the pipeline:**
+
+| format | 1280×720 | 1920×1080 |
+|---|---|---|
+| `YUYV` | **5 fps, maximum** | 5 fps |
+| `MJPG` | **30 / 24 / 20 / 15 / 10 / 7.5 / 5 fps** | 30 fps |
+
+The specification's 1280×720 @ 30 target is reachable **only through MJPEG**.
+Uncompressed 720p30 is 1.3 Gbit/s and does not fit in USB 2.0 high speed, which
+is what the descriptor above reports the camera negotiating; the driver
+advertises YUYV 720p at 5 fps because that is what fits. Any implementation
+that opens this camera at 720p without asking for MJPG gets 5 fps and no error.
+
+### Phase 1 — Brio 101 microphone and the speaker, measured
+
+```
+card 2: B101 [Brio 101], device 0: USB Audio
+  Capture: S16_LE, 1 channel, MONO, rates 16000 / 32000 / 48000
+```
+
+**The Brio microphone is the only capture device on this Pi.** `arecord -l`
+lists one card and it is the Brio. This settles a question the specification
+leaves open: there is no other microphone to switch ownership *from*, so the
+call subsystem does not need a switch — it needs arbitration. AIA's capture
+stream and the call want the same capsule, and the microphone allows one
+reader, which is the same constraint section 19 already handles between AIA and
+AIPI5 with `Conflicts=`.
+
+It is **mono**, and its native rates are 16/32/48 kHz. 48 kHz is what WebRTC
+wants and it is available, so no resampling is forced on the capture side.
+
+**Stable identity:** `/dev/snd/by-id/usb-046d_Brio_101_2501APQAUK08-02`, and in
+PipeWire the node name
+`alsa_input.usb-046d_Brio_101_2501APQAUK08-02.mono-fallback` — both carry the
+serial. The ALSA card *number* is 2 today and is exactly what must not be
+relied on.
+
+**Output** is HDMI: `alsa_output.platform-107c701400.hdmi.hdmi-stereo`, cards 0
+and 1 (`vc4hdmi0`, `vc4hdmi1`). There is no USB or analogue sink.
+
+**Echo cancellation is available and does not need building.** The Pi has
+`libpipewire-module-echo-cancel.so` with `libspa-aec-webrtc.so` — the WebRTC
+AEC implementation — already installed alongside `libspa-aec-null.so`. The
+speaker and the Brio capsule are inches apart on one panel, so this is the
+piece the audio-quality requirement stands on.
+
+**Two things found while looking, both worth acting on independently:**
+
+* `wpctl status` reports the HDMI sink at **`vol: 0.15`**. That is the failure
+  the README warns about under "Installing" and it is currently live on the
+  device: ALSA at full scale, the sink at 15%, and an assistant that sounds
+  broken rather than quiet. `wpctl set-volume @DEFAULT_AUDIO_SINK@ 1.0`.
+* `/dev/video0` is held right now by pid 1516, the running `aipi5` service.
+  This is not a fault — it is section 14's single shared handle working as
+  designed — but it is the concrete reason a call cannot simply call
+  `getUserMedia` and expect the camera. Chromium and the Python process are
+  separate readers of a device that allows one.
+
+### What phase 1 changes about the plan
+
+* **MJPEG, 1280×720, 30 fps** is the capture configuration. Not a preference —
+  the only one that reaches the target.
+* **No camera-side H.264.** Encoding is the Pi's job, and whether that is
+  Chromium's own VP8/H.264 or something upstream of it is the next thing to
+  measure rather than assume.
+* **Microphone ownership is arbitration, not switching.** There is one capsule.
+* **AEC is a PipeWire configuration**, not code to write.
+* **The Brio handle must be released by the Python side before the browser can
+  have it.** That handoff is the real integration work, and it is what the
+  `call` action exists to carry.
+
+## 27b. Phase 2 — the call, and the two things that stopped it
+
+Phase 2 is built and running on the device. What follows is the architecture,
+then the two failures that took the longest to find, because both were silent.
+
+### Both ends are browsers, and Python never touches the media
+
+    phone (Safari)                              Pi (the kiosk Chromium)
+      |  https://<pi>:8443   TLS + bearer token   |  http://127.0.0.1:8092
+      |     aipi5/call/server.py                  |     aipi5/ui/server.py
+      |                  \                       /
+      |                   `--- SignalingHub ---'
+      `============= WebRTC media, peer to peer ==='
+
+Chromium already has an encoder, a congestion controller that lowers the
+bitrate instead of freezing, and an acoustic echo canceller that works because
+one process owns both the capture and the playback stream. A Python peer on
+aiortc would have had none of the three, and the third is the whole of the
+audio-quality requirement — the Brio capsule is inches from the speaker the
+caller comes out of. So Python does signalling, authentication and hardware
+arbitration, and no media.
+
+**Two doors into one hub, because of secure contexts.** `getUserMedia` refuses
+to run outside one, and `http://` on a LAN address is not one — but
+`http://127.0.0.1` is, by definition. So the Pi's own page keeps using the
+existing loopback server with no TLS at all, and only the phone needs a
+certificate. That preserves the boundary the project already had:
+`aipi5/ui/server.py` stays loopback-only and unauthenticated, and the single
+listener on the network is `aipi5/call/server.py`, which authenticates every
+route before it does anything.
+
+**Signalling is long-poll, not a WebSocket.** All of this project's HTTP is
+stdlib `ThreadingHTTPServer`, which has none; a call is about thirty messages,
+all in the first two seconds, and a held GET answers each within a millisecond
+of it being posted. A test asserts that property, because if it regresses every
+call silently gains 25 seconds of handshake.
+
+**Auto-answer is the absence of a prompt, not a rule.** The token is checked at
+the door. An unknown caller never reaches a state the screen can see, so there
+is no Accept button to skip. Ringing deliberately does *not* own the camera —
+`CallState.LIVE` starts at `CONNECTING` — so even an authorised caller has not
+turned anything on until the Pi has picked up.
+
+### Measured on the device
+
+| what | result |
+|---|---|
+| unauthenticated `GET /call/v1/state` | 401 |
+| wrong token | 401, and 5 failures locks the address out for 300 s |
+| correct token | 200 |
+| ring → screen answers | ~1 s, no touch |
+| capture format during a live call | **1280×720 `MJPG` @ 30.000 fps** |
+| `/dev/video0` during a call | held by `chromium` |
+| Brio microphone during a call | held by `pipewire` |
+| TI microphone during a call | still held by `python` — AIA keeps hearing |
+| hang up → camera back with Python | ~1 s |
+| ring with nobody offering | `connecting` expires at 45 s, camera released |
+
+The format line is Phase 1's prediction confirmed under load: 720p30 on this
+camera exists only through MJPEG, and asking Chromium for 30 fps at 1280×720 is
+what makes it choose that.
+
+### The failure that took longest: no Camera portal
+
+`getUserMedia` did not fail. It never settled — the promise stayed pending
+forever, with Python having released the Brio exactly as designed and Chromium
+never taking it. The call sat in `connecting` with the camera belonging to
+nobody, and nothing was logged anywhere, because nothing had gone wrong in the
+sense any component could detect.
+
+The cause: Chromium prefers to reach cameras through the xdg-desktop-portal
+`Camera` interface, and **this Pi has no backend that implements it**.
+`/usr/share/xdg-desktop-portal/portals/` holds `wlr.portal` (ScreenCast, not
+Camera), `gtk.portal` and `gnome-keyring.portal`; none declares Camera. The
+request waits on a portal that will never answer.
+
+`--disable-features=PipeWireCamera,WebRtcPipeWireCamera` in
+`scripts/aipi5-ui.sh` sends Chromium to V4L2 directly — the same path the
+assistant's own camera code uses — and the camera opened immediately. Note that
+Chromium keeps only the *last* `--disable-features` it is given, so this had to
+be merged with the existing `TranslateUI` rather than added beside it.
+
+Two changes came out of that hunt and both are worth more than the fix:
+
+* **`getUserMedia` is bounded** (`MEDIA_TIMEOUT_MS`, 10 s) and the reason is
+  sent to the server, where it reaches the journal. A kiosk has no keyboard, so
+  a failure that lives only in devtools is a failure nobody will ever read. The
+  requirement asks that this fail cleanly rather than hang; it now does, and the
+  journal line names the device.
+* **Camera and microphone are opened separately.** One combined call is the
+  usual shape and it is what this did first — but it is also one promise, so a
+  microphone that never answers takes the camera down with it and the call fails
+  with nothing to say about which half was at fault. Split, a busy microphone
+  costs the sound rather than the call, and the caller still sees the room.
+
+### A third: revocation that needed a restart
+
+Found by rotating a token. The old one kept working and the newly issued one
+was refused — the file on disk and the dictionary in memory had become two
+different answers.
+
+`scripts/pair-phone.sh` is its own process writing the same file, and
+`TrustedDevices` read it once at construction. So the running assistant never
+saw a phone that had just been paired, and — the half that matters — never saw
+one that had just been revoked. A revocation that silently waits for a restart
+is not a revocation, and the requirement asks for one in as many words.
+
+`_reload_if_changed` now compares `(mtime_ns, size)` before every
+authentication and re-reads when it moves. Size as well as mtime, because a
+revoke and a re-pair inside one filesystem timestamp tick would otherwise look
+like nothing had happened. The instance's own writes update the stamp, so
+recording `last_seen` on a successful call does not make the next request
+re-read the file it just wrote; lockouts are held separately from the device
+map, so re-pairing a phone does not hand an attacker a fresh set of attempts.
+
+Three tests cover it, and all three were confirmed to fail with the fix
+disabled — a regression test that has never been seen red is a regression test
+that may be asserting nothing.
+
+Verified on the device afterwards: two revoked tokens answer 401 and the
+current one 200, with no restart, and the journal shows the re-read.
+
+### The other silent one: the page is cached in memory
+
+`WebUI.page()` reads `index.html` once and holds it. Restarting the *kiosk*
+therefore does not pick up a changed page — the browser reloads and is served
+the same bytes from the assistant's memory. Two rounds of debugging were spent
+on a fix that was on disk and not in the process. **Changing `index.html` means
+restarting `aipi5`, not `aipi5-ui`.**
+
+### Confirmed end to end
+
+**A call from the iPhone to the Pi worked, 2026-08-11**, on the same network,
+against the deployment described above: MJPEG 720p30 off the Brio, Chromium at
+both ends, long-poll signalling, token authentication, auto-answer with no
+touch on the panel. That closes phase 2 — the media leg was the one part the Pi
+could not prove on its own.
+
+What that test did *not* measure, and phase 2 of the procedure asks for:
+
+* **Echo cancellation under real conditions.** The mechanism is there — the
+  requested constraints, and Chromium owning capture and playback in one
+  process — but "the remote caller does not hear a delayed copy of their own
+  voice" is a judgement made in the room, with the speaker at a normal volume,
+  and it has not been made.
+* **Latency**, as a number. Nothing here timestamps the media path.
+
+Both want the room rather than the journal, and both are worth doing before
+phase 3 adds a relay that can only make them worse.
+
+Phases 3–6 are untouched: TURN for the cellular path, and the reliability
+matrix — different networks, slow links, a dropped connection, a Pi reboot, the
+Brio unplugged mid-call, the signalling or TURN server unreachable.
+
+## 27c. Phase 3 — reaching the Pi from the Internet
+
+Everything that does not depend on where infrastructure lives is built. What is
+left is a decision about hosting, because a call from a cellular network needs
+something with a public address and this device does not have one it can use.
+
+### Two separate problems, and only one of them is NAT traversal
+
+**Signalling** has to reach the Pi before any WebRTC exists. From the Internet
+that means either an inbound port on the home router — which the requirement
+rules out in as many words — or the Pi holding an outbound connection to a
+rendezvous with a public address.
+
+**Media** is the ICE problem. STUN tells each peer what its own address looks
+like from outside, which is enough whenever both NATs accept a packet from
+somewhere they have just sent one to. TURN relays when they will not, which on
+mobile carriers is common: symmetric NAT gives a different external port per
+destination, so the address the phone learned from STUN is not the address the
+Pi's packets arrive at.
+
+Measured here: the house has a **real public IPv4** (not in 100.64.0.0/10,
+so not carrier-grade NAT), and IPv6 is a **ULA only**
+(`fd14:…`), so there is no globally routable v6 to fall back on. A public v4
+means a forwarded port *would* work; it is excluded by the requirement, not by
+the network.
+
+### What is built
+
+* **`aipi5/call/turn.py`** — Coturn's `use-auth-secret` scheme. A username of
+  `<expiry>:<name>` and a password of `base64(HMAC-SHA1(secret, username))`,
+  computed per call. The shared secret stays on the Pi; what reaches the phone
+  expires within the hour.
+
+  This is not ceremony. A fixed TURN password has to be sent to the phone to be
+  used, so it lives in local storage on a device somebody can lose, and a
+  leaked one is an open relay on somebody else's bill. Eleven tests cover it,
+  including one that computes the expected password from the specification
+  rather than from our own function — a test that calls the same code twice
+  proves only that it is deterministic — and one asserting the secret does not
+  appear anywhere in what is sent to a peer.
+
+* **ICE servers are delivered per call**, to both ends, in the ring response
+  and the answer response, because the credentials expire. A page holding stale
+  ones is a call that fails on the cellular path only.
+
+* **Route reporting.** Both pages read `getStats()` on connect and send the
+  selected candidate pair to the journal: `host`, `srflx` or `relay`, with the
+  round-trip time. This is the diagnostic phase 3 cannot do without —
+  "connected" and "connected *through the relay*" look identical on screen and
+  are completely different facts, one of them costing bandwidth on a server
+  somebody pays for.
+
+* **Degradation preference and a bitrate cap.** `balanced`, not the default
+  `maintain-framerate`, which holds 30 fps and destroys resolution until the
+  picture is unrecognisable. This is the requirement's "reduce quality rather
+  than repeatedly freeze" in one setting. The cap is on the home connection's
+  *upstream*, which is the scarce direction.
+
+* **Automatic ICE restart.** The phone is the caller, so renegotiation is its
+  job. A Wi-Fi to cellular handover gives the phone an entirely new address and
+  nothing in the old candidate set can reach it; only a restart re-gathers.
+  Bounded at 30 s, after which the call ends cleanly and releases the Brio —
+  which is what the requirement asks for once recovery has not worked.
+
+* **`scripts/setup-turn.sh`** — configures Coturn on a public host and writes
+  the Pi's half. It refuses to be the Pi, and the config denies relaying to
+  every private range, because a TURN server will otherwise forward to anything
+  on its own network if asked.
+
+### The camera that did not come back
+
+Found while testing the above, and it is the more serious find.
+
+`Camera.reclaim()` ran the instant a call ended, **while the browser still held
+`/dev/video0`**. `open()` failed, the borrower flag had already been cleared,
+and nothing ever tried again. The assistant then had no camera for the rest of
+the session — no person detection, no screensaver, no camera page — from a call
+that had ended perfectly normally. The journal said `the call is over: camera
+reclaimed`, which was simply false.
+
+Two things were wrong and both are fixed. The first attempt now arms a retry
+that the voice loop's idle path drives every two seconds for a minute, then
+gives up with one error rather than a warning forever; and the log line reports
+what happened instead of what was intended. Measured after the fix: the first
+attempt fails, the third succeeds three seconds later, `lent_to` clears and the
+camera is running again. Nine tests cover the lend/reclaim cycle, including
+that an idle retry opens nothing — it runs on every frame.
+
+### Phase 3, as deployed
+
+Tailscale, chosen over a Cloudflare tunnel or a VPS. The end state:
+
+```
+iPhone (any network) ──tailnet──▶ aipi5.<tailnet>.ts.net:443
+                                  tailscale serve  (real Let's Encrypt cert)
+                                        │ proxies to
+                                        ▼
+                                  127.0.0.1:8443   aipi5/call/server.py
+```
+
+`config/aipi5.yaml` now carries `host: 127.0.0.1`, `tls: false`. Verified with
+`ss`: the call server listens on loopback **only**, where it used to be on
+`0.0.0.0`. The old LAN address answers nothing. The certificate is a real one
+valid to 9 Nov 2026 and Tailscale renews it, so the fingerprint ceremony is
+gone — which is worth more than the convenience, because the habit it was
+building was clicking through certificate warnings.
+
+Measured after the change: 401 without a token, 200 with one, the previous
+token dead, a long poll held for 25.02 s through the proxy, and a full call —
+ring, auto-answer, `chromium` holding `/dev/video0` at **1280×720 MJPG**,
+`pipewire` holding the Brio microphone, `python` still holding the TI
+microphone so AIA never goes deaf — then a clean hang-up with the camera back
+in about a second.
+
+### Three bugs the proxy exposed
+
+None of these were caused by Tailscale. All three were already there and only
+became visible once a connection-pooling proxy sat in front.
+
+**An unread request body desynchronised the next request.** `/call/v1/ring`
+never read its body, and the phone posts `{}` to it. On a kept-alive HTTP/1.1
+connection those two bytes stay in the socket and the *following* request is
+parsed starting from them: `501 Unsupported method ('{}POST')`. It cost a lost
+`bye` — which left a call up with the camera lent — and a failed page load, and
+it survived a hundred clean retries in between, because it only bites when the
+proxy reuses a connection.
+
+`do_POST` now reads the body before dispatching, so no route can reintroduce
+it, and the oversized and unauthorised paths drain it too — refusing without
+draining desynchronises just as thoroughly. Five tests cover it on a single
+reused connection, and they were confirmed to fail against the old behaviour.
+Any test that opens a fresh connection per request is blind to this.
+
+**A call that timed out never gave the hardware back.** `SignalingHub.sweep()`
+would expire an abandoned call and return the hub to idle, but nothing told the
+assistant: `on_call_change` was only ever called from an HTTP handler. So a
+phone that rang and vanished left the camera lent to a browser and the music
+paused — permanently, from a call nobody had hung up. Both loop paths now go
+through the one reconciler, which is idempotent, so there is no call site left
+to forget. Verified by ringing and abandoning: timeout at 45 s, audio restored,
+camera reclaimed three seconds later.
+
+**The lockout became global.** Behind the proxy every request arrives from
+`127.0.0.1`, so rate-limiting on the peer address would have meant five bad
+guesses from any device locking out the phone that is allowed to call — a
+defence turned into a denial of service against its own user.
+`X-Forwarded-For` is now used, but **only when the connection came from
+loopback**; trusting it from a remote peer would let anyone claim a fresh
+address per request and never be limited at all. Six tests.
+
+The listen backlog was also raised from the stdlib default of 5 to 64. That was
+hardening rather than a diagnosis — it went in before the desync was found, on
+the theory that a burst was being dropped, and it is kept because 5 is thin in
+front of a pooling proxy.
+
+### Measured over 5G: no relay is needed
+
+A call from the iPhone on cellular, with the Pi behind the home router,
+2026-08-11:
+
+```
+call route: host/udp -> prflx rtt 34ms              (the Pi)
+call route: phone prflx/udp -> host rtt 37ms        (the phone)
+tailscale:  active; direct <phone's cellular address>  (the transport underneath)
+```
+
+**No `relay` at either layer.** WireGuard punched directly through to the
+phone's cellular address rather than falling back to Tailscale's DERP, and
+WebRTC then paired the two tailnet addresses peer to peer on top of it. Media
+crosses the Internet with nothing in the middle. Round trip is 34–37 ms, which
+is comfortably inside conversational range.
+
+`prflx` — peer-reflexive — is the expected shape here and not a fault: the
+address the packets arrived from was not in the candidate list exchanged
+beforehand, so it was learned during connectivity checks, which is what happens
+when a WireGuard interface appears alongside the real ones.
+
+So **Coturn is not needed**, and `stun_servers` / `turn_servers` stay empty.
+`scripts/setup-turn.sh` remains for a carrier that turns out less cooperative;
+there would be nowhere on this network to run it, since a relay behind the same
+router is unreachable for exactly the reason the Pi is.
+
+### The diagnostic that reported nothing
+
+Worth recording because it nearly cost the answer above. The first version of
+`reportRoute` looked for a candidate pair the strictest way the specification
+allows — `nominated && state === "succeeded"` — and **returned quietly when it
+found none**. The first real call over 5G connected, worked, and left no route
+line at all.
+
+Two reasons it found nothing: WebKit does not populate `nominated` the way
+Chromium does, and the stats lag `connectionState` by a moment, so the first
+look is too early. Now it tries the transport's own `selectedCandidatePairId`,
+then a nominated succeeded pair, then any succeeded pair; retries four times a
+second apart; and **reports unconditionally**, even when the report is "getStats
+gave me no candidate pair".
+
+This is the second time in this feature that a silent early return hid a real
+answer — the first was `getUserMedia` never settling. The rule worth keeping:
+on this device nobody can open devtools, so a diagnostic that says nothing when
+it fails is indistinguishable from one that was never called.
+
+### A connected call with no phone behind it
+
+Found while inspecting a live call. A connected call deliberately has no
+deadline — a long conversation is not a stuck one — which left exactly one
+uncovered failure: a phone that disappears without hanging up. App killed,
+handset off, battery flat. The call would stay `connected` forever, the Brio
+lent to a browser, and the assistant without a camera until a restart.
+
+The phone holds a long poll continuously, so its silence is a reliable signal.
+Three missed polls (75 s) now ends the call and posts `bye` to the Pi's page so
+it tears its own side down rather than holding a peer connection to nobody.
+Four tests, including that a quiet-but-present phone is not hung up on, and
+that the rule does not apply before the call connects — `ringing` and
+`connecting` have their own deadlines, and the phone has not started polling
+yet.
+
+## 27d. Echo, and why the browser could not fix it
+
+Reported from a real call: the caller heard their own voice come back. That is
+the failure the audio-quality requirement is written about — the Brio capsule
+sits inches from the speaker the caller comes out of.
+
+### Measuring it instead of guessing
+
+Nobody was at the Pi, and echo is normally judged by ear. But WebRTC exposes
+the two numbers that settle it, and they can be read from anywhere:
+`track.getSettings()` reports the constraints as *applied*, and the audio
+`media-source` stats carry `echoReturnLoss` and `echoReturnLossEnhancement` in
+decibels — but only while a canceller is actually running.
+
+Sampled twice during a live call, thirty seconds apart:
+
+```
+aec=true ns=true agc=true rate=48000  erl=-30.0  erle=0.2
+aec=true ns=true agc=true rate=48000  erl=-29.5  erle=0.2
+```
+
+So the browser's canceller **was** enabled and was removing essentially
+nothing: 0.2 dB where tens of dB is healthy, and flat over time, so not a
+matter of convergence. The negative ERL — the microphone about 30 dB stronger
+than the reference being subtracted — is what a canceller looks like when it
+cannot align the two signals.
+
+That is structural. A browser has to *estimate* the delay around
+`Chromium → PipeWire → HDMI → speaker → air → Brio → PipeWire → Chromium`.
+HDMI sinks buffer deeply, and the Brio runs on its own USB clock while the sink
+runs on the display clock, so the two drift. AEC3's delay search cannot hold it,
+and no constraint fixes that.
+
+### Moving cancellation into the audio graph
+
+PipeWire has no such problem: it *is* the graph, so it knows exactly which
+samples went to the sink and when. `libspa-aec-webrtc` was already installed —
+see section 27a — and `config/pipewire-echo-cancel.conf` wires it into a
+virtual microphone and a virtual speaker that the call opts into by name.
+
+### The mistake, which cost a call to find
+
+The first attempt deliberately left the default sink alone, so that the
+assistant's own speech could not be affected — the reasoning being that a
+mistake there makes the device silent in a room nobody is in. The call would
+opt in on its own: capture from `aipi5_call_mic`, and point the remote audio
+element at `aipi5_call_speaker` with `setSinkId`.
+
+The diagnostic then reported `canceller=pipewire` and `erle=0.2` — routing
+taken, echo unchanged. What the numbers could not show, and the live graph
+could, was this:
+
+```
+Chromium:output_FL |-> aipi5_call_speaker:playback_FL              (cancelled)
+Chromium:output_FL |-> alsa_output...hdmi.hdmi-stereo:playback_FL  (not)
+```
+
+**Chromium opens more than one playback stream.** `setSinkId` moves only the
+one attached to that element; the other carries no target and follows the
+default sink. So the caller's voice reached the speaker twice — once through
+the canceller and once around it — and a canceller can only subtract what it
+played. The second path was echo it could never remove.
+
+The caution about the default sink was wrong, and provably so: the canceller
+forwards its own playback straight to HDMI, so making it the default cannot
+silence anything. Verified afterwards by making the assistant speak and finding
+Piper's stream routed through it —
+`alsa_playback.python3.13:output_FL -> aipi5_call_speaker`, forwarded to HDMI,
+with the spoken line in the journal.
+
+Two lessons worth more than the fix. **`erle` stopped being a useful number the
+moment PipeWire went in front of Chromium's canceller** — the browser reports
+low enhancement both when it is redundant and when it is failing, so the two
+became indistinguishable and the graph is now the check. And a diagnostic that
+reports a component is *connected* is not a diagnostic that the component is
+*exclusive*; the second output path was invisible to every measurement taken
+until somebody looked at the links.
+
+### The echo may not have been the Pi's at all
+
+Worth recording, because it reframes everything above. The echo was heard while
+testing **with the phone in the same room as the Pi**, and two devices in one
+room are an acoustic loop no canceller can win: the Pi's speaker reaches the
+phone's microphone and the phone's speaker reaches the Brio, each carrying the
+other's audio back. Neither canceller is wrong; there is simply a path between
+them through the air that neither can model.
+
+In use the phone is somewhere else, which is the case that matters and the one
+that was never tested for echo. So this is not known to be a defect, and it is
+not blocking.
+
+The work stands anyway. The bypass — Chromium reaching the speaker by a second
+path the canceller could not see — was measured in the live graph and was real
+regardless of what the caller heard.
+
+### Still unmeasured
+
+Whether a caller in a *different* room hears themselves. That is a judgement
+made with somebody at the Pi, and cannot be read from here. An attempt to
+measure it remotely — playing a loud speech-band stimulus and comparing the raw
+Brio against the cancelled source — failed outright: the Brio never registered
+the stimulus above its own noise floor (peak −39.6 dBFS against a floor of
+−40.9), so the recording proves nothing about cancellation. The 17 dB
+difference between the two captures is noise suppression on room tone.
+
+If echo does appear from a different room, the level mismatch is the first
+suspect: the Brio captures at 0.88 into a sink sitting at 0.15.
+
+Also unmeasured: latency of the *media* as opposed to the transport. The
+34–37 ms in section 27c is the ICE round trip, not glass-to-glass.
+
+### The alternatives, for the record
+
+Phase 3 needs a public address, and every way of getting one is a choice about
+money, accounts and where things live that cannot be made from here:
+
+| route | signalling | media | cost |
+|---|---|---|---|
+| Cloudflare Tunnel | outbound from the Pi, real certificate, any browser | still needs STUN/TURN | free; a named tunnel wants a domain |
+| Tailscale | tailnet address, real certificate | the tailnet carries it; TURN likely unnecessary | free; needs the app on the phone |
+| VPS | reverse proxy or rendezvous | Coturn on the same host | ~$5/month, wants a domain |
+
+Nothing is installed on the Pi today — no `cloudflared`, `tailscale`,
+`coturn`, `wg` or `zerotier`. Whichever is chosen, publishing this service is
+an outward-facing change to a device with a camera in a room somebody lives in,
+so it is not one to make on somebody's behalf.
+
+## 27e. Phase 6 — reliability, and two boot failures
+
+### Audio priority, verified with music actually playing
+
+Phase 5 asks that a call pause Kodama and resume it afterwards. That had been
+implemented and never exercised. With a track playing:
+
+```
+before call : Playing at 19.705
+during call : Paused  at 21.456
+still during: Paused  at 21.456     <- position frozen
+after call  : Playing at 29.386     <- resumed from where it stopped
+```
+
+The position does not advance during the call, which is the distinction this
+project insists on: **paused over MPRIS, not muted.** A muted song keeps
+playing and loses the seconds it was silent for.
+
+### The assistant did not start after a reboot
+
+Rebooting had never been tested — section 28 still listed it as outstanding.
+It fails, and in the worst possible shape: both units sat `inactive (dead)`
+while `is-enabled` reported `enabled`. Nothing failed, nothing retried, and
+every status command said the system was fine.
+
+```
+default.target: Found ordering cycle on aipi5-ui.service/start
+default.target: Found dependency on aipi5.service/start
+default.target: Found dependency on kodama-lite.service/start
+default.target: Found dependency on default.target/start
+default.target: Job aipi5.service/start deleted to break ordering cycle
+```
+
+`kodama-lite.service` is `After=default.target` *and* `WantedBy=default.target`.
+Our `After=kodama-lite.service` closed the loop, and systemd breaks a cycle by
+deleting jobs from it — the job it chose was ours.
+
+The ordering was insurance against a race the code already handles:
+`KodamaLauncher` waits for the player to reach the bus, and AIPI5 starts Kodama
+on request rather than depending on it. Removed. See `systemd/aipi5.service`.
+
+### Fixing that exposed a second one, which this work had caused
+
+With the cycle gone the assistant started — and then restarted **nine times in
+two minutes**, never once listening:
+
+```
+cannot open the microphone: the microphone matching 'USB PnP Sound Device'
+exists but could not be opened — it is almost certainly already in use.
+```
+
+PipeWire was holding it. Specifically, the echo canceller was:
+
+```
+echo-cancel-capture:input_MONO
+  |<- alsa_input.usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device-00...
+```
+
+`capture.props.node.target` names the Brio, but at boot the USB camera has not
+enumerated yet, so the target does not resolve — and **a PipeWire stream whose
+target is missing does not fail, it links to the default source instead.** That
+was AIA's microphone. The canceller took it, held it for the session, and
+cancelled echo out of the wrong capsule while the assistant died in a loop.
+
+Two fixes, and the second matters more than the first:
+
+* `node.dont-reconnect = true` on both ends of the canceller, so a target that
+  is not there yet means *no link* rather than the wrong link.
+* `config/wireplumber-reserve-aia-mic.conf` disables the TI device in PipeWire
+  entirely. AIA opens that capsule directly through ALSA and an ALSA capture
+  device allows one reader; PipeWire managing it at all was a race waiting for
+  a slow boot, canceller or no canceller. Nothing on this device wants it
+  through PipeWire.
+
+### After the fixes, measured on a cold boot with nothing started by hand
+
+| check | result |
+|---|---|
+| services | `active active`, **0 restarts** |
+| ordering cycle errors | 0 |
+| TI microphone | held by `python` — the assistant is listening |
+| echo canceller | capturing from the **Brio**, correctly |
+| camera | running, Brio 101 |
+| call server | listening, reachable at the tailnet URL |
+| default sink | still the canceller (persisted) |
+| tailnet + serve | up, certificate valid |
+| unauthenticated request | 401 |
+| ring → auto-answer | camera taken by `chromium` |
+| hang up | camera back with Python in ~3 s |
+
+### What is still untested
+
+Different Wi-Fi networks; a deliberately slow or lossy link; a mid-call network
+drop (the ICE restart is implemented and has never fired in anger); the Brio
+unplugged and replugged while running; the speaker unavailable. And the one
+that needs a person: whether a caller in a different room hears an echo.
+
+The Brio being unavailable *during* an incoming call is covered, though it was
+verified by accident rather than design — see the portal failure in section
+27b, where the call ended cleanly with `the Brio could not be opened` and the
+camera was reclaimed.
 
 ## 28. Instructions for future development
 

@@ -30,12 +30,24 @@ requests
 # installing them with pip either fails or produces something that does not
 # work against the system libraries:
 #
-#     sudo apt install python3-picamera2      # the camera
+#     sudo apt install python3-opencv         # the camera, over V4L2
 #     sudo apt install hailo-all              # HailoRT, for the AI HAT+ 2
 #
-# Both are optional. Without picamera2 there is no camera and no person
-# detection; without hailo-all, person detection needs `backend: cpu` and the
-# package below.
+# Both are optional. Without OpenCV there is no camera and no person detection;
+# without hailo-all, person detection needs `backend: cpu` and the package
+# below.
+#
+# python3-opencv rather than `pip install opencv-python`: the venv already sees
+# system packages for hailo_platform's sake, the Debian build links the system
+# V4L2 and JPEG libraries this camera path goes through, and it is one apt line
+# against a wheel that is 60 MB and, on some aarch64 images, a source build. If
+# a deployment would rather have the wheel, `opencv-python-headless` in the
+# venv works — nothing here imports anything but `cv2.VideoCapture`,
+# `cv2.imwrite` and two constants.
+#
+# The camera is a USB UVC device — a Logitech Brio 101 — which is why this is
+# OpenCV and not picamera2. picamera2 speaks to libcamera on the CSI ribbon
+# connector and does not see a webcam at all.
 #
 # onnxruntime is only needed for that CPU fallback, and is deliberately not a
 # hard requirement — it is 50 MB of wheel for a code path a Pi with an AI HAT+

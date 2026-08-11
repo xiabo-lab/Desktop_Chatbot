@@ -5,11 +5,13 @@ milliseconds **or** a conversation with GPT — plus weather, local news, bedtim
 stories, a camera that can describe the room, local person detection, and a
 1280×800 touchscreen that gives way to a clock when nobody is there.
 
-**Status: deployed and running on `aipi5.local`.** 130 tests pass on the Pi as
+**Status: deployed and running on `aipi5.local`.** 184 tests pass on the Pi as
 well as off it. Verified on the device: SenseVoice loads, both Piper voices
 speak, the wake model loads, the OpenAI model answers, live weather and local
 news reach the speaker, Kodama-Lite starts by command and answers over MPRIS,
-and the router matches in 9.7–22.7 ms.
+and the router matches in 9.7–22.7 ms. The Logitech Brio 101 opens on
+`/dev/video0`, the Hailo detector reads it every 500 ms, and “what do you see”
+goes camera → vision model → speaker in about six seconds.
 
 Verified in the room, not just in tests:
 
@@ -73,7 +75,14 @@ Microphone → Wake word (小艾同学, AIA's Vosk matcher)
                   ↓
    1280×800 touchscreen ──→ screensaver when the room is empty
         ↑
-   Camera Module 3 → person detection on the AI HAT+ 2 (local, never uploaded)
+   Logitech Brio 101 (USB) → person detection on the AI HAT+ 2 (never uploaded)
+
+   Main page ─┬─→ Talk     conversation, and only conversation
+              ├─→ Call     the remote video call — a phone rings, the Pi answers
+              ├─→ Camera   live preview + the answer over the picture
+              ├─→ News     today's Bay Area stories
+              ├─→ Weather  today, in detail
+              └─→ Music ──→ Kodama-Lite (a separate app, raised not relaunched)
 ```
 
 ## What it can do
@@ -92,9 +101,20 @@ Plus:
 | "what's the weather" | live Open-Meteo for San Jose 95127, cached ten minutes |
 | "what's the local news" | San Jose / Santa Clara feeds, interleaved and de-duplicated, summarised to 3–5 stories |
 | "what time is it" | the device's clock — never the model's guess |
-| "what do you see" | one fresh frame from Camera Module 3, described by the vision model |
+| "what do you see" | one fresh frame from the Brio 101, described by the vision model |
 | "tell me a bedtime story about a dragon" | a child-safe story of a length you can ask for |
 | anything else | a conversation, in about 60 words, in the language you asked in |
+
+…and six buttons, each of which opens its own page:
+
+| press | what opens | what it says |
+|---|---|---|
+| **Talk** | the conversation, and nothing else on it | starts listening, as the wake word does |
+| **Call** | the remote video call page, full screen | nothing — the Pi answers calls, it does not place them |
+| **Camera** | a live preview, with the answer drawn over the picture and faded ten seconds after the speaking stops | what it sees |
+| **News** | today's Bay Area stories, headline and summary | two sentences on what matters — not the list, which is on the screen |
+| **Weather** | temperature, high/low, feels-like, UV, humidity, wind, chance of rain | the sky, the range, and at most one thing worth acting on |
+| **Music** | Kodama-Lite itself | whether it opened |
 
 ## Two things worth knowing before you deploy
 
@@ -145,13 +165,14 @@ On the Pi, with an AIA checkout already working at `~/AI_Assit`:
 sudo apt install pipewire-alsa    `# without it every reply is synthesised and never heard` \
                  libportaudio2    `# sounddevice is a binding, not the library` \
                  playerctl        `# MPRIS transport control` \
-                 python3-picamera2 hailo-all
+                 python3-opencv    `# the camera, over V4L2` \
+                 hailo-all
 
 git clone <this repo> ~/AIPI5 && cd ~/AIPI5
 python3 -m venv .venv
 
-# picamera2 and hailo_platform are Debian packages with no usable wheel, so the
-# venv has to be able to see them. Without this the assistant starts *degraded*
+# cv2 and hailo_platform are installed as Debian packages, so the venv has to
+# be able to see them. Without this the assistant starts *degraded*
 # rather than failing — no camera, no person detection, no screensaver — which
 # is the kind of missing that takes a day to notice.
 sed -i 's/^include-system-site-packages = false/include-system-site-packages = true/' .venv/pyvenv.cfg
@@ -224,7 +245,7 @@ with `ssh -L 8092:127.0.0.1:8092 aipi5.local`.
 specification is explicit that the old 1920×440 geometry must not be inherited,
 and AIA's layer-shell strip is not used here.
 
-The main screen is the conversation, a status line, and five buttons. The
+The main screen is the conversation, a status line, and six buttons. The
 buttons are why this UI is not read-only the way AIA's is: each posts a name
 from a fixed tuple into a queue and the voice loop decides what it means.
 Nothing in that tuple is destructive — shutting down, restarting and closing the
@@ -237,6 +258,213 @@ weather refreshed every ten minutes. It comes up 60 seconds after the room
 empties and goes away the moment somebody returns — no touch required, which is
 section 26. Speaking to the device from outside the camera's view takes it down
 too.
+
+## The screen: six pages, six cooldowns
+
+The buttons open **pages, not windows**. This is a Chromium kiosk on a
+compositor with no title bars and no taskbar, so a second window would be a
+page nobody could get back from; the six destinations are views in one
+document, exactly one of them visible. It also makes "no duplicate instances"
+a property of the design rather than a rule to enforce — a view is either the
+current one or it is not, and navigating to the current one does nothing.
+
+**Each button then ignores itself for ten seconds**, independently. A finger on
+a capacitive panel produces repeats, and every one of these actions takes
+seconds of real work: a capture and a vision request, a feed fetch, a Tauri app
+cold-starting. Pressing Camera never disables Weather. The cooldown is enforced
+on the server rather than only in the page — a reload cannot bypass it — and
+the seconds remaining are published so the button can draw a countdown, because
+a button that is merely dead reads as broken, which is exactly what makes
+somebody press it again.
+
+Verified on the device: ten rapid Camera presses produce one action, and all
+five buttons pressed in a row produce five. (Measured before Call was added;
+the equivalent test now covers six.)
+
+## Call: a phone rings the Pi and it picks up
+
+**Off by default.** It is the one setting here whose failure mode is a camera
+and a microphone reachable from the network rather than a feature that does not
+work, so two things have to be true before anything listens: `call.enabled` in
+the YAML, and at least one paired phone.
+
+```bash
+./scripts/pair-phone.sh "Fuwen's iPhone"    # prints a one-time link
+./scripts/pair-phone.sh --list
+./scripts/pair-phone.sh --revoke "Fuwen's iPhone"
+```
+
+**Both ends are browsers and Python never touches the media.** Chromium already
+has the encoder, the congestion controller that lowers bitrate instead of
+freezing, and — the part that cannot be added afterwards — an echo canceller
+that works because one process owns both the capture and the playback stream.
+The Brio capsule is inches from the speaker the caller comes out of, so that
+last one is the whole audio-quality story. Python does signalling,
+authentication, and deciding who owns the Brio.
+
+There are two doors into one hub, and the reason is secure contexts:
+`getUserMedia` refuses to run outside one, `http://` on a LAN address is not
+one, and `http://127.0.0.1` is. So the Pi's page keeps talking to the existing
+loopback server with no TLS anywhere, and only the phone needs a certificate —
+which also means `aipi5/ui/server.py` stays loopback-only and unauthenticated,
+and the single listener on the network is `aipi5/call/server.py`, where every
+route authenticates before it does anything.
+
+**Auto-answer is the absence of a prompt, not a rule.** The token is checked at
+the door, so an unknown caller never reaches a state the screen can see and
+there is no Accept button to skip. Ringing deliberately does not own the
+camera: an authorised caller who has dialled but not been picked up has still
+turned nothing on.
+
+Verified on the device: unauthenticated requests get 401 and five failures lock
+an address out for five minutes; a ring is answered in about a second with no
+touch; the call runs the Brio at **1280×720 MJPEG at 30.000 fps**, which is the
+only configuration this camera can actually deliver; `/dev/video0` belongs to
+`chromium` during the call and to `python` a second after it ends; and AIA
+keeps the TI microphone throughout, so the assistant never goes deaf.
+
+Two things about the Pi that this feature needed and that are worth knowing:
+
+**Chromium cannot open a camera on this Pi without help.** It prefers the
+xdg-desktop-portal `Camera` interface, and no portal backend installed here
+implements it — so `getUserMedia` does not fail, it never returns.
+`scripts/aipi5-ui.sh` passes `--disable-features=PipeWireCamera,
+WebRtcPipeWireCamera` to send it to V4L2 instead. Chromium keeps only the last
+`--disable-features` flag, so it is merged with `TranslateUI` rather than added
+beside it.
+
+**A changed `index.html` needs `systemctl --user restart aipi5`, not
+`aipi5-ui`.** The server reads the page once and holds it, so restarting the
+browser reloads the same bytes out of the assistant's memory.
+
+**Confirmed working from an iPhone on 2026-08-11**, same network. Two things
+that test did not measure and that want the room rather than the log: whether
+the echo canceller actually stops the caller hearing themselves with the
+speaker at a normal volume, and the latency as a number. Both are worth doing
+before a relay is added, since a relay can only make them worse.
+
+### Calling from outside the house
+
+A phone on a cellular network cannot address a Pi behind a home router, and
+opening a port is what this feature is supposed to avoid. The answer here is a
+**Tailscale tailnet**: both devices join one, and the phone reaches the Pi at a
+name that works from anywhere.
+
+```bash
+./scripts/setup-tailscale.sh          # check, and print what is left
+./scripts/setup-tailscale.sh --apply  # install the client
+sudo tailscale up                     # yours to run — it needs your account
+sudo tailscale serve --bg --https=443 http://127.0.0.1:8443
+```
+
+Two steps stay yours deliberately. `tailscale up` authenticates the machine
+against your account, and `tailscale serve` publishes a camera and a microphone
+to everyone on your tailnet — a decision about who can see into the room, not a
+detail of a deployment. Serve and HTTPS certificates both have to be enabled
+for the tailnet first, in the admin console under **DNS**.
+
+Deployed here, and it is **safer than the home-network arrangement it
+replaces**:
+
+```
+iPhone (any network) ──tailnet──▶ aipi5.<tailnet>.ts.net:443
+                                  tailscale serve  (real Let's Encrypt cert)
+                                        │ proxies to
+                                        ▼
+                                  127.0.0.1:8443   the call server
+```
+
+With Tailscale terminating TLS, `host: 127.0.0.1` and `tls: false` are correct:
+the call server stops accepting connections from the network altogether — `ss`
+shows it on loopback only, where it used to be on `0.0.0.0` — and the only way
+in is through the tailnet. The certificate warning goes with it, which is worth
+more than the convenience, since the habit it was building was clicking through
+certificate warnings. AIPI5 **refuses to start** with `tls: false` on any
+non-loopback address, because a bearer token over plaintext is a bearer token
+anyone on the path can read.
+
+Putting a connection-pooling proxy in front exposed three bugs that were
+already present and invisible without one — an unread POST body corrupting the
+*next* request on the same connection, a timed-out call never giving the camera
+back, and the rate-limiter counting the proxy instead of the caller. All three
+are fixed and covered by tests; `REPORT.md` §27c has the detail, and the first
+is worth reading if you ever add a route here.
+
+**STUN and TURN are configured and empty, and measurement says they can stay
+that way.** A call from an iPhone on 5G, Pi behind the home router:
+
+```
+call route: host/udp -> prflx rtt 34ms           (the Pi)
+call route: phone prflx/udp -> host rtt 37ms     (the phone)
+tailscale:  active; direct <phone's cellular address>   (underneath)
+```
+
+No `relay` at either layer — WireGuard punched straight through to the phone's
+cellular address, and WebRTC paired the two tailnet addresses peer to peer on
+top. Media crosses the Internet with nothing in the middle, at conversational
+latency. `scripts/setup-turn.sh` stays for a less cooperative carrier; nothing
+needs standing up today.
+
+Don't guess at this — both pages report the selected candidate pair after every
+connect, always, even when they cannot find one:
+
+```bash
+systemctl --user status aipi5 -n 50 | grep 'call route'
+```
+
+`host` is direct, `srflx` went via STUN, `relay` is being carried by a server.
+If TURN is ever needed, credentials are minted per call from a shared secret
+and expire within the hour, so nothing reusable reaches the phone.
+
+`REPORT.md` §27a has the Brio's measured formats, §27b the call architecture
+and §27c phase 3.
+
+## The assistant's voice outranks the music
+
+When the assistant speaks, Kodama is **paused** and then resumed where it
+stopped. Pausing over MPRIS rather than muting is the whole point — a muted
+song keeps playing and loses the seconds it was silent for. AIA's `Ducker`
+already did this around a spoken turn; what is new is that the buttons and
+pages go through it too, and that it is re-entrant.
+
+The re-entrancy is not decoration. `Ducker.duck()` starts by forgetting what it
+previously paused, so two overlapping ducks — a button pressed mid-turn, a page
+speaking while the voice loop holds the floor — leave the music paused with
+nothing left to resume, and nothing in the log to say when. `AudioPriority`
+counts holders and only the outermost touches the bus.
+
+Measured on the device: playing at 106 s, paused at 108.7 when the Weather page
+spoke, playing again nine seconds later at 108.9.
+
+## The camera
+
+A **Logitech Brio 101 on USB**, which replaced the CSI Camera Module 3 this
+project was originally written for. One `cv2.VideoCapture` on a V4L2 node,
+opened once at startup and shared under a lock by the two things that want
+frames — the person detector twice a second, and the vision question when
+somebody asks. Opening it twice would fail with a device-busy error at exactly
+the moment somebody spoke to it.
+
+Two consequences of the change are visible in `config/aipi5.yaml`:
+
+`device: auto` finds the camera **by name**, not by node. `/dev/video0` is not
+a stable identity — the Brio claims more than one node, one of which opens
+cleanly and never yields an image, and the order depends on what else was
+plugged in at boot. This is the same reasoning AIA applies to matching the
+microphone by name rather than by card number. Name an explicit node to
+override the search; a named device is never second-guessed.
+
+Frames are **drained before one is decoded**. V4L2 is a queue and hands back
+the oldest buffer the driver filled, so on a 30 fps stream polled twice a
+second the naive read is always stale and the staleness compounds. Grabbing
+without retrieving discards buffers without paying for a JPEG decode, so
+`Camera._read` walks to the end of the queue and decodes only there. A person
+who arrived four seconds ago is a screensaver that lifts after they have left.
+
+The Camera Module's two-stream trick — a full-size still and a small detection
+frame produced from one sensor read — is gone, because UVC gives one stream at
+one size. It cost nothing: the detector resizes to its model's input as its
+first step, so the second stream was only ever pixels it threw away.
 
 ## Person detection
 
@@ -273,7 +501,7 @@ well as today's outcome.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests -t .    # 119 tests, no hardware needed
+python -m unittest discover -s tests -t .    # 184 tests, no hardware needed
 ```
 
 No microphone, no camera, no accelerator, no network, no API key. That
@@ -294,7 +522,7 @@ aipi5/
   core/       aia_bridge (finds AIA), config (YAML), presence, preflight
   llm/        the OpenAI client, bounded conversation, tool schemas, prompts
   tools/      weather, news, clock, bedtime stories
-  vision/     camera (shared by both readers), description, person detection
+  vision/     camera (one V4L2 handle, shared), description, person detection
   kodama/     the one command AIA does not have: open the player
   ui/         the 1280×800 page, its server, and the shared state
 config/       aipi5.yaml — the settings a person changes

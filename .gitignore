@@ -23,3 +23,9 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+
+# The video call's credentials. These live under ~/.config/aipi5 by default and
+# should never appear here at all — this is the backstop for a deployment that
+# pointed them somewhere else, and tests/test_call.py asserts the tree is clean.
+*.pem
+call-devices.json

@@ -67,8 +67,12 @@ from aia.ui.history import ConversationLog
 from aia.ui.retention import Retention
 
 from aipi5 import __version__
+from aipi5.call.server import CallServer
+from aipi5.call.signaling import SignalingHub
+from aipi5.call.tokens import TrustedDevices
 from aipi5.core import config as config_mod
 from aipi5.core import preflight
+from aipi5.core.audio_priority import AudioPriority
 from aipi5.core.presence import Presence, PresenceTracker, ScreensaverPolicy
 from aipi5.kodama.launcher import KodamaLauncher
 from aipi5.llm import prompts
@@ -92,6 +96,19 @@ log = logging.getLogger("aipi5")
 # silence otherwise loops — open a turn, wait out `max_wait_ms`, close it, open
 # another — ducking and un-ducking the music on every pass.
 EMPTY_TURN_REFRACTORY_S = 1.0
+
+# What the news *page* asks the model for, as against what a spoken "what's
+# the local news" asks for. The page is already showing the headlines and the
+# summaries in a list somebody can read at their own pace, so reading them out
+# in order duplicates the screen and takes about three minutes. Two sentences
+# about what actually matters is the part a screen is bad at.
+NEWS_BRIEF = {
+    "en": ("Give me a two-sentence spoken summary of the most important local "
+           "news right now. Do not list the headlines one by one — the screen "
+           "is already showing them."),
+    "zh": ("用两句话简单说一下现在最重要的本地新闻。不要一条一条念标题，"
+           "屏幕上已经显示了。"),
+}
 
 LISTENING_TEXT = {"en": "Listening…", "zh": "我在听…"}
 CONFIRM_LISTEN = {"en": "Say yes or no…", "zh": "请回答“确定”或“取消”…"}
@@ -163,6 +180,11 @@ class Assistant:
             self.aia.audio, replace(self.aia.vad,
                                     max_wait_ms=self.aia.vad.confirm_wait_ms))
         self.ducker = Ducker()
+        # Everything that makes the assistant's own noise goes through this,
+        # and it is the only thing that calls the ducker. See
+        # `aipi5/core/audio_priority.py` for why a second caller would be a bug
+        # that leaves the music paused forever with nothing in the log.
+        self.audio = AudioPriority(self.ducker)
         self.machine = Machine(self.aia.target_latency_ms)
 
         # ── the command set: AIA's, plus one launcher ────────────────
@@ -196,6 +218,21 @@ class Assistant:
             settings=settings,
         )
 
+        # ── the remote video call ────────────────────────────────────
+        #
+        # Built unconditionally so the settings page can say why calling is off,
+        # and started only when it is on. Nothing here touches a capture device:
+        # the media is Chromium's on both ends, and this side does signalling,
+        # authentication, and deciding who owns the Brio.
+        self.call_hub = SignalingHub()
+        self.call_devices = TrustedDevices(settings.call.devices)
+        self.call = CallServer(settings.call, hub=self.call_hub,
+                               devices=self.call_devices,
+                               on_change=self.on_call_change)
+        #: What the call was doing last time we looked, so a transition can be
+        #: acted on once rather than on every poll.
+        self._call_live = False
+
         # ── presence and the screen ──────────────────────────────────
         self.tracker = PresenceTracker(settings.person.frames_to_appear,
                                        settings.person.frames_to_disappear)
@@ -203,7 +240,14 @@ class Assistant:
                                              settings.screensaver.enabled)
         self.watcher: PresenceWatcher | None = None
         self.web = WebUI(settings.display, state=self.ui_state,
-                         history=self.history, info=self.system_info)
+                         history=self.history, info=self.system_info,
+                         # The dedicated pages read these directly rather than
+                         # through a turn: a weather page that had to wait for
+                         # the voice loop to be idle would be blank whenever
+                         # somebody was talking.
+                         weather=self.weather, news=self.news,
+                         camera=self.camera if settings.camera.enabled else None,
+                         call=self.call, on_call_change=self.on_call_change)
         self.report: preflight.Report | None = None
         # Filled in by `start()`; defaulted here so `verify()` and the settings
         # page are safe to call against an assistant that failed to finish
@@ -253,6 +297,15 @@ class Assistant:
 
         self._ui_started = ui_started
 
+        # After the UI, because a call is useless without the screen that
+        # answers it — and never fatal, for the same reason as everything else
+        # optional here: an assistant that cannot take calls is still an
+        # assistant.
+        if self.settings.call.enabled:
+            if not self.call.start():
+                log.warning("remote calling is on but not listening: %s",
+                            self.call.error)
+
         # Asked once, at startup, off the voice path. A model name the API does
         # not recognise is then a line in the boot log naming the model, rather
         # than an apology to the first person who speaks.
@@ -289,13 +342,27 @@ class Assistant:
             mic=mic,
             stt=self.stt,
             speaker=(self.speaker is not None, ""),
-            camera=(self.camera.available(), self.camera.error or ""),
+            camera=(self.camera.available(), self._camera_detail()),
             detector=(self.watcher is not None, ""),
             llm=(self._llm_ok, self._llm_detail or ""),
             wake=self.detector_wake,
             ui_started=self._ui_started,
         )
         self.publish()
+
+    def _camera_detail(self) -> str:
+        """Which camera, on which node — or why there is none.
+
+        Worth the four lines because the camera is now a USB device that can
+        move between nodes, and "camera ok" without a name is the line somebody
+        reads on the day the assistant is describing the view out of the wrong
+        one.
+        """
+        described = self.camera.describe()
+        if not described["running"]:
+            return self.camera.error or ""
+        return (f"{described['name']} on {described['device']} "
+                f"at {described['still']}")
         return self.report
 
     # ── the screen ───────────────────────────────────────────────────
@@ -303,6 +370,48 @@ class Assistant:
     def on_presence(self, event) -> None:
         """Called from the detector thread. Must not block."""
         self.screensaver.presence_changed(event)
+        self.publish()
+
+    def on_call_change(self) -> None:
+        """The call state moved. Called from an HTTP handler; must not block.
+
+        This is the whole of the requirement's audio-and-hardware-priority
+        section, and it is deliberately in one place rather than spread across
+        the things it affects. A call outranks everything: the music pauses,
+        the assistant stops speaking, and the wake word stops firing — the last
+        because the Brio microphone is now carrying a conversation into a
+        speaker in the same room, and a wake word that triggers on the caller's
+        voice would have the assistant talking over them.
+
+        The camera is *not* touched here. It is lent on the way into answering,
+        by the handler that answers, because the order matters there — see
+        `_call_post` in `aipi5/ui/server.py`. It is taken back here, because by
+        then the only thing that knows the call is over may be the phone.
+        """
+        live = self.call_hub.live
+        if live == self._call_live:
+            self.publish()
+            return
+        self._call_live = live
+
+        if live:
+            # The floor, held for the duration. `AudioPriority` counts holders,
+            # so this nests correctly with a turn that was already in progress
+            # rather than fighting it for the ducker.
+            self.audio.acquire()
+            _silence_tts()
+            log.info("a call has the floor: music paused, wake word suspended")
+        else:
+            # The first attempt nearly always fails — the browser has not
+            # finished with the device yet — so this arms a retry rather than
+            # reporting success. The idle path finishes the job; see
+            # `Camera.reclaim`. Saying "camera reclaimed" here regardless was
+            # how a dead camera looked like a clean shutdown in the journal.
+            back = self.camera.reclaim()
+            self.audio.release()
+            log.info("the call is over: audio restored, camera %s",
+                     "reclaimed" if back else "still being released")
+
         self.publish()
 
     def refresh_weather(self) -> None:
@@ -317,6 +426,7 @@ class Assistant:
             screensaver=self.screensaver.should_show(),
             kodama_running=self.player.available(),
             degraded=self.report.degraded if self.report else [],
+            call=self.call_hub.snapshot(),
             **extra,
         )
 
@@ -333,6 +443,7 @@ class Assistant:
             "tts": self.speaker.describe() if self.speaker else [],
             "llm": self.llm.describe() if self.llm else {"available": False},
             "credentials": config_mod.describe_credentials(),
+            "audio_priority": self.audio.describe(),
             "camera": self.camera.describe(),
             "presence": self.watcher.describe() if self.watcher
             else {"backend": "not running", "state": self.tracker.state.value},
@@ -342,6 +453,7 @@ class Assistant:
             "conversation": self.conversation.describe(),
             "kodama": {"running": self.player.available(),
                        "service": self.settings.kodama.service},
+            "call": self.call.describe(),
             "checks": self.report.as_dict() if self.report else {},
         }
 
@@ -399,7 +511,7 @@ class Assistant:
         # spoken reply is the model's summary of it, and both belong on the
         # display. The description is what the tool put there.
         if self.vision is not None and "describe_camera_image" in reply.tool_calls:
-            self.ui_state.update(camera_description=self.vision.last_description)
+            self.ui_state.describe_camera(self.vision.last_description)
         return reply.text
 
     # ── shutdown ─────────────────────────────────────────────────────
@@ -416,6 +528,10 @@ class Assistant:
         that makes the *next* start fail for an unrelated-looking reason.
         """
         for name, closer in (
+            # First. It hangs up, which releases whatever is polling and lets
+            # the phone show "call ended" instead of timing out — and it is the
+            # only thing here somebody on the other end of is waiting on.
+            ("call", self.call.stop),
             ("presence", lambda: self.watcher and self.watcher.stop()),
             ("camera", self.camera.close),
             ("wake", lambda: self.detector_wake and self.detector_wake.close()),
@@ -434,6 +550,29 @@ class Assistant:
                 closer()
             except Exception:
                 log.debug("closing %s failed", name, exc_info=True)
+
+
+def _silence_tts() -> None:
+    """Cut off whatever the assistant is saying, right now.
+
+    `Speaker` has no `stop` — it has `say` and `wait`, because until now
+    nothing ever wanted a reply to end early. A call does: the sentence in
+    progress is about to be played into a room where two people are talking to
+    each other, and waiting politely for it to finish is several seconds of the
+    assistant over the top of a conversation.
+
+    `sd.stop()` on the module AIA is already using, which is the same PortAudio
+    instance in the same process. Deliberately *not* `sd._terminate()` /
+    `_initialize()`: `aia/tts/piper.py` documents at length that rebuilding
+    PortAudio to fix output also destroys the input stream this process holds,
+    and a call that killed the microphone would take the assistant with it.
+    Stopping a playback stream does no such thing.
+    """
+    try:
+        import sounddevice as sd
+        sd.stop()
+    except Exception:
+        log.debug("could not stop playback for a call", exc_info=True)
 
 
 def _cannot(error: str, language: str) -> str:
@@ -525,6 +664,7 @@ def main() -> int:
             log.info("AIPI5 ready — say %s", cfg.wake.phrase)
             last_empty_turn = 0.0
             last_weather = time.monotonic()
+            in_call = False
 
             while not stopping:
                 frame = next(frames)
@@ -535,9 +675,52 @@ def main() -> int:
                 # thread so there is still exactly one thing driving the
                 # microphone.
                 requested = assistant.ui_state.take_action()
+
+                # A call outranks the assistant's own voice. The wake word is
+                # not merely ignored while one is up — it is never asked, so
+                # the caller's voice coming out of the speaker beside the Brio
+                # cannot start a turn that would then talk over them. Buttons
+                # go the same way for the same reason.
+                #
+                # `detect` is skipped rather than its result discarded because
+                # the recogniser is stateful: feeding it a whole call's worth
+                # of audio and then throwing away the answers would leave it
+                # part-way through a phrase when the call ends.
+                if assistant.call_hub.live:
+                    in_call = True
+                    assistant.call_hub.sweep()
+                    # `on_call_change` rather than `publish`, and that is the
+                    # whole fix for a bug worth naming. The hub can end a call
+                    # on its own — a timeout, from `sweep` — and when it did,
+                    # nothing told the assistant: the camera stayed lent and
+                    # the music stayed paused, forever, from a call nobody had
+                    # hung up. Every path that can change the call's state now
+                    # goes through the one reconciler, which is cheap and
+                    # idempotent when nothing moved.
+                    assistant.on_call_change()
+                    continue
+
+                if in_call:
+                    # Coming out of a call. The wake recogniser has not been
+                    # fed for the length of it and the microphone buffer holds
+                    # however much of the call was captured while nobody was
+                    # reading — both have to go, or the first thing the
+                    # assistant does after a call is act on a fragment of it.
+                    in_call = False
+                    assistant.detector_wake.reset()
+                    mic.drain()
+
                 woke = assistant.detector_wake.detect(frame)
 
                 if not woke and requested is None:
+                    # A call that got stuck — ringing with nobody answering,
+                    # or connecting to a phone that vanished — is expired here,
+                    # on the one path that is idle. See `SignalingHub.sweep`.
+                    assistant.call_hub.sweep()
+                    # And the camera a finished call has not let go of yet.
+                    # Cheap when there is nothing to do, which is almost
+                    # always; see `Camera.retry_reclaim`.
+                    assistant.camera.retry_reclaim()
                     # The housekeeping that has to happen while nothing is
                     # being said, done here because this is the only place the
                     # loop is idle. The weather refresh is bounded by its own
@@ -546,7 +729,10 @@ def main() -> int:
                     if time.monotonic() - last_weather > settings.weather.cache_seconds:
                         last_weather = time.monotonic()
                         assistant.refresh_weather()
-                    assistant.publish()
+                    # Same reconciler as the in-call path, for the same reason:
+                    # a call that expired must give the hardware back without
+                    # anybody having called `bye`. Idempotent, and it publishes.
+                    assistant.on_call_change()
                     continue
 
                 if woke and time.monotonic() - last_empty_turn < EMPTY_TURN_REFRACTORY_S:
@@ -566,7 +752,11 @@ def main() -> int:
                 turn = machine.begin_turn()
                 machine.to(State.LISTENING)
 
-                if requested is not None and requested != "wake":
+                # `talk` opens the conversation page and then behaves exactly
+                # like the wake word: it wants the microphone, so it falls
+                # through to the listening path rather than being served from
+                # the tools the way the other four buttons are.
+                if requested is not None and requested not in ("wake", "talk"):
                     # A button that names what it wants. It does not need the
                     # microphone at all, so the turn is served straight from
                     # the tools and the loop goes back to listening.
@@ -577,8 +767,12 @@ def main() -> int:
 
                 # Silence the music FIRST. The microphone and the speakers
                 # share a room, so a command given over music is captured as
-                # the command plus the song. AIA's reasoning, unchanged.
-                if assistant.ducker.duck():
+                # the command plus the song. AIA's reasoning, unchanged — with
+                # the floor now taken for the whole turn through
+                # `assistant.audio`, so that anything else which speaks during
+                # it nests rather than fighting over the same ducker.
+                assistant.audio.acquire()
+                if assistant.audio.ducked:
                     mic.drain()
 
                 assistant.publish(listening_text=LISTENING_TEXT.get(
@@ -587,7 +781,7 @@ def main() -> int:
                 audio = assistant.endpointer.collect(frames)
                 turn.mark("captured")
                 if audio is None:
-                    assistant.ducker.restore()
+                    assistant.audio.release()
                     assistant.detector_wake.reset()
                     machine.end_turn()
                     assistant.publish(listening_text="")
@@ -674,10 +868,13 @@ def main() -> int:
                     except Exception:
                         log.exception("could not announce the failed turn")
                 finally:
+                    # A command that stopped the music on purpose must not have
+                    # it come back; everything else resumes where it paused.
+                    # `release` unwinds the nesting either way, so the two are
+                    # sequential rather than alternatives.
                     if intent is not None and intent.command.stops_playback:
-                        assistant.ducker.forget()
-                    else:
-                        assistant.ducker.restore()
+                        assistant.audio.forget()
+                    assistant.audio.release()
                     machine.end_turn()
                     assistant.detector_wake.reset()
                     mic.drain()
@@ -690,11 +887,17 @@ def main() -> int:
 
 
 def say(assistant, text: str, language: str) -> None:
-    """Speak and record in one call, so the two cannot drift apart."""
+    """Speak and record in one call, so the two cannot drift apart.
+
+    Takes audio priority for the duration. On the voice path the turn already
+    holds it and this nests harmlessly; on every other path this is the thing
+    that stops the assistant talking over the music.
+    """
     assistant.history.record("aia", text, language)
     assistant.publish()
     if assistant.speaker is not None:
-        assistant.speaker.say(text, language)
+        with assistant.audio.priority():
+            assistant.speaker.say(text, language)
 
 
 def confirm_and_run(assistant, mic, frames, intent, language):
@@ -757,39 +960,91 @@ def handle_button(assistant, action: str, language: str, turn=None) -> None:
     of line that teaches people to stop reading the journal.
     """
     log.info("button: %s", action)
+
+    if action == "call":
+        # The Call page is opened by the browser on the press; there is no
+        # spoken half of it and nothing to say, so this returns before the
+        # state machine is moved and before anything takes the floor.
+        #
+        # It still travels through the queue rather than being navigation the
+        # page does on its own, because everything the call will need from
+        # this side arrives here: the ten-second cooldown, the single list of
+        # what a button may ask for, and — when the call subsystem lands — the
+        # handoff that takes the Brio, the microphone and the speaker away
+        # from the voice loop for the duration and gives them back afterwards.
+        # The Call page is opened by the browser on the press. This device
+        # answers calls; it does not place them, so there is nothing further
+        # for the voice loop to do.
+        log.info("call page opened")
+        return
+
     assistant.machine.to(State.ACTING)
+
+    # Which role the spoken line is recorded under. The conversation is
+    # `aia`; a page speaking about its own subject is not conversation, and
+    # the Talk page filters on this — see `_feed` in aipi5/ui/server.py. It is
+    # still recorded, because the 24-hour transcript is a record of what was
+    # audible in the room and page summaries were audible in the room.
+    role = "aia"
 
     if action == "weather":
         weather = assistant.weather.current()
-        reply = (weather.summary(language) if weather else
+        # `brief`, not `summary`. The page shows the temperature, the range,
+        # the humidity, the wind, the UV index and the chance of rain; reading
+        # all of that back is what makes a device like this tiresome. See
+        # `Weather.brief`.
+        reply = (weather.brief(language) if weather else
                  ("I can't reach the weather right now." if language == "en"
                   else "现在联系不上天气服务。"))
         assistant.refresh_weather()
+        role = "aia:weather"
     elif action == "news":
-        reply = assistant.answer(
-            "What's the local news?" if language == "en" else "本地有什么新闻？",
-            language)
+        reply = assistant.answer(NEWS_BRIEF.get(language, NEWS_BRIEF["en"]),
+                                 language)
+        role = "aia:news"
     elif action == "camera":
+        role = "aia:camera"
+        # The camera page draws this over the live preview and fades it ten
+        # seconds after the speaking stops. Published with an id so a second
+        # identical description of an unchanged room still reads as a new
+        # answer rather than as the old one still being on screen.
+        #
+        # `answer` already publishes it when the model actually called the
+        # vision tool, so this only fills in the case where it answered
+        # without looking. Detected by the id rather than by the text: writing
+        # it unconditionally bumped the id twice for one press, which showed
+        # the overlay, restarted its ten-second fade, and showed it again.
+        before = assistant.ui_state.snapshot()["camera_description_id"]
         reply = assistant.answer(
             "What do you see?" if language == "en" else "你看到了什么？", language)
+        if assistant.ui_state.snapshot()["camera_description_id"] == before:
+            assistant.ui_state.describe_camera(reply)
     elif action == "kodama":
+        # Launches it, or raises the window it already has. No page of our own
+        # — Kodama-Lite is a separate application and this project deliberately
+        # does not grow a second music player.
         reply = assistant.launcher.open().say(language)
+        role = "aia:music"
     else:
         return
 
     if turn is not None:
         turn.mark("acted")
     assistant.machine.to(State.SPEAKING)
-    assistant.history.record("aia", reply, language)
+    assistant.history.record(role, reply, language)
     assistant.publish()
     if assistant.speaker is not None:
-        # Non-blocking, then marked, then waited on — the same three lines the
-        # voice path uses, and in that order for the same reason. What the
-        # person experiences is the wait before hearing anything.
-        assistant.speaker.say(reply, language, blocking=False)
-        if turn is not None:
-            turn.mark("audio_out")
-        assistant.speaker.wait()
+        # The floor is taken for the speech and given back after it. This is
+        # the path that used to talk over the music: the voice loop ducks
+        # around a whole turn, but a button never went through the voice loop.
+        with assistant.audio.priority():
+            # Non-blocking, then marked, then waited on — the same three lines
+            # the voice path uses, and in that order for the same reason. What
+            # the person experiences is the wait before hearing anything.
+            assistant.speaker.say(reply, language, blocking=False)
+            if turn is not None:
+                turn.mark("audio_out")
+            assistant.speaker.wait()
     elif turn is not None:
         turn.mark("audio_out")
 

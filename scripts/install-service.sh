@@ -57,9 +57,10 @@ check "English voice"       "$AIA_HOME/models/en_US-lessac-medium.onnx"
 check "Mandarin voice"      "$AIA_HOME/models/zh_CN-huayan-medium.onnx"
 check "Piper binary"        "$AIA_HOME/vendor/piper/piper"
 
-# The venv must be able to see the system packages. picamera2 and
-# hailo_platform are Debian packages with no usable wheel, so a venv built
-# without this flag imports neither — and the failure is a *degraded* startup
+# The venv must be able to see the system packages. cv2 (python3-opencv, which
+# is how the USB camera is read) and hailo_platform are installed as Debian
+# packages, so a venv built without this flag imports neither — and the failure
+# is a *degraded* startup
 # rather than an error, which means an assistant that silently has no camera
 # and no person detection. Checked here because the fix is one line and the
 # symptom is three subsystems quietly missing.

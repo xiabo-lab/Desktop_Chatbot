@@ -91,6 +91,10 @@ class Conditions:
     code: int | None
     is_day: bool
     unit: str  # "F" or "C"
+    # None rather than 0 when the provider did not send it. Zero is a real UV
+    # index — it is what night is — and a page that cannot tell "no reading"
+    # from "no sun" would confidently show a sunburn risk of none at noon.
+    uv_index: float | None = None
 
     def describe(self, language: str = "en") -> str:
         sky = describe_code(self.code, language)
@@ -108,6 +112,7 @@ class DayForecast:
     low: float
     code: int | None
     precipitation_chance: int
+    uv_index_max: float | None = None
 
     def describe(self, language: str = "en") -> str:
         sky = describe_code(self.code, language)
@@ -142,6 +147,58 @@ class Weather:
                              f"and the low is {today.low:.0f}.")
         return " ".join(parts)
 
+    def brief(self, language: str = "en") -> str:
+        """What the weather *page* says out loud. Deliberately less than it shows.
+
+        The page already displays the temperature, the high and low, the
+        humidity, the wind, the UV index and the chance of rain. Reading that
+        list back is the most common way a device like this becomes tiresome:
+        everything on it is already visible, it takes twenty seconds, and none
+        of it is the thing the person wanted to know.
+
+        So this says the sky and the temperature, the day's range, and then
+        **at most one** thing worth acting on — an umbrella, or a hat. The
+        thresholds are the ones a person would actually change their plans
+        over: 40% is when rain stops being a rumour, and 6 is where the WHO
+        scale turns from moderate to high.
+        """
+        sky = describe_code(self.now.code, language)
+        today = self.days[0] if self.days else None
+
+        if language == "zh":
+            parts = [f"现在{sky}，{self.now.temperature:.0f}度。"]
+            if today is not None:
+                parts.append(f"今天{today.low:.0f}到{today.high:.0f}度。")
+        else:
+            parts = [f"It's {sky} and {self.now.temperature:.0f} degrees."]
+            if today is not None:
+                parts.append(f"Today runs {today.low:.0f} to {today.high:.0f}.")
+
+        advice = self._advice(today, language)
+        if advice:
+            parts.append(advice)
+        return " ".join(parts)
+
+    def _advice(self, today, language: str) -> str:
+        """The one sentence worth adding, or nothing at all.
+
+        Rain first: it is the only one of these that changes what somebody
+        carries on the way out of the door.
+        """
+        if today is not None and today.precipitation_chance >= 40:
+            if language == "zh":
+                return f"有百分之{today.precipitation_chance}的概率下雨，带把伞。"
+            return (f"There's a {today.precipitation_chance} percent chance of "
+                    f"rain, so take an umbrella.")
+
+        uv = self.now.uv_index if self.now.uv_index is not None else None
+        if uv is not None and uv >= 6 and self.now.is_day:
+            if language == "zh":
+                return f"紫外线指数{uv:.0f}，比较强，注意防晒。"
+            return f"The UV index is {uv:.0f}, so wear sunscreen if you're out."
+
+        return ""
+
     def as_dict(self) -> dict:
         """The shape the model and the UI both receive.
 
@@ -161,6 +218,8 @@ class Weather:
                 "conditions_zh": describe_code(self.now.code, "zh"),
                 "code": self.now.code,
                 "is_day": self.now.is_day,
+                "uv_index": (None if self.now.uv_index is None
+                             else round(self.now.uv_index, 1)),
             },
             "forecast": [
                 {
@@ -170,6 +229,8 @@ class Weather:
                     "conditions": describe_code(day.code, "en"),
                     "conditions_zh": describe_code(day.code, "zh"),
                     "precipitation_chance": day.precipitation_chance,
+                    "uv_index_max": (None if day.uv_index_max is None
+                                     else round(day.uv_index_max, 1)),
                 }
                 for day in self.days
             ],
@@ -231,9 +292,9 @@ class WeatherService:
             "latitude": self.location.latitude,
             "longitude": self.location.longitude,
             "current": ("temperature_2m,relative_humidity_2m,apparent_temperature,"
-                        "is_day,weather_code,wind_speed_10m"),
+                        "is_day,weather_code,wind_speed_10m,uv_index"),
             "daily": ("weather_code,temperature_2m_max,temperature_2m_min,"
-                      "precipitation_probability_max"),
+                      "precipitation_probability_max,uv_index_max"),
             "temperature_unit": self.location.temperature_unit,
             "wind_speed_unit": "mph",
             "timezone": self.location.timezone,
@@ -276,6 +337,8 @@ class WeatherService:
                 precipitation_chance=int(
                     daily.get("precipitation_probability_max",
                               [0] * (index + 1))[index] or 0),
+                uv_index_max=_float_or_none(
+                    daily.get("uv_index_max", [None] * (index + 1))[index]),
             ))
 
         return Weather(
@@ -289,6 +352,7 @@ class WeatherService:
                 code=_int_or_none(current.get("weather_code")),
                 is_day=bool(current.get("is_day", 1)),
                 unit=unit,
+                uv_index=_float_or_none(current.get("uv_index")),
             ),
             days=tuple(days),
             fetched_at=time.time(),
@@ -296,6 +360,19 @@ class WeatherService:
 
     def close(self) -> None:
         self._session.close()
+
+
+def _float_or_none(value) -> float | None:
+    """A number from the provider, or None if it did not send one.
+
+    Distinct from `_int_or_none` because what is missing here is a measurement
+    rather than a code: a UV index of 0.0 and no UV index at all are different
+    facts and the page shows them differently.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _int_or_none(value) -> int | None:

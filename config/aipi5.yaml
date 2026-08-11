@@ -122,15 +122,37 @@ story:
 
 camera:
   enabled: true
+  # A Logitech Brio 101 on USB, not the CSI Camera Module 3 this was built for.
+  # `auto` finds it by name and is the right answer on this device: /dev/video0
+  # is not a stable identity — the Brio claims two nodes, one of them metadata
+  # that opens fine and never yields an image, and the order they enumerate in
+  # depends on what else was plugged in at boot. The same reasoning AIA applies
+  # to matching the microphone by name rather than by card number.
+  #
+  # Put an explicit node here (/dev/video2, or a bare 2) to override the search
+  # entirely; a named device is never second-guessed.
+  device: auto
+  name_hint: Brio
   # What the vision request is sent. Larger costs upload time on a domestic
-  # connection and buys very little description quality.
+  # connection and buys very little description quality. The Brio 101 offers
+  # 1920x1080, 1280x720 and 640x480 over MJPEG.
   capture_width: 1280
   capture_height: 720
+  # The stream rate, not the rate anything is looked at — the detector reads
+  # twice a second and the vision question once when asked. It matters because
+  # every read waits for one fresh frame rather than accepting a queued one, so
+  # this is what a read costs: 35 ms at 30 fps. See `Camera._read`. Note that
+  # the camera drops its own rate in a dim room, whatever is asked for here.
+  fps: 30
   jpeg_quality: 80
   # tmpfs. The Pi boots from flash and a capture-per-question write cycle is
   # both slower and unkind to the card — the same reasoning AIA's Piper scratch
   # directory carries.
   scratch: /dev/shm/aipi5-camera
+  # How long to stream frames before trusting one. A USB camera's auto-exposure
+  # only converges while buffers are being dequeued, so this is spent reading
+  # and discarding rather than sleeping — a sleep would warm up nothing. Paid
+  # once, at boot, where nobody is waiting on it.
   warmup_ms: 400
 
 person_detection:
@@ -183,6 +205,65 @@ kodama:
   # How long to wait for the app to answer MPRIS after being asked to start.
   # Tauri plus a webview on this Pi is several seconds cold.
   start_timeout_s: 20.0
+
+# The remote video call — a phone calling this device over WebRTC.
+#
+# OFF BY DEFAULT, and that is the one setting here worth thinking about before
+# changing. Everything else in this file fails towards a feature not working;
+# this one fails towards a camera and a microphone in your home being reachable
+# from the network. Two things have to be true before anything listens: this
+# flag, and at least one paired phone (./scripts/pair-phone.sh).
+#
+# Nothing in this block is a secret. The tokens, the certificate and the
+# private key all live under ~/.config/aipi5/, outside this repository, and are
+# generated on the device — see aipi5/call/tokens.py for why only hashes are
+# kept.
+call:
+  enabled: false
+  # The one listener in this project that is not loopback, which is why every
+  # route on it authenticates. 8443 rather than 443 so it needs no privilege.
+  host: 0.0.0.0
+  port: 8443
+
+  # What the Brio is asked for during a call.
+  #
+  # 1280x720 at 30 is not a preference — it is the only configuration this
+  # camera can actually deliver. Measured on the device: the Brio 101 exposes
+  # YUYV and MJPG and no H.264, and YUYV at 720p is capped at 5 fps by USB
+  # bandwidth. Asking for 30 fps at this size is what makes Chromium choose
+  # MJPEG. REPORT.md section 27a has the full format table.
+  width: 1280
+  height: 720
+  fps: 30
+
+  # Empty is correct on a home network: two devices on the same subnet find
+  # each other with host candidates, and a STUN round trip only adds latency to
+  # a call that was going to connect anyway.
+  #
+  # Phase 3 — the phone on 5G, the Pi behind a router — is what these are for.
+  # STUN tells each peer what its own address looks like from outside, which is
+  # enough whenever both NATs will accept a packet from somewhere they have
+  # just sent one to. TURN relays the media when they will not, which on mobile
+  # carriers is common. `./scripts/setup-turn.sh` configures both ends.
+  stun_servers: []
+  # - stun:turn.example.net:3478
+
+  # **No credential belongs in this file.** Coturn's `use-auth-secret` mode
+  # takes a shared secret and the Pi mints a username and password per call
+  # that expire within the hour — so what reaches the phone is worthless
+  # tomorrow, and the secret never leaves this device. Name where it lives:
+  #
+  #   secret_file:  a path, resolved under ~/.config/aipi5 when relative
+  #   secret_env:   an environment variable, for a systemd EnvironmentFile
+  #
+  # `username`/`credential` are still accepted for a hosted relay that offers
+  # nothing else, and are the second choice — a fixed TURN password has to
+  # reach the phone to be used, so it ends up in local storage on a device
+  # somebody can lose, and a leaked one is an open relay on your bill.
+  turn_servers: []
+  # - urls: turn:turn.example.net:3478
+  #   secret_file: turn-secret
+  #   ttl: 3600
 
 assistant:
   # Everything the router does not recognise goes to the model. Turning this

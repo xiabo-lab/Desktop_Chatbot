@@ -58,15 +58,46 @@ done
 # exists only to display one page, so there is never a session worth restoring.
 PREFS="$PROFILE/Default/Preferences"
 if [[ -f "$PREFS" ]]; then
-  python3 - "$PREFS" <<'PY' || true
-import json, sys, pathlib
+  python3 - "$PREFS" "$URL" <<'PY' || true
+import json, sys, pathlib, datetime
 path = pathlib.Path(sys.argv[1])
+origin = sys.argv[2].rstrip("/")
 try:
     prefs = json.loads(path.read_text())
 except (OSError, ValueError):
     raise SystemExit(0)          # unreadable is not worth failing a launch over
-prefs.setdefault("profile", {})["exit_type"] = "Normal"
-prefs["profile"]["exited_cleanly"] = True
+profile = prefs.setdefault("profile", {})
+profile["exit_type"] = "Normal"
+profile["exited_cleanly"] = True
+
+# Grant the camera and the microphone to the assistant's own page, once, here.
+#
+# The video call is Chromium's on this end — see aipi5/call/__init__.py — so
+# `getUserMedia` runs in this window, and by default that raises a permission
+# bubble. On this device there is nobody to dismiss it: the panel is a kiosk
+# with no keyboard, the bubble appears over a full-screen --app window, and the
+# promise simply never settles. Measured on the Pi: the call reached
+# `connecting`, Python let go of the Brio as it should, and Chromium never took
+# it — a call that hangs with the camera belonging to nobody.
+#
+# Seeding the content setting rather than passing --use-fake-ui-for-media-stream
+# is deliberate. That flag also auto-approves, but it approves *everything* for
+# the life of the browser, and its name is a promise about fake devices that a
+# future version could start keeping. This grants two permissions, to one
+# origin, and is exactly what pressing Allow would have written.
+#
+# The timestamp is Chromium's: microseconds since 1601-01-01. An entry without
+# a plausible one is pruned, which looks precisely like this never having run.
+epoch = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
+now = datetime.datetime.now(datetime.timezone.utc)
+stamp = str(int((now - epoch).total_seconds() * 1_000_000))
+exceptions = profile.setdefault("content_settings", {}).setdefault("exceptions", {})
+for what in ("media_stream_camera", "media_stream_mic"):
+    exceptions.setdefault(what, {})[f"{origin},*"] = {
+        "last_modified": stamp,
+        "setting": 1,               # 1 = allow, and only for this origin
+    }
+
 path.write_text(json.dumps(prefs))
 PY
 fi
@@ -84,7 +115,19 @@ exec "$browser" \
   --noerrdialogs \
   --disable-infobars \
   --disable-session-crashed-bubble \
-  --disable-features=TranslateUI \
+  `# One --disable-features flag, not several: Chromium keeps only the last` \
+  `# occurrence, so a second one silently discards the first.` \
+  `#` \
+  `# PipeWireCamera is what makes a video call possible on this device at all.` \
+  `# Chromium prefers to reach cameras through the xdg-desktop-portal Camera` \
+  `# interface, and this Pi has no backend that implements it — labwc brings` \
+  `# xdg-desktop-portal-wlr, which does ScreenCast and not Camera, and neither` \
+  `# gtk.portal nor gnome-keyring.portal fills the gap. The request therefore` \
+  `# waits on a portal that will never answer: measured here as getUserMedia` \
+  `# never settling, with the Brio released by Python and claimed by nobody.` \
+  `# Disabling it sends Chromium to V4L2 directly, which is the same path the` \
+  `# assistant's own camera code uses and the one the device is set up for.` \
+  --disable-features=TranslateUI,PipeWireCamera,WebRtcPipeWireCamera \
   --no-first-run \
   --check-for-update-interval=31536000 \
   `# The page has no text input and nothing to save. Without this a stray` \

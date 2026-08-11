@@ -86,19 +86,61 @@ aplay -l 2>/dev/null | grep -q card && ok "playback device" "present" \
                                     || bad "playback device" "aplay sees no card"
 
 head "Camera"
-if command -v rpicam-hello >/dev/null 2>&1; then
-  if rpicam-hello --list-cameras 2>&1 | grep -qi 'imx708'; then
-    ok "Camera Module 3" "imx708 detected"
-  elif rpicam-hello --list-cameras 2>&1 | grep -qi 'Available cameras'; then
-    note "camera" "a camera is present but is not an imx708 (Module 3)"
+# A USB Logitech Brio 101, not the CSI Camera Module 3 this project started on.
+#
+# Matched by name, because this Pi has twenty video nodes and only two of them
+# are the camera — the rest are the ISP and the HEVC decoder, which are always
+# there and are never what `device: auto` should pick. That is also why the
+# full list is printed only when nothing matched: nineteen lines of `pispbe-*`
+# is noise on the day it works and the first thing anybody needs on the day it
+# does not.
+if [[ -d /sys/class/video4linux ]]; then
+  matched=$(grep -li 'brio' /sys/class/video4linux/video*/name 2>/dev/null \
+            | sed 's|/sys/class/video4linux/|/dev/|;s|/name||' | tr '\n' ' ')
+  if [[ -n "$matched" ]]; then
+    # Two nodes is the expected answer: one capture, one metadata. The metadata
+    # node opens cleanly and never yields an image, which is why the assistant
+    # accepts a node only after it has produced a decoded frame.
+    ok "Brio 101" "$matched"
   else
-    bad "camera" "no camera detected"
+    for node in /sys/class/video4linux/video*; do
+      [[ -e "$node" ]] || continue
+      note "/dev/$(basename "$node")" "$(cat "$node/name" 2>/dev/null)"
+    done
+    if compgen -G '/dev/video*' >/dev/null; then
+      bad "camera" "video nodes exist but none is named Brio — check the USB \
+cable, or set camera.name_hint to one of the names above"
+    else
+      bad "camera" "no video device — check the USB cable"
+    fi
   fi
 else
-  note "camera" "rpicam-hello not installed"
+  bad "camera" "no /sys/class/video4linux — is the uvcvideo module loaded?"
 fi
-python3 -c 'import picamera2' 2>/dev/null && ok "picamera2" "importable" \
-  || bad "picamera2" "not installed — sudo apt install python3-picamera2"
+# The one thing the name does not prove: that the capture node still offers the
+# format and size aipi5.yaml asks for.
+#
+# Read into a variable rather than piped into grep, and that is `pipefail`
+# rather than style: `grep -q` exits at the first match and SIGPIPEs v4l2-ctl,
+# so the pipeline reports failure on exactly the run where the format was
+# found. This check said "not offered" about a camera that offers it.
+if command -v v4l2-ctl >/dev/null 2>&1 && [[ -e /dev/video0 ]]; then
+  formats=$(v4l2-ctl -d /dev/video0 --list-formats-ext 2>/dev/null || true)
+  case "$formats" in
+    *MJPG*) ok "MJPG" "offered by /dev/video0" ;;
+    *) note "MJPG" "not offered — the stream will fall back to uncompressed" ;;
+  esac
+  case "$formats" in
+    *1280x720*) ok "1280x720" "offered by /dev/video0" ;;
+    *) note "1280x720" "not offered — the camera opens at whatever size it does" ;;
+  esac
+fi
+# v4l2-ctl is not required by the assistant; it is how a person answers "does
+# this camera actually offer 1280x720 MJPEG" without writing Python.
+command -v v4l2-ctl >/dev/null 2>&1 && ok "v4l2-ctl" "available" \
+  || note "v4l2-ctl" "not installed — sudo apt install v4l-utils (diagnostics only)"
+python3 -c 'import cv2' 2>/dev/null && ok "OpenCV" "importable" \
+  || bad "OpenCV" "not installed — sudo apt install python3-opencv"
 
 head "AI HAT+ 2"
 if command -v hailortcli >/dev/null 2>&1; then

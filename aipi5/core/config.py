@@ -142,8 +142,13 @@ class StoryConfig:
 @dataclass(frozen=True)
 class CameraConfig:
     enabled: bool = True
+    #: A V4L2 node, an index, or "auto" to find the webcam by name.
+    device: str = "auto"
+    #: What that search matches on. The camera is a Logitech Brio 101.
+    name_hint: str = "Brio"
     capture_width: int = 1280
     capture_height: int = 720
+    fps: int = 30
     jpeg_quality: int = 80
     scratch: Path = Path("/dev/shm/aipi5-camera")
     warmup_ms: int = 400
@@ -175,6 +180,50 @@ class KodamaLaunchConfig:
 
 
 @dataclass(frozen=True)
+class CallConfig:
+    """The remote video call. Off by default, and that is deliberate.
+
+    Every other feature here fails towards being useless; this one fails
+    towards a camera and a microphone reachable from the network. A deployment
+    that has not been configured for calling should not be listening, so the
+    default is `enabled: false` and the server additionally refuses to start
+    with no phone paired.
+    """
+
+    enabled: bool = False
+    #: `0.0.0.0` because the phone is by definition not on this machine. This
+    #: is the one listener in the project that is not loopback, which is why
+    #: `aipi5/call/server.py` authenticates every route.
+    #:
+    #: Set to `127.0.0.1` with `tls: false` when something else is terminating
+    #: TLS and proxying in — `tailscale serve` is the arrangement this was
+    #: built for, and it is strictly safer: nothing accepts a connection from
+    #: off this machine at all.
+    host: str = "0.0.0.0"
+    port: int = 8443
+    #: Whether this server terminates TLS itself. Turning it off is refused
+    #: unless `host` is loopback: a bearer token over plaintext on a shared
+    #: network is a bearer token somebody else can read.
+    tls: bool = True
+    #: Written on first start if absent, and never committed — both are under
+    #: ~/.config, which is outside the repository. See `aipi5/call/tls.py`.
+    certificate: Path = Path.home() / ".config" / "aipi5" / "call-cert.pem"
+    private_key: Path = Path.home() / ".config" / "aipi5" / "call-key.pem"
+    #: The paired phones. Hashes only; see `aipi5/call/tokens.py`.
+    devices: Path = Path.home() / ".config" / "aipi5" / "call-devices.json"
+    #: Empty on a LAN. Phase 3 of the procedure fills these in.
+    stun_servers: tuple[str, ...] = ()
+    turn_servers: tuple[dict, ...] = ()
+    #: What the Brio is asked for during a call. 1280x720 at 30 needs MJPEG on
+    #: this camera — YUYV at 720p is capped at 5 fps by USB bandwidth, measured
+    #: on the device. Chromium picks the format, and asking for 30 fps at 720p
+    #: is what makes it pick MJPEG.
+    width: int = 1280
+    height: int = 720
+    fps: int = 30
+
+
+@dataclass(frozen=True)
 class AssistantConfig:
     llm_enabled: bool = True
     retention_hours: float = 24.0
@@ -192,6 +241,7 @@ class Settings:
     person: PersonDetectionConfig = field(default_factory=PersonDetectionConfig)
     screensaver: ScreensaverConfig = field(default_factory=ScreensaverConfig)
     kodama: KodamaLaunchConfig = field(default_factory=KodamaLaunchConfig)
+    call: CallConfig = field(default_factory=CallConfig)
     assistant: AssistantConfig = field(default_factory=AssistantConfig)
 
     #: Where this was loaded from, for the settings page.
@@ -247,6 +297,23 @@ def _path(value: Any, fallback: Path) -> Path:
         return fallback
     path = Path(str(value)).expanduser()
     return path if path.is_absolute() else (ROOT / path)
+
+
+def _secret_path(value: Any, name: str) -> Path:
+    """A path for something that must never land in the repository.
+
+    Deliberately *not* `_path`. That one resolves a relative setting against
+    the project root, which is right for a model file and exactly wrong for a
+    private key and a device store — a relative `call-key.pem` in the YAML
+    would otherwise put a TLS private key inside a git checkout. Relative
+    values here resolve under `~/.config/aipi5` instead, and a test asserts
+    that the defaults are outside the tree.
+    """
+    base = Path.home() / ".config" / "aipi5"
+    if value in (None, ""):
+        return base / name
+    path = Path(str(value)).expanduser()
+    return path if path.is_absolute() else (base / path)
 
 
 def _positive(value: Any, fallback: float, where: str) -> float:
@@ -315,6 +382,7 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
     person = _require_mapping(raw.get("person_detection"), "person_detection")
     screensaver = _require_mapping(raw.get("screensaver"), "screensaver")
     kodama = _require_mapping(raw.get("kodama"), "kodama")
+    call = _require_mapping(raw.get("call"), "call")
     assistant = _require_mapping(raw.get("assistant"), "assistant")
 
     feeds = news.get("feeds") or list(_DEFAULT_FEEDS)
@@ -368,8 +436,11 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
         ),
         camera=CameraConfig(
             enabled=bool(camera.get("enabled", True)),
+            device=str(camera.get("device", "auto") or "auto"),
+            name_hint=str(camera.get("name_hint", "Brio") or ""),
             capture_width=int(camera.get("capture_width", 1280)),
             capture_height=int(camera.get("capture_height", 720)),
+            fps=int(_positive(camera.get("fps", 30), 30, "camera.fps")),
             jpeg_quality=max(1, min(95, int(camera.get("jpeg_quality", 80)))),
             scratch=_path(camera.get("scratch"), Path("/dev/shm/aipi5-camera")),
             warmup_ms=max(0, int(camera.get("warmup_ms", 400))),
@@ -396,6 +467,21 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
             service=str(kodama.get("service", "kodama-lite.service")),
             start_timeout_s=_positive(kodama.get("start_timeout_s", 20.0), 20.0,
                                       "kodama.start_timeout_s"),
+        ),
+        call=CallConfig(
+            enabled=bool(call.get("enabled", False)),
+            host=str(call.get("host", "0.0.0.0")),
+            port=int(call.get("port", 8443)),
+            tls=bool(call.get("tls", True)),
+            certificate=_secret_path(call.get("certificate"), "call-cert.pem"),
+            private_key=_secret_path(call.get("private_key"), "call-key.pem"),
+            devices=_secret_path(call.get("devices"), "call-devices.json"),
+            stun_servers=tuple(str(s) for s in (call.get("stun_servers") or ())),
+            turn_servers=tuple(t for t in (call.get("turn_servers") or ())
+                               if isinstance(t, dict)),
+            width=int(call.get("width", 1280)),
+            height=int(call.get("height", 720)),
+            fps=int(call.get("fps", 30)),
         ),
         assistant=AssistantConfig(
             llm_enabled=bool(assistant.get("llm_enabled", True)),

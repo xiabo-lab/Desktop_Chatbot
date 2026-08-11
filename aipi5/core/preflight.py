@@ -189,7 +189,7 @@ def run(settings, *, mic=None, stt=None, speaker: Outcome = (False, ""),
     else:
         camera_ok, camera_detail = camera
         report.add("camera", camera_ok,
-                   camera_detail or ("Camera Module 3 ready" if camera_ok
+                   camera_detail or ("Brio 101 ready" if camera_ok
                                      else "no camera"))
 
     if not settings.person.enabled:

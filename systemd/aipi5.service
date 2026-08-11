@@ -11,11 +11,33 @@ Documentation=file:%h/AIPI5/README.md
 #
 # A system service has none of those and would have to be handed all three.
 
-# Ordering only, and deliberately no `Wants=`. AIPI5 starts Kodama-Lite on
-# request rather than depending on it — the assistant is useful with the music
-# player closed, and pulling it in here would start a music app on every boot
-# whether or not anybody wanted one.
-After=kodama-lite.service
+# **There is deliberately no ordering against kodama-lite.service.**
+#
+# This used to say `After=kodama-lite.service`, on the reasoning that if both
+# start at boot the music player should be on the bus first. That was ordering
+# only, with no `Wants=`, so it looked free. It was not: it stopped the
+# assistant starting at boot at all, and did so silently.
+#
+# Kodama-Lite's unit declares `After=default.target` while also being
+# `WantedBy=default.target`. Adding an edge from here closed a loop —
+# default.target → aipi5 → kodama-lite → default.target — and systemd breaks a
+# cycle by deleting jobs from it:
+#
+#   default.target: Found ordering cycle on aipi5-ui.service/start
+#   default.target: Found dependency on aipi5.service/start
+#   default.target: Found dependency on kodama-lite.service/start
+#   default.target: Found dependency on default.target/start
+#   default.target: Job aipi5.service/start deleted to break ordering cycle
+#
+# The job it deleted was ours. After a reboot both units sat `inactive (dead)`
+# while still reporting `enabled`, which is the worst shape a failure can take
+# — nothing failed, nothing retried, and `is-enabled` says everything is fine.
+# Found by rebooting the device, which until then had never been tested.
+#
+# Nothing is lost by dropping it. AIPI5 starts Kodama-Lite on request rather
+# than depending on it, and `KodamaLauncher` already waits for the player to
+# reach the bus before using it — so the ordering was insurance against a race
+# that the code handles anyway.
 
 # Conflicts, not ordering. AIA and AIPI5 both open the microphone and the
 # microphone allows exactly one reader; whichever loses the race fails with a

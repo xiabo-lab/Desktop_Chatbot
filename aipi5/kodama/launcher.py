@@ -40,6 +40,10 @@ log = logging.getLogger(__name__)
 # enough not to be a spin.
 POLL_INTERVAL_S = 0.5
 
+# Used only to raise an already-running window — never to start the player.
+# See `raise_window` for why running the binary is safe there and nowhere else.
+KODAMA_BINARY = "/usr/bin/kodama-lite"
+
 
 class KodamaLauncher(Plugin):
     """Starts the player, and says whether it worked.
@@ -101,19 +105,92 @@ class KodamaLauncher(Plugin):
         output = (proc.stdout or proc.stderr or "").strip()
         return proc.returncode == 0, output
 
-    def open(self) -> Result:
-        """Start the player and wait for it to reach the bus.
+    def raise_window(self) -> bool:
+        """Bring the running player's window to the front. True if asked.
 
-        Idempotent. Somebody who says "open the music player" while it is
-        already open should get a sentence saying so, not a restart — and
-        `systemctl start` on a running unit is a no-op anyway, so the check is
-        for what is *said*, not for what is done.
+        **This is the one place the binary is run rather than the unit, and it
+        is not a contradiction of the rule above.** The rule exists because
+        running the binary *starts* a second copy. It does not: Kodama-Lite is
+        built with `tauri-plugin-single-instance`, so a second launch hands the
+        argv to the process already running — which raises its window — and
+        then exits without ever opening a webview, a stream server or a second
+        MPRIS name.
+
+        Verified on this device rather than taken from the README, because the
+        failure if the plugin were ever removed is the exact disaster the rule
+        is about. With the player running, launching the binary left the
+        process count at one, the launched copy exited on its own, and
+        `playerctl -l` still listed a single `kodamalite`.
+
+        There is no alternative on this hardware. `wmctrl` and `xdotool` are
+        both installed and both are X11 clients; this is a Wayland session and
+        they cannot enumerate a window, let alone raise one.
+
+        Fire-and-forget. The process exits by itself and this must not block a
+        button press waiting for it, so it is not waited on — which is also
+        why the return value is "the request was made", not "the window is
+        now in front". Nothing can honestly report the latter here.
+        """
+        try:
+            subprocess.Popen(
+                [KODAMA_BINARY],
+                env=self._session_env(),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                # Its own session, so the assistant's own shutdown does not
+                # take the raise attempt down with it, and so no zombie is left
+                # for a process nobody is going to wait on.
+                start_new_session=True,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            log.warning("could not ask %s to raise its window: %s",
+                        KODAMA_BINARY, exc)
+            return False
+        log.info("asked the running Kodama-Lite to raise its window")
+        return True
+
+    def _session_env(self) -> dict:
+        """Environment with the session bus and Wayland display filled in.
+
+        A systemd service inherits neither, and a GUI app started without them
+        either fails to connect to the compositor or starts a second instance
+        because it cannot see the first.
+
+        `os.getuid` is guarded because it does not exist on Windows, which is
+        where the tests run. None of these variables mean anything there and
+        the subprocess will not start either way — but an `AttributeError`
+        raised while building an environment is a confusing way to find that
+        out, and it would come from a line that has nothing to do with the
+        failure. Same guard `aipi5/core/preflight.py` carries, for the same
+        reason.
+        """
+        env = dict(os.environ)
+        uid = getattr(os, "getuid", None)
+        if uid is not None:
+            env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{uid()}")
+            env.setdefault("DBUS_SESSION_BUS_ADDRESS",
+                           f"unix:path=/run/user/{uid()}/bus")
+        env.setdefault("WAYLAND_DISPLAY", "wayland-0")
+        return env
+
+    def open(self) -> Result:
+        """Start the player, or raise the window it already has.
+
+        Idempotent, and idempotent in the way a person means it: somebody
+        pressing Music while the player is already running wants to *see* the
+        player, not to be told it is running. So the already-open case raises
+        the window and says so, rather than only saying so.
+
+        `systemctl start` on a running unit is a no-op anyway, so the branch is
+        about what is done for the window, not about avoiding a restart.
         """
         if not self.cfg.enabled:
             return Result.failed("The music player is turned off in the settings.",
                                  "音乐播放器在设置里被关闭了。")
 
         if self.running():
+            self.raise_window()
             return Result.done("Kodama-Lite is already open.",
                                "Kodama-Lite 已经打开了。")
 
