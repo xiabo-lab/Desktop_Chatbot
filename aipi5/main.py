@@ -347,8 +347,25 @@ class Assistant:
             llm=(self._llm_ok, self._llm_detail or ""),
             wake=self.detector_wake,
             ui_started=self._ui_started,
+            call=self._call_status(),
         )
         self.publish()
+
+    def _call_status(self) -> tuple[bool, str]:
+        """Whether a phone could ring this device, and where from.
+
+        Names the address, like the camera check names its node, because "calls
+        ok" without one is the line somebody reads on the day the tailnet is
+        down and the phone is being pointed at a LAN address that no longer
+        works from outside the house.
+        """
+        if not self.settings.call.enabled:
+            return True, "disabled in the configuration"
+        if not self.call.error and self.call.url:
+            paired = len(self.call_devices)
+            return True, (f"{paired} phone(s) may call, at {self.call.url}"
+                          if paired else f"listening at {self.call.url}")
+        return False, self.call.error or "not listening"
 
     def _camera_detail(self) -> str:
         """Which camera, on which node — or why there is none.

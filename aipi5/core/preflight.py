@@ -148,7 +148,8 @@ Outcome = tuple  # (ok: bool, detail: str)
 
 def run(settings, *, mic=None, stt=None, speaker: Outcome = (False, ""),
         camera: Outcome = (False, ""), detector: Outcome = (False, ""),
-        llm: Outcome = (False, ""), wake=None, ui_started=True) -> Report:
+        llm: Outcome = (False, ""), wake=None, ui_started=True,
+        call: Outcome = (False, "")) -> Report:
     """Check everything, decide what is fatal, and say so in the journal.
 
     Subsystem arguments are `(ok, detail)` pairs rather than objects, and that
@@ -226,6 +227,25 @@ def run(settings, *, mic=None, stt=None, speaker: Outcome = (False, ""),
     report.add("wake word", wake is not None,
                f"AIA's {type(wake).__name__}" if wake is not None else
                "no wake detector; every utterance will be treated as a command")
+
+    # Calling, which until now reported nowhere a person could see.
+    #
+    # Every other subsystem here appears in the boot log and, when it is
+    # broken, in the banner across the top of the screen. The call server did
+    # not: it logged its own failure and was otherwise silent, so a Pi that
+    # could not be called looked exactly like one that could — right up until
+    # somebody tried to call it and got nothing. That is the shape of failure
+    # this whole file exists to prevent.
+    #
+    # Never critical. A phone that cannot ring is a missing feature; the
+    # assistant in the room is unaffected.
+    if not settings.call.enabled:
+        report.add("remote calls", True, "disabled in the configuration")
+    else:
+        call_ok, call_detail = call
+        report.add("remote calls", call_ok,
+                   call_detail or ("ready" if call_ok else
+                                   "the call server is not listening"))
 
     report.log()
     for check in report.fatal:
