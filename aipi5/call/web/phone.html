@@ -98,11 +98,27 @@
   }
   .ctl {
     width: 66px; height: 66px; border-radius: 50%; border: none;
-    background: rgba(255,255,255,0.16); color: #fff; font-size: 25px;
+    background: rgba(255,255,255,0.16); color: #fff;
     display: flex; align-items: center; justify-content: center; cursor: pointer;
+    padding: 0;
   }
+  .ctl svg { width: 30px; height: 30px; fill: none; stroke: currentColor; }
+  .ctl svg .fill { fill: currentColor; stroke: none; }
+  .ctl svg .line { stroke-width: 2; stroke-linecap: round; fill: none; }
+  /* The slash, and the gap around it. Two strokes on the same line: the wider
+     one in the button's own colour cuts a channel through the glyph, which is
+     what makes a struck-through icon read as struck through rather than as a
+     smudge. Hidden until the control is off. */
+  .ctl svg .cut, .ctl svg .slash { display: none; stroke-linecap: round; }
+  .ctl svg .cut { stroke: #3b4351; stroke-width: 5; }
+  .ctl svg .slash { stroke-width: 2.2; }
+  .ctl.off svg .cut, .ctl.off svg .slash { display: block; }
+  /* Off is white-on-dark inverted, the way every phone does it, with the slash
+     doing the actual telling. */
   .ctl.off { background: #fff; color: #12161d; }
+  .ctl.off svg .cut { stroke: #fff; }
   #hang { width: 86px; height: 66px; border-radius: 33px; background: #d3383f; }
+  #hang svg { transform: rotate(133deg); }
   #hang:active { background: #ef4952; }
 </style>
 </head>
@@ -119,10 +135,32 @@
   <video id="remote" autoplay playsinline></video>
   <video id="self" autoplay playsinline muted></video>
   <div id="banner"><span class="live"></span><span id="banner-text">Calling…</span></div>
+  <!-- Drawn, not typed. These carry no words, so the whole state is "on or
+       off" and the slash is the only thing that says which — emoji cannot do
+       that, and would also render differently on every phone. -->
   <div id="controls">
-    <button class="ctl" id="mic" title="Mute">🎙</button>
-    <button class="ctl" id="hang" title="End call">📵</button>
-    <button class="ctl" id="cam" title="Camera">📹</button>
+    <button class="ctl" id="mic" aria-label="Mute the microphone" title="Mute">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect class="fill" x="9" y="2" width="6" height="11" rx="3"/>
+        <path class="line" d="M5 11a7 7 0 0 0 14 0"/>
+        <path class="line" d="M12 18v3"/>
+        <path class="cut" d="M4 21 21 4"/>
+        <path class="slash" d="M4 21 21 4"/>
+      </svg>
+    </button>
+    <button class="ctl" id="hang" aria-label="End the call" title="End call">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path class="fill" d="M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.2.4 2.4.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.4 0 .8-.2 1l-2.3 2.2z"/>
+      </svg>
+    </button>
+    <button class="ctl" id="cam" aria-label="Turn the camera off" title="Camera">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect class="fill" x="2" y="6" width="13" height="12" rx="2.5"/>
+        <path class="fill" d="M16 10.2 22 7v10l-6-3.2z"/>
+        <path class="cut" d="M4 21 21 4"/>
+        <path class="slash" d="M4 21 21 4"/>
+      </svg>
+    </button>
   </div>
 </div>
 
@@ -526,6 +564,8 @@ el("mic").addEventListener("click", () => {
   if (!track) return;
   track.enabled = !track.enabled;
   el("mic").classList.toggle("off", !track.enabled);
+  el("mic").setAttribute("aria-label",
+    track.enabled ? "Mute the microphone" : "Unmute the microphone");
 });
 
 el("cam").addEventListener("click", () => {
@@ -534,6 +574,8 @@ el("cam").addEventListener("click", () => {
   if (!track) return;
   track.enabled = !track.enabled;
   el("cam").classList.toggle("off", !track.enabled);
+  el("cam").setAttribute("aria-label",
+    track.enabled ? "Turn the camera off" : "Turn the camera on");
 });
 
 // Closing the tab or locking the phone mid-call must hang up, or the Pi holds
