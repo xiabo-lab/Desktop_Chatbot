@@ -129,17 +129,29 @@
 <script>
 "use strict";
 
-// The token arrives once, in the fragment of a pairing link, and is moved
-// straight into local storage. The *fragment* rather than the query string on
-// purpose: a fragment is never sent to the server, never reaches an access
-// log, and never appears in a Referer header. It is then stripped from the
-// address bar so a screenshot of this page is not a working credential.
+// The token arrives in the fragment of a pairing link and is copied into local
+// storage. The *fragment* rather than the query string on purpose: a fragment
+// is never sent to the server, never reaches an access log, and never appears
+// in a Referer header.
+//
+// **The fragment is deliberately left in the address.** An earlier version
+// stripped it with `history.replaceState`, on the reasoning that a screenshot
+// of the page should not be a working credential. That broke the thing this
+// page is for: on iOS a Home Screen app gets its **own storage**, separate
+// from Safari's, so a token paired in the browser is invisible to the
+// installed app — and with the fragment stripped, the saved shortcut had no
+// way to supply it either. Every launch said "this phone is not paired".
+//
+// Keeping it means the shortcut itself carries the token, and each launch
+// re-claims it into whichever storage it has. The cost is that the link is a
+// credential wherever it is written down, which was already true of the
+// pairing message; the installed app has no address bar to display it, and
+// anyone holding the unlocked phone could read local storage anyway.
 const STORE = "aipi5.call.token";
 (function claimToken() {
   const match = /[#&]t=([A-Za-z0-9_\-]{16,128})/.exec(location.hash || "");
   if (!match) return;
   try { localStorage.setItem(STORE, match[1]); } catch (e) { /* private mode */ }
-  history.replaceState(null, "", location.pathname);
 })();
 
 let token = "";
@@ -538,8 +550,14 @@ window.addEventListener("pagehide", () => {
 
 (async function ready() {
   if (!token) {
+    // Most often this is the Home Screen app launched from a shortcut saved
+    // before the token was in the address — iOS gives an installed app its own
+    // storage, so it cannot see what Safari kept. Re-opening the pairing link
+    // and re-adding fixes it, so say that rather than naming a script that
+    // lives on a machine the reader is not sitting at.
     el("who").textContent = "This phone is not paired.";
-    note("Open the pairing link from the Pi (scripts/pair-phone.sh).", true);
+    note("Open the pairing link again in Safari, then Share → Add to Home "
+         + "Screen. The shortcut has to be made from the link itself.", true);
     return;
   }
   if (!navigator.mediaDevices || !window.RTCPeerConnection) {

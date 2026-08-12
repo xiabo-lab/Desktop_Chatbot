@@ -117,7 +117,17 @@ address bar is cleared, so the link is not worth screenshotting afterwards.
 Check the fingerprint against what the phone shows before accepting:""")
     print(f"\n    {tls.fingerprint(settings.call.certificate) or '(no certificate)'}\n")
 
-print("Then: Share → Add to Home Screen, and it behaves like an app.\n")
+print("""To install it as an app: open the link above in SAFARI, then
+Share -> Add to Home Screen. It gets its own icon and launches full-screen.
+
+**Add it from the link itself, not from a page you navigated to afterwards.**
+iOS gives an installed app its own storage, separate from Safari's, so it
+cannot see a token the browser saved — the shortcut has to carry it, and it
+only does if the address still has the `#t=` on it when you add it.
+
+Chrome on iOS makes a shortcut that reopens Chrome instead; the app-like
+behaviour is Safari-only.
+""")
 if not settings.call.enabled:
     print("NOTE: call.enabled is false in config/aipi5.yaml — the call server\n"
           "      will not listen until you set it true and restart aipi5.\n")

@@ -289,10 +289,15 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _manifest(self) -> None:
         """What Android and desktop Chrome install from. iOS ignores it."""
+        # **No `start_url`.** Per the manifest spec it then defaults to the
+        # document the manifest was loaded from — which carries the `#t=`
+        # fragment, so an installed app launches with its token. A literal `/`
+        # here would drop it and every launch would say "not paired", which is
+        # exactly the failure this feature already had on iOS for a different
+        # reason. iOS ignores the manifest entirely; this is for Android.
         self._send(200, json.dumps({
             "name": "Call AIPI5",
             "short_name": "AIPI5",
-            "start_url": "/",
             "display": "standalone",
             "background_color": "#0e1116",
             "theme_color": "#0e1116",
