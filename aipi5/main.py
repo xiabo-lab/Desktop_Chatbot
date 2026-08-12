@@ -74,6 +74,7 @@ from aipi5.core import config as config_mod
 from aipi5.core import preflight
 from aipi5.core.audio_priority import AudioPriority
 from aipi5.core.presence import Presence, PresenceTracker, ScreensaverPolicy
+from aipi5.core.shutdown import ShutdownCountdown, countdown_and_run
 from aipi5.kodama.launcher import KodamaLauncher
 from aipi5.llm import prompts
 from aipi5.llm.client import OpenAIClient
@@ -162,6 +163,10 @@ class Assistant:
         self.settings = settings
         self.aia = settings.aia_config()
         self.ui_state = UiState()
+        # The visible delay in front of powering off. Owned here rather than by
+        # the web server because the voice loop is what starts it and the
+        # screen only answers it.
+        self.countdown = ShutdownCountdown()
         self.started = time.time()
         self.save_audio = os.environ.get("AIA_SAVE_AUDIO") == "1"
 
@@ -247,7 +252,8 @@ class Assistant:
                          # somebody was talking.
                          weather=self.weather, news=self.news,
                          camera=self.camera if settings.camera.enabled else None,
-                         call=self.call, on_call_change=self.on_call_change)
+                         call=self.call, on_call_change=self.on_call_change,
+                         countdown=self.countdown)
         self.report: preflight.Report | None = None
         # Filled in by `start()`; defaulted here so `verify()` and the settings
         # page are safe to call against an assistant that failed to finish
@@ -476,6 +482,9 @@ class Assistant:
             kodama_running=self.player.available(),
             degraded=self.report.degraded if self.report else [],
             call=self._call_snapshot(),
+            # None almost always, and the one moment it is not is the only
+            # moment the screen may stop the device powering off.
+            shutdown=self.countdown.payload(),
             **extra,
         )
 
@@ -865,7 +874,19 @@ def main() -> int:
 
                     speak = False
 
-                    if intent is not None and intent.command.confirm:
+                    if intent is not None and intent.command.name == "shutdown":
+                        # Not a spoken confirmation, and not because one would
+                        # be worse — because it cannot work. `poweroff` takes
+                        # the audio stack down with it, so the last thing this
+                        # device does is the one thing it cannot narrate. A
+                        # countdown on the screen with a touch to cancel is the
+                        # answer AIA arrived at; this is the same policy on a
+                        # display that is already a touchscreen.
+                        machine.to(State.ACTING)
+                        reply, intent = countdown_and_run(
+                            assistant, intent, language)
+                        turn.mark("acted")
+                    elif intent is not None and intent.command.confirm:
                         reply, speak, intent = confirm_and_run(
                             assistant, mic, frames, intent, language)
                         turn.mark("acted")

@@ -14,8 +14,10 @@ on the screen. The lock is held only for the swap, never across any I/O.
 it — section 23 — so the UI is not read-only the way AIA's is, and that is a
 deliberate departure worth naming. What makes it safe is that a button posts a
 name from an enum into a queue, and the voice loop decides what that means;
-there is no action that maps to anything destructive, and shutdown, reboot and
-closing the player remain spoken commands that are confirmed out loud.
+there is no action that maps to anything destructive. Reboot and closing the
+player remain spoken commands confirmed out loud, and shutdown — which cannot
+be confirmed out loud, see `ShutdownCountdown` — is still only ever *started*
+by the voice. The screen's part in it is to draw it and to cancel it.
 
 **Each button then has its own ten-second cooldown, enforced here.** A finger
 on a capacitive touchscreen produces repeats — a tap that bounces, an
@@ -41,9 +43,12 @@ log = logging.getLogger(__name__)
 # a button is a visible change here as well as in the page.
 #
 # Note what is absent and why: nothing that powers the machine off, restarts
-# it, or closes Kodama-Lite. Those are `confirm=True` commands in AIA's plugin
-# declarations and they are answered out loud before they run — a button
-# cannot hold that conversation, so a button does not get to start it.
+# it, or closes Kodama-Lite. Reboot and closing the player are `confirm=True`
+# in AIA's plugin declarations and are answered out loud before they run — a
+# button cannot hold that conversation, so a button does not get to start it.
+# Shutdown is answered by a touch instead (`ShutdownCountdown`), and that touch
+# is not an action either: it can only ever stop something already counting,
+# and it goes to `/api/shutdown` rather than through this queue.
 ACTIONS = (
     "talk",         # open the conversation page and start a turn
     "call",         # open the remote video call page

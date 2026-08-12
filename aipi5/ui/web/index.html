@@ -485,6 +485,28 @@
      screensaver away — section 26 — but a touch is proof of a person even
      when the camera disagrees, so it wakes too. */
   #ss-hint { position: absolute; bottom: 30px; font-size: 18px; color: #3b4553; }
+
+  /* ── the shutdown countdown ──────────────────────────────────── */
+
+  /* Over everything, including the screensaver: the device may well be asleep
+     when somebody says "shut down", and a countdown behind a clock face is a
+     countdown nobody can cancel. The whole surface is the cancel target — on
+     a touchscreen, "touch anywhere" is a larger and more forgiving button than
+     any button. */
+  #shutdown {
+    position: fixed; inset: 0; width: 1280px; height: 800px;
+    background: #0b0d12; display: none;
+    flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; z-index: 30;
+  }
+  #shutdown.on { display: flex; }
+  #sd-count {
+    font-size: 340px; font-weight: 200; line-height: 1;
+    font-variant-numeric: tabular-nums; color: var(--ink);
+  }
+  #sd-what { margin-top: 10px; font-size: 44px; color: var(--ink-dim); }
+  #sd-hint { margin-top: 54px; font-size: 30px; color: #7c8798; }
+  #shutdown.done #sd-count { font-size: 150px; color: var(--ink-dim); }
 </style>
 </head>
 <body>
@@ -670,6 +692,12 @@
   </div>
   <div id="ss-place"></div>
   <div id="ss-hint">Touch the screen or say 小艾同学</div>
+</div>
+
+<div id="shutdown">
+  <div id="sd-count">3</div>
+  <div id="sd-what">Shutting down</div>
+  <div id="sd-hint">Touch anywhere to cancel</div>
 </div>
 
 <script>
@@ -863,6 +891,7 @@ function applyState(state) {
 
   cameraAnswerFromState(state, assistant);
   callFromState(state);
+  shutdownFromState(state);
   lastAssistantState = assistant;
 
   const wanted = !!state.screensaver;
@@ -888,6 +917,97 @@ function setScreensaver(on) {
   screensaverOn = on;
   screensaver.classList.toggle("on", on);
   if (on) drawClock();
+}
+
+// ── the shutdown countdown ──────────────────────────────────────────
+//
+// The assistant heard "shut down" and is waiting to be told this is on a
+// screen before it powers the device off — `ShutdownCountdown` in
+// `aipi5/ui/state.py` refuses to power off without that answer. So the
+// acknowledgement goes first, before the first number is drawn: a page that
+// says "I am showing it" and then fails to paint costs somebody a shutdown
+// they can still cancel, while one that paints and forgets to answer costs
+// them the shutdown they asked for.
+//
+// This side owns no decision. It draws 3, 2, 1 and reports a touch; whether
+// the device powers off is settled in Python, which is where the clock that
+// matters runs.
+
+let shutdownToken = 0;
+let shutdownTimer = null;
+
+function shutdownFromState(state) {
+  const countdown = state.shutdown;
+  if (!countdown) {
+    if (shutdownToken) endShutdown();
+    return;
+  }
+  if (countdown.token === shutdownToken) return;   // already drawing this one
+  startShutdown(countdown);
+}
+
+function startShutdown(countdown) {
+  shutdownToken = countdown.token;
+  tellShutdown("showing");
+
+  let left = Math.max(1, countdown.seconds || 3);
+  const overlay = el("shutdown");
+  overlay.classList.remove("done");
+  overlay.classList.add("on");
+  el("sd-count").textContent = left;
+  el("sd-what").textContent = "Shutting down";
+  el("sd-hint").textContent = "Touch anywhere to cancel";
+
+  clearInterval(shutdownTimer);
+  shutdownTimer = setInterval(() => {
+    left -= 1;
+    if (left > 0) {
+      el("sd-count").textContent = left;
+      return;
+    }
+    // Zero is not "off". The last second belongs to Python, and the screen
+    // stops offering a cancellation it can no longer honour rather than
+    // showing a 0 that a person would still reach for.
+    clearInterval(shutdownTimer);
+    shutdownTimer = null;
+    overlay.classList.add("done");
+    el("sd-count").textContent = "Goodbye";
+    el("sd-hint").textContent = "";
+  }, 1000);
+}
+
+function endShutdown() {
+  shutdownToken = 0;
+  clearInterval(shutdownTimer);
+  shutdownTimer = null;
+  el("shutdown").classList.remove("on", "done");
+}
+
+async function tellShutdown(event) {
+  try {
+    await fetch("/api/shutdown", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: shutdownToken, event }),
+    });
+  } catch (err) {
+    // Nothing to retry against: if this was the acknowledgement the assistant
+    // will refuse to power off, which is the safe end of the failure.
+    console.warn("the assistant did not hear about the countdown", event);
+  }
+}
+
+function cancelShutdown() {
+  if (!shutdownToken) return;
+  // Shown before the round trip finishes. A person who has just touched the
+  // screen to stop their device powering off should not spend half a second
+  // watching the numbers carry on.
+  clearInterval(shutdownTimer);
+  shutdownTimer = null;
+  el("sd-count").textContent = "Cancelled";
+  el("shutdown").classList.add("done");
+  el("sd-hint").textContent = "";
+  tellShutdown("cancel");
 }
 
 // ── the conversation ────────────────────────────────────────────────
@@ -1959,6 +2079,12 @@ screensaver.addEventListener("pointerdown", () => {
   setScreensaver(false);
   send("wake");
 });
+
+// The whole overlay is the target, so "touch anywhere" is literally true.
+// `pointerdown` rather than `click`: a click is only delivered when the finger
+// lifts, and the last thing this should require of somebody stopping their
+// device from powering off is that they let go in time.
+el("shutdown").addEventListener("pointerdown", cancelShutdown);
 
 setInterval(drawClock, 1000);
 // The countdown is redrawn on its own timer rather than only on the state

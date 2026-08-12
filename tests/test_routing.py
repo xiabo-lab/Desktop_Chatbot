@@ -112,12 +112,25 @@ class TestExistingCommandsStillRoute(unittest.TestCase):
         self.assertRoutes("退出卡拉OK", "karaoke_exit")
 
     def test_destructive_commands_still_need_confirming(self):
-        for said in ("shut down", "关机", "reboot", "close kodama", "退出软件"):
+        for said in ("reboot", "close kodama", "退出软件"):
             with self.subTest(said=said):
                 intent = self.router.match(said)
                 self.assertIsNotNone(intent)
                 self.assertTrue(intent.command.confirm,
                                 f"{said!r} would run without asking")
+
+    def test_shutdown_is_answered_by_a_touch_instead(self):
+        # Not a gap in the rule above: `poweroff` takes the audio stack down
+        # with it, so a spoken confirmation is a question this device cannot
+        # reliably finish asking. It is answered on the screen instead — see
+        # `ShutdownCountdown`, and `tests/test_shutdown.py` for the policy.
+        # Routing is still what has to hold: whatever answers it, both
+        # languages have to reach the same command.
+        for said in ("shut down", "关机"):
+            with self.subTest(said=said):
+                intent = self.router.match(said)
+                self.assertIsNotNone(intent)
+                self.assertEqual(intent.command.name, "shutdown")
 
     def test_two_commands_in_one_breath(self):
         chain = self.router.match_sequence("下一首 and 现在播放什么")

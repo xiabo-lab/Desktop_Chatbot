@@ -145,7 +145,7 @@ class _Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/call/"):
             self._call_post(path)
             return
-        if path != "/api/action":
+        if path not in ("/api/action", "/api/shutdown"):
             self._json({"error": "not found"}, 404)
             return
 
@@ -163,7 +163,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"error": "expected JSON"}, 400)
             return
 
-        action = str(payload.get("action", "")) if isinstance(payload, dict) else ""
+        if not isinstance(payload, dict):
+            payload = {}
+
+        if path == "/api/shutdown":
+            self._shutdown_post(payload)
+            return
+
+        action = str(payload.get("action", ""))
         # The membership check is inside `UiState.request`, deliberately —
         # one place decides what an action is, and it is the same place that
         # holds the list.
@@ -171,6 +178,36 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "action": action})
         else:
             self._json({"ok": False, "error": "not accepted"}, 400)
+
+    def _shutdown_post(self, payload: dict) -> None:
+        """The screen's two words about a countdown it did not start.
+
+        `showing` is the screen saying the numbers are in front of somebody,
+        and it is what the shutdown waits for — see `ShutdownCountdown`, which
+        refuses to power the device off without it. `cancel` is a touch.
+
+        Not an entry in `ACTIONS`, deliberately. Everything in that list is a
+        request for the assistant to *do* something and is rate limited as
+        such; these two are answers about something already happening, one of
+        which must never be delayed by a cooldown.
+        """
+        countdown = getattr(self.ui, "countdown", None)
+        if countdown is None:
+            self._json({"ok": False, "error": "no countdown"}, 404)
+            return
+        try:
+            token = int(payload.get("token", 0))
+        except (TypeError, ValueError):
+            token = 0
+        event = str(payload.get("event", ""))
+        if event == "showing":
+            ok = countdown.showing(token)
+        elif event == "cancel":
+            ok = countdown.cancel(token)
+        else:
+            self._json({"ok": False, "error": "unknown event"}, 400)
+            return
+        self._json({"ok": ok})
 
     def _page(self) -> None:
         body = self.ui.page()
@@ -446,9 +483,12 @@ class WebUI:
 
     def __init__(self, cfg, *, state, history, info,
                  weather=None, news=None, camera=None, call=None,
-                 on_call_change=lambda: None):
+                 on_call_change=lambda: None, countdown=None):
         self.cfg = cfg
         self.state = state
+        # The shutdown countdown, which this module only ever answers about:
+        # it is started by the voice loop and drawn by the page.
+        self.countdown = countdown
         self.history = history
         self.info = info
         # The call server, or None when calling is off. This module knows only
