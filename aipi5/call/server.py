@@ -378,8 +378,14 @@ class _Handler(BaseHTTPRequestHandler):
     def _bye(self) -> None:
         if self._device() is None:
             return
-        self.call.hub.hang_up(str(self._body().get("session", "")),
-                              "the phone hung up")
+        payload = self._body()
+        # The phone says why — "you hung up", "the connection could not be
+        # recovered", "the connection failed". Truncated because it is text
+        # from a client, and prefixed so the journal still reads as an event
+        # rather than a bare phrase.
+        why = str(payload.get("reason", ""))[:120].strip()
+        self.call.hub.hang_up(str(payload.get("session", "")),
+                              f"the phone: {why}" if why else "the phone hung up")
         self.call.on_change()
         self._json({"ok": True})
 

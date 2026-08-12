@@ -1649,13 +1649,66 @@ candidates and the dead relay is simply never used. The credential-less entry
 is offered with a warning rather than dropped, which is the designed
 degradation.
 
+### A degraded link, and a link cut in half
+
+Shaped with `netem` on **`tailscale0` rather than `wlan0`**, deliberately: the
+call rides the tailnet while ssh to the box goes over the LAN, so the test
+cannot cut off the person running it — which is the usual way a network test on
+a remote machine ends. Every mode auto-clears and a watchdog strips anything
+left behind.
+
+**Slow and lossy — 1.5 Mbit, 120 ms ± 30 ms, 2% loss, 91 s.** Connected
+throughout, no reconnection events at all. The picture degrades and keeps
+moving, which is the requirement's "reduce quality rather than repeatedly
+freeze or disconnect".
+
+**Nearly unusable — 300 kbit, 250 ms ± 60 ms, 8% loss.** Held for ~50 s,
+recovering once by itself (`reconnecting` → `connected` in one second) until
+the person deliberately hung up. Round trip reached 6 s, though part of that
+was the test rig rather than the link: netem's default 1000-packet queue
+bufferbloats badly at 300 kbit. The later profile uses `limit 60`.
+
+**Link cut entirely for 20 s.** This is the recovery path that had been written
+and had never once fired:
+
+```
+22:49:05  call: reconnecting
+22:49:18  call: connected                    (13 s later)
+          route: host/udp -> prflx rtt 44ms
+```
+
+The session id is unchanged across it, so the existing call was recovered
+rather than replaced, and it re-paired directly with normal latency afterwards.
+
+One instrumentation gap this exposed: `/call/v1/bye` logged every ending as
+"the phone hung up", because the phone posted only the session. A call the
+recovery timeout gave up on and a call somebody deliberately ended were
+therefore indistinguishable — precisely the distinction wanted when reading
+back a call that dropped on a bad link. The reason now travels with the
+hang-up.
+
+### The End Call button, and the speaker
+
+**End Call** had only ever been exercised through the API, never as a click.
+Tested in a browser against a real `MediaStream`, because the guarantee that
+matters is not that it navigates away but that it releases the camera:
+
+```
+track_before: "live"   track_after: "ended"   released: true
+callLocal_cleared: true  remote_cleared: true  self_cleared: true
+page: "main"   bye posted: {"session":"…","reason":"the Pi hung up"}
+```
+
+**Speaker unavailable** is the one item covered only partly. Muting the sink
+and making the assistant speak leaves it running — zero restarts, still
+synthesising — but muting is not the device disappearing, and removing the sink
+outright was not worth the risk on a machine nobody could hear.
+
 ### What is still untested
 
-Different Wi-Fi networks; a deliberately slow or lossy link; a mid-call network
-drop (the ICE restart is implemented and has never fired in anger); the speaker
-unavailable; and the End Call button pressed on the panel itself, as against
-the hang-up sent over the API. And the one that needs a person: whether a
-caller in a different room hears an echo.
+Only two things, and both need somebody in the room: whether a caller in a
+*different* room hears an echo, and the speaker genuinely removed rather than
+muted. Everything else in the procedure's phase 6 list has been exercised.
 
 The Brio being unavailable *during* an incoming call is covered, though it was
 verified by accident rather than design — see the portal failure in section

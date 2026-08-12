@@ -506,7 +506,13 @@ function endCall(why, remote) {
   el("cam").classList.remove("off");
   note(remote ? (why || "Call ended.") : "");
   if (had && !remote) {
-    api("/call/v1/bye", { method: "POST", body: JSON.stringify({ session: had }) })
+    // The reason travels with it. Without this the server logged every ending
+    // as "the phone hung up", so a call the recovery timeout gave up on and a
+    // call somebody deliberately ended were indistinguishable in the journal —
+    // which is exactly the distinction you want when reading back a call that
+    // dropped on a bad link.
+    api("/call/v1/bye", { method: "POST",
+                          body: JSON.stringify({ session: had, reason: why || "" }) })
       .catch(() => {});
   }
 }
