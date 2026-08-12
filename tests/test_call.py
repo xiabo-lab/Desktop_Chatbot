@@ -678,6 +678,25 @@ class TestKeptAliveConnectionsStaySynchronised(unittest.TestCase):
         self.assertEqual(self.request(conn, "POST", "/call/v1/ring", huge), 413)
         self.assertEqual(self.request(conn, "GET", "/call/v1/state"), 200)
 
+    def test_the_policy_allows_the_service_worker(self):
+        # The service worker is what makes the Pi able to ring the phone, and
+        # a policy that blocks it fails in the least helpful way available:
+        # the phone reports that it cannot receive calls, and no request
+        # reaches the Pi to say otherwise. `worker-src` falls back to
+        # `script-src`, so `'unsafe-inline'` alone silently forbids loading
+        # /sw.js — inline scripts allowed, script *files* not.
+        conn = self.connection()
+        self.addCleanup(conn.close)
+        conn.request("GET", "/", headers={})
+        response = conn.getresponse()
+        response.read()
+        policy = response.getheader("Content-Security-Policy")
+        self.assertIn("worker-src 'self'", policy)
+        self.assertIn("script-src 'self'", policy)
+        # And the worker itself has to be fetchable without a token: iOS reads
+        # it while the app is being installed, before anything is paired.
+        self.assertEqual(self.request(conn, "GET", "/sw.js"), 200)
+
     def test_head_answers_and_leaves_the_connection_usable(self):
         # Two things at once: HEAD used to be `501 Unsupported method`, and a
         # HEAD that wrote a body would desynchronise the connection the same

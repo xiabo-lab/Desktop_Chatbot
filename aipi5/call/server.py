@@ -103,12 +103,23 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
+        # `script-src` needs `'self'` as well as `'unsafe-inline'`, and
+        # `worker-src` has to be stated outright.
+        #
+        # Without them the service worker cannot be registered and the phone
+        # can never be rung — `worker-src` falls back to `script-src`, which
+        # was `'unsafe-inline'` alone, and that permits inline scripts while
+        # forbidding the loading of `/sw.js` as one. The symptom was a button
+        # that reported "this browser cannot receive calls" and no request
+        # reaching the Pi at all, on a phone and a browser that both support
+        # it perfectly well.
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; script-src 'unsafe-inline'; "
-            "style-src 'unsafe-inline'; img-src 'self' data:; "
-            "media-src blob:; connect-src 'self'; manifest-src 'self'; "
-            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+            "default-src 'none'; script-src 'self' 'unsafe-inline'; "
+            "worker-src 'self'; style-src 'unsafe-inline'; "
+            "img-src 'self' data:; media-src blob:; connect-src 'self'; "
+            "manifest-src 'self'; base-uri 'none'; form-action 'none'; "
+            "frame-ancestors 'none'")
         self.end_headers()
         # `Content-Length` is still the real length on a HEAD — that is the
         # whole point of the request — but the body itself must not follow, or
