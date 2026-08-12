@@ -364,9 +364,17 @@ class _Handler(BaseHTTPRequestHandler):
         }).encode("utf-8"), "application/manifest+json")
 
     def _state(self) -> None:
-        if self._device() is None:
+        device = self._device()
+        if device is None:
             return
-        self._json(self.call.hub.snapshot())
+        state = dict(self.call.hub.snapshot())
+        # Whether *this* phone is registered to be rung. The phone cannot tell
+        # from its own side: iOS keeps a push subscription that the Pi may
+        # never have received, and a page that trusts the local one then
+        # believes it is set up while the Pi lists no phone at all. The Pi is
+        # the authority, so it says so on every poll.
+        state["can_ring"] = bool(self.call.subscriptions.get(device["name"]))
+        self._json(state)
 
     def _ring(self) -> None:
         """Dial the Pi. The one route that starts anything."""
@@ -395,11 +403,29 @@ class _Handler(BaseHTTPRequestHandler):
         device = self._device()
         if device is None:
             return
-        subscription = self._body().get("subscription")
+        body = self._body()
+        subscription = body.get("subscription")
         if not isinstance(subscription, dict):
+            # A failure to subscribe is reported here too, because everything
+            # that can go wrong does so on a phone whose console nobody can
+            # open. Third time in this feature that a silent failure hid the
+            # answer, so the reason goes to the journal even though there is
+            # nothing to store.
+            problem = body.get("error")
+            if problem:
+                log.warning("%s could not subscribe to rings: %s",
+                            device["name"], str(problem)[:300])
+                self._json({"ok": False, "logged": True})
+                return
             self._json({"error": "expected a subscription"}, 400)
             return
         ok = self.call.subscriptions.register(device["name"], subscription)
+        if ok:
+            # The screen draws "Call my phone" from `can_ring`, and that is
+            # published on state changes rather than computed per request — so
+            # without this the Pi kept saying it had no phone to ring until
+            # something unrelated happened to walk past the camera.
+            self.call.on_change()
         self._json({"ok": ok}, 200 if ok else 400)
 
     def _pickup(self) -> None:
@@ -673,6 +699,14 @@ class CallServer:
             "ice": turn.describe(self.cfg),
             "tailscale": tailscale.describe(),
             "push": self.push.describe(),
-            "call": self.hub.snapshot(),
+            # The hub returns `can_ring: False` always — it knows nothing about
+            # notifications, and the assistant fills the field in for the
+            # screen. Publishing that raw made this page report that no phone
+            # could be rung while `push.phones` in the same payload named one,
+            # which is the settings page lying about the thing it exists to
+            # show.
+            "call": {**self.hub.snapshot(),
+                     "can_ring": bool(self.push.keys.available
+                                      and self.subscriptions.names())},
             "updated": time.time(),
         }

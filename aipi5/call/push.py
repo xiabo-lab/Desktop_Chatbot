@@ -248,11 +248,17 @@ class Pusher:
     """Sends the ring. Never raises; a failed push is a call that did not ring."""
 
     def __init__(self, keys: PushKeys, subscriptions: Subscriptions,
-                 subject: str = "mailto:aipi5@localhost"):
+                 subject: str = "mailto:aipi5@example.com"):
         self.keys = keys
         self.subs = subscriptions
-        # VAPID requires a contact for the push service to complain to. It is
-        # never contacted in practice and Apple does not verify it.
+        # VAPID requires a contact for the push service to complain to. Nobody
+        # ever reads it and Apple does not check that it receives mail — but it
+        # does check that it could be an address, and **refuses
+        # `mailto:…@localhost` with `403 BadJwtToken`**: a bare hostname is not
+        # a domain. That reads like a signing failure and is not one; the key,
+        # the endpoint and the payload were all fine. `example.com` is reserved
+        # by RFC 2606, so it is valid forever and reaches nobody. The expiry is
+        # left to pywebpush; Apple accepted both 12 and 24 hours when measured.
         self.subject = subject
 
     def can_ring(self, device: str) -> bool:
@@ -277,15 +283,30 @@ class Pusher:
 
         try:
             from pywebpush import WebPushException, webpush
+            from py_vapid import Vapid02
         except ImportError:
             return False, "pywebpush is not installed"
+
+        # The key is handed over as an object, not as the PEM text. Given a
+        # string, pywebpush passes it to `Vapid.from_string`, which strips the
+        # newlines and base64-decodes **the whole thing including the
+        # `-----BEGIN PRIVATE KEY-----` line** — so a perfectly good PKCS8 PEM
+        # comes back as "Could not deserialize key data", which reads like a
+        # corrupt file rather than the wrong entry point. `from_pem` is the one
+        # that understands what is actually on disk.
+        try:
+            signing_key = Vapid02.from_pem(keys["private"].encode("ascii"))
+        except Exception as exc:
+            log.error("the VAPID private key at %s cannot be loaded: %s",
+                      self.keys.path, exc)
+            return False, "the VAPID key could not be loaded"
 
         try:
             webpush(
                 subscription_info={"endpoint": subscription["endpoint"],
                                    "keys": subscription["keys"]},
                 data=body,
-                vapid_private_key=keys["private"],
+                vapid_private_key=signing_key,
                 vapid_claims={"sub": self.subject},
                 ttl=TTL_S,
                 timeout=10,

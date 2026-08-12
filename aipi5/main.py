@@ -419,10 +419,19 @@ class Assistant:
         speaker in the same room, and a wake word that triggers on the caller's
         voice would have the assistant talking over them.
 
-        The camera is *not* touched here. It is lent on the way into answering,
-        by the handler that answers, because the order matters there — see
-        `_call_post` in `aipi5/ui/server.py`. It is taken back here, because by
-        then the only thing that knows the call is over may be the phone.
+        The camera is lent here as well as by the handler that answers an
+        incoming call (`_call_post` in `aipi5/ui/server.py`), and `lend` is
+        idempotent precisely so both may. The answer handler cannot be the only
+        place: **an outgoing call is not answered on this device.** The phone
+        taps a notification and POSTs `/call/v1/pickup`, the hub moves to
+        `connecting`, and the Pi's page then opens `getUserMedia` on a camera
+        this process is still holding — `NotReadableError: Could not start
+        video source`, on the one path where nobody here ever said "answer".
+        Lending before `publish` is what keeps the order right: the page cannot
+        learn the call is live until after the device is free.
+
+        It is taken back here too, because by then the only thing that knows
+        the call is over may be the phone.
         """
         live = self.call_hub.live
         if live == self._call_live:
@@ -431,6 +440,10 @@ class Assistant:
         self._call_live = live
 
         if live:
+            # Before anything else, and before the state is published: the
+            # browser at the other end of `publish` opens the Brio the moment
+            # it sees this.
+            self.camera.lend("a video call")
             # The floor, held for the duration. `AudioPriority` counts holders,
             # so this nests correctly with a turn that was already in progress
             # rather than fighting it for the ducker.

@@ -333,19 +333,48 @@ async function registerWorker() {
   }
 }
 
+// Say why it did not work, to the Pi. Nobody can open a console on a phone in
+// a kiosk's life, and "no confirmation appeared" is not something anybody can
+// act on. This reaches the journal.
+async function reportPush(detail) {
+  const installed = window.navigator.standalone === true
+    || window.matchMedia("(display-mode: standalone)").matches;
+  const facts = [
+    detail,
+    "installed=" + installed,
+    "permission=" + (("Notification" in window) ? Notification.permission : "n/a"),
+    "sw=" + ("serviceWorker" in navigator),
+    "push=" + ("PushManager" in window),
+  ].join(" · ");
+  try {
+    await api("/call/v1/subscribe", {
+      method: "POST", body: JSON.stringify({ error: facts }),
+    });
+  } catch (err) { /* the reason it failed may be the reason this fails */ }
+}
+
 async function subscribeForRings() {
   const reg = swReg || await registerWorker();
-  if (!reg) return { ok: false, why: "this browser cannot receive calls" };
+  if (!reg) {
+    await reportPush("no service worker registration");
+    return { ok: false, why: "this browser cannot receive calls" };
+  }
   // The permission prompt. Must be inside the tap that called us.
   let permission = Notification.permission;
   if (permission === "default") permission = await Notification.requestPermission();
   if (permission !== "granted") {
+    await reportPush("permission is " + permission);
     return { ok: false, why: "notifications are turned off for this app" };
   }
   try {
     const keyResponse = await fetch("/call/v1/vapid", { cache: "no-store" });
     const { key } = await keyResponse.json();
-    if (!key) return { ok: false, why: "the Pi has no push key" };
+    if (!key) {
+      await reportPush("the Pi returned an empty VAPID key");
+      return { ok: false, why: "the Pi has no push key" };
+    }
+    // An existing subscription is reused rather than replaced: iOS keeps one
+    // across launches, and asking for a second while the first is alive fails.
     let sub = await reg.pushManager.getSubscription();
     if (!sub) {
       sub = await reg.pushManager.subscribe({
@@ -357,9 +386,12 @@ async function subscribeForRings() {
       method: "POST", body: JSON.stringify({ subscription: sub.toJSON() }),
     });
     const body = await response.json();
+    if (!body.ok) await reportPush("the Pi refused the subscription");
     return body.ok ? { ok: true } : { ok: false, why: "the Pi refused it" };
   } catch (err) {
-    return { ok: false, why: (err && err.message) || "could not subscribe" };
+    const why = (err && err.message) || "could not subscribe";
+    await reportPush("subscribe threw: " + why);
+    return { ok: false, why };
   }
 }
 
@@ -853,12 +885,48 @@ window.addEventListener("pagehide", () => {
     // Offer to be rung, if this phone is not set up for it yet. Only in an
     // installed app: iOS refuses Web Push in a plain Safari tab, and offering
     // a button that cannot work is worse than not offering it.
+    //
+    // **Whether it is set up is the Pi's answer, not this phone's.** iOS keeps
+    // a push subscription of its own accord, and it survives things that the
+    // Pi's copy does not — a re-pairing, a restore, a subscription whose POST
+    // never arrived. Reading the local one as proof hid the button from the
+    // only person who could have fixed it, on a phone the Pi could not ring:
+    // both ends silently disagreeing, with no way in from either.
     const installed = window.navigator.standalone === true
       || window.matchMedia("(display-mode: standalone)").matches;
     await registerWorker();
-    const already = swReg && await swReg.pushManager.getSubscription();
-    if (installed && !already && "Notification" in window) {
-      el("allow-ring").hidden = false;
+    if (installed && !state.can_ring && "Notification" in window) {
+      // A subscription this phone already holds is re-offered without a tap.
+      // No permission prompt is involved — it was granted when the
+      // subscription was made — so there is nothing to ask.
+      let repaired = false;
+      try {
+        const already = swReg && await swReg.pushManager.getSubscription();
+        if (already) {
+          const response = await api("/call/v1/subscribe", {
+            method: "POST",
+            body: JSON.stringify({ subscription: already.toJSON() }),
+          });
+          repaired = (await response.json()).ok === true;
+          if (repaired) note("AIPI5 can ring this phone now.");
+        }
+      } catch (err) {
+        await reportPush("could not re-offer an existing subscription: "
+                         + ((err && err.message) || err));
+      }
+      el("allow-ring").hidden = repaired;
+    }
+    if (!installed && !state.can_ring) {
+      // In a browser tab there is no button to offer — iOS allows Web Push
+      // only to an installed app — so say why, on the screen of the person who
+      // is wondering where it went. Saying nothing is what sent somebody round
+      // this loop three times: the page looked perfectly healthy, because for
+      // calling *out* it was.
+      el("who").textContent =
+        "This phone can call AIPI5, but AIPI5 cannot ring it.";
+      note("To be rung, this page has to be installed: open this same link in "
+           + "SAFARI (long-press it → Open in Safari), then Share → Add to "
+           + "Home Screen, and launch it from the new icon.");
     }
     if (idleTimer) clearInterval(idleTimer);
     idleTimer = setInterval(idleCheck, 4000);

@@ -597,6 +597,60 @@ class TestTurnCredentials(unittest.TestCase):
         self.assertEqual(described["turn"][0]["auth"], "secret")
 
 
+class TestTheKeyThePushIsSignedWith(unittest.TestCase):
+    """The one step between "registered" and "the phone rang".
+
+    Everything either side of this was visible — the subscription is listed,
+    the state moves to `calling`, the screen says so — while the push itself
+    failed on a key that is perfectly valid and simply handed over the wrong
+    way. It cost a real call that rang nothing.
+    """
+
+    def setUp(self):
+        import tempfile
+        from aipi5.call import push
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.keys = push.PushKeys(Path(self.tmp.name))
+        if not self.keys.available:
+            self.skipTest("py_vapid is not installed on this machine")
+
+    def test_the_key_is_written_in_the_format_it_is_read_back_in(self):
+        from py_vapid import Vapid02
+        keys = self.keys.load_or_create()
+        self.assertIsNotNone(keys)
+        # `Vapid.from_string` — which is what pywebpush reaches for when handed
+        # a *string* — strips the newlines and base64-decodes the whole PEM,
+        # `-----BEGIN PRIVATE KEY-----` included, and reports the result as
+        # "Could not deserialize key data". So the signing key is built here,
+        # by the reader that understands what `PushKeys` writes.
+        signing = Vapid02.from_pem(keys["private"].encode("ascii"))
+        self.assertIsNotNone(signing.private_key)
+
+    def test_the_contact_claim_is_a_domain_apple_will_accept(self):
+        # Measured against Apple, not guessed: `mailto:aipi5@localhost` comes
+        # back `403 BadJwtToken`, which names the token and not the address.
+        from aipi5.call import push
+        pusher = push.Pusher(self.keys, push.Subscriptions(Path(self.tmp.name)))
+        self.assertTrue(pusher.subject.startswith(("mailto:", "https://")))
+        address = pusher.subject.split(":", 1)[1]
+        self.assertIn(".", address.split("@")[-1])
+
+    def test_the_published_key_is_the_one_that_signs(self):
+        # A public key that does not match the private half is a subscription
+        # Apple accepts and a push it then rejects, days later.
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding, PublicFormat)
+        from py_vapid import Vapid02
+        keys = self.keys.load_or_create()
+        signing = Vapid02.from_pem(keys["private"].encode("ascii"))
+        raw = signing.public_key.public_bytes(
+            Encoding.X962, PublicFormat.UncompressedPoint)
+        self.assertEqual(
+            base64.urlsafe_b64encode(raw).decode("ascii").rstrip("="),
+            self.keys.public())
+
+
 class TestKeptAliveConnectionsStaySynchronised(unittest.TestCase):
     """A POST that does not read its body corrupts the *next* request.
 
@@ -622,8 +676,12 @@ class TestKeptAliveConnectionsStaySynchronised(unittest.TestCase):
         self.token = devices.pair("a phone")
         # Port 0: the OS picks a free one, so the suite never collides with a
         # real deployment or with itself running twice.
+        # `devices` also decides where push keys and subscriptions are kept —
+        # they live beside it. Left at its default, this suite writes a
+        # subscription into the developer's real ~/.config/aipi5 and then
+        # reads it back in the next test.
         cfg = config_mod.CallConfig(enabled=True, host="127.0.0.1", port=0,
-                                    tls=False)
+                                    tls=False, devices=store)
         self.server = CallServer(cfg, hub=SignalingHub(), devices=devices)
         self.assertTrue(self.server.start(), self.server.error)
         self.addCleanup(self.server.stop)
@@ -696,6 +754,78 @@ class TestKeptAliveConnectionsStaySynchronised(unittest.TestCase):
         # And the worker itself has to be fetchable without a token: iOS reads
         # it while the app is being installed, before anything is paired.
         self.assertEqual(self.request(conn, "GET", "/sw.js"), 200)
+
+    def test_the_pi_says_whether_it_can_ring_this_phone(self):
+        # The phone must not answer this from its own side. iOS keeps a push
+        # subscription across launches and it outlives things the Pi's copy
+        # does not, so a page that reads the local one believes it is set up
+        # while the Pi lists no phone at all — and hides the button that is the
+        # only way to fix it. The Pi is the authority; it says so on every poll.
+        conn = self.connection()
+        self.addCleanup(conn.close)
+        conn.request("GET", "/call/v1/state",
+                     headers={"Authorization": f"Bearer {self.token}"})
+        response = conn.getresponse()
+        self.assertFalse(json.loads(response.read())["can_ring"])
+
+        self.assertTrue(self.server.subscriptions.register("a phone", {
+            "endpoint": "https://web.push.apple.com/abc",
+            "keys": {"p256dh": "a-public-key", "auth": "a-secret"},
+        }))
+        conn.request("GET", "/call/v1/state",
+                     headers={"Authorization": f"Bearer {self.token}"})
+        response = conn.getresponse()
+        self.assertTrue(json.loads(response.read())["can_ring"])
+
+    def test_the_settings_page_agrees_with_itself_about_ringing(self):
+        # It used to publish `push.phones: ["a phone"]` and `call.can_ring:
+        # false` in the same payload, because the hub's snapshot hardcodes the
+        # field for the assistant to fill in later.
+        described = self.server.describe()
+        self.assertEqual(described["push"]["phones"], [])
+        self.assertFalse(described["call"]["can_ring"])
+
+        self.server.subscriptions.register("a phone", {
+            "endpoint": "https://web.push.apple.com/abc",
+            "keys": {"p256dh": "a-public-key", "auth": "a-secret"},
+        })
+        described = self.server.describe()
+        self.assertEqual(described["push"]["phones"], ["a phone"])
+        # Stated as the agreement rather than as `True`, because a machine
+        # without pywebpush installed — which is every development machine here
+        # — genuinely cannot ring anything, and should say so in both places.
+        self.assertEqual(
+            described["call"]["can_ring"],
+            bool(described["push"]["available"] and described["push"]["phones"]))
+
+    def test_registering_tells_the_screen_straight_away(self):
+        # `can_ring` is published on state changes, not computed per request,
+        # so a subscribe that does not announce itself leaves the Pi's own
+        # dialler hidden until something unrelated moves the state.
+        changes = []
+        self.server.on_change = lambda: changes.append(1)
+        conn = self.connection()
+        self.addCleanup(conn.close)
+        self.assertEqual(self.request(
+            conn, "POST", "/call/v1/subscribe", json.dumps({"subscription": {
+                "endpoint": "https://web.push.apple.com/abc",
+                "keys": {"p256dh": "a-public-key", "auth": "a-secret"},
+            }})), 200)
+        self.assertEqual(len(changes), 1)
+
+    def test_a_failure_to_subscribe_reaches_the_journal(self):
+        # Nobody can open a console on the phone, so "no confirmation appeared"
+        # is the whole of the evidence unless the reason is posted here.
+        conn = self.connection()
+        self.addCleanup(conn.close)
+        with self.assertLogs("aipi5.call.server", level="WARNING") as caught:
+            status = self.request(
+                conn, "POST", "/call/v1/subscribe",
+                json.dumps({"error": "permission is denied · installed=true"}))
+        self.assertEqual(status, 200)
+        self.assertIn("permission is denied", "\n".join(caught.output))
+        # Reporting is not registering: nothing may be stored by it.
+        self.assertEqual(self.server.subscriptions.names(), [])
 
     def test_head_answers_and_leaves_the_connection_usable(self):
         # Two things at once: HEAD used to be `501 Unsupported method`, and a
