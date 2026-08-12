@@ -351,6 +351,25 @@ class Assistant:
         )
         self.publish()
 
+    def _call_snapshot(self) -> dict:
+        """The hub's state, plus whether a phone could be rung.
+
+        The hub deliberately knows nothing about notifications — it moves JSON
+        between two seats — so this is where the two facts meet. The screen
+        needs both: `state` to draw the call, and `can_ring` to decide whether
+        to offer a dialler at all. A button that cannot work is worse than no
+        button, because its failure is one the person has no way to read.
+        """
+        snapshot = self.call_hub.snapshot()
+        try:
+            snapshot["can_ring"] = bool(
+                self.settings.call.enabled
+                and self.call.subscriptions.names()
+                and self.call.push.keys.available)
+        except Exception:
+            snapshot["can_ring"] = False
+        return snapshot
+
     def _call_status(self) -> tuple[bool, str]:
         """Whether a phone could ring this device, and where from.
 
@@ -443,7 +462,7 @@ class Assistant:
             screensaver=self.screensaver.should_show(),
             kodama_running=self.player.available(),
             degraded=self.report.degraded if self.report else [],
-            call=self.call_hub.snapshot(),
+            call=self._call_snapshot(),
             **extra,
         )
 

@@ -61,6 +61,12 @@ RING_TIMEOUT_S = 30.0
 # second, and phase 3's TURN relay is what makes the slow cases slow.
 CONNECT_TIMEOUT_S = 45.0
 
+# How long the Pi keeps ringing a phone before giving up. Much longer than a
+# ring inwards: an incoming call is answered by a page that is already running,
+# while this one waits for a person to notice a notification, unlock a handset
+# and tap it. Short enough that a call nobody took stops holding the device.
+CALL_OUT_TIMEOUT_S = 45.0
+
 # How long a *connected* call may go without the phone asking for messages
 # before it is presumed gone.
 #
@@ -85,6 +91,15 @@ class CallState(enum.Enum):
     IDLE = "idle"
     #: A trusted phone has dialled and the Pi has not yet picked up.
     RINGING = "ringing"
+    #: The Pi is ringing the phone. Waiting for somebody to pick it up there.
+    #:
+    #: Deliberately a separate state rather than a flag on RINGING, because the
+    #: two have opposite rules: an incoming call is answered automatically
+    #: because the caller was authenticated at the door, and an outgoing one
+    #: must **never** be — the phone belongs to a person, and a Pi that could
+    #: open its microphone unattended is the thing this whole feature is
+    #: careful not to build.
+    CALLING = "calling"
     #: Picked up. The two peers are exchanging offer/answer/candidates.
     CONNECTING = "connecting"
     #: Media is flowing.
@@ -103,6 +118,11 @@ class CallState(enum.Enum):
 #: until somebody has picked up.
 LIVE = (CallState.CONNECTING, CallState.CONNECTED, CallState.RECONNECTING)
 
+#: States in which a call exists but no capture device has been opened.
+#: `CALLING` belongs here for the same reason `RINGING` does: a phone that is
+#: being rung and has not answered must not have turned anything on at the Pi.
+QUIET = (CallState.RINGING, CallState.CALLING)
+
 
 class SignalingHub:
     """One call between one phone and this Pi.
@@ -116,7 +136,8 @@ class SignalingHub:
 
     def __init__(self, *, ring_timeout_s: float = RING_TIMEOUT_S,
                  connect_timeout_s: float = CONNECT_TIMEOUT_S,
-                 phone_silent_s: float = PHONE_SILENT_S):
+                 phone_silent_s: float = PHONE_SILENT_S,
+                 call_out_timeout_s: float = CALL_OUT_TIMEOUT_S):
         self._lock = threading.Condition()
         self._sequence = itertools.count(1)
         self._mailboxes: dict[str, list[tuple[int, dict]]] = {r: [] for r in ROLES}
@@ -130,6 +151,7 @@ class SignalingHub:
         self.ring_timeout_s = ring_timeout_s
         self.connect_timeout_s = connect_timeout_s
         self.phone_silent_s = phone_silent_s
+        self.call_out_timeout_s = call_out_timeout_s
 
     # ── what the screen and the voice loop ask ───────────────────────
 
@@ -153,6 +175,10 @@ class SignalingHub:
                 "caller": self._caller,
                 "since": self._since or None,
                 "live": self._state in LIVE,
+                # Filled in by the assistant, which is what knows whether a
+                # phone has registered for push — the hub deliberately knows
+                # nothing about notifications.
+                "can_ring": False,
             }
 
     # ── the state machine ────────────────────────────────────────────
@@ -182,6 +208,51 @@ class SignalingHub:
             # the thing that survives not being connected.
             self._lock.notify_all()
             return True, self._session, ""
+
+    def call_out(self, device: str) -> tuple[bool, str, str]:
+        """The Pi is ringing a phone. Returns (started, session, why not).
+
+        The mirror of `ring`, and almost all of it is the same — a session, a
+        deadline, a state the screen can draw. What differs is what happens
+        next: nothing, until somebody picks up the phone. There is no
+        auto-answer on this side and there must not be.
+
+        Note which way the media still flows: the **phone remains the caller**
+        in WebRTC terms, making the offer once it opens. Who rings and who
+        offers are separate questions, and keeping the offer where it already
+        works means an outgoing call reuses the entire proven media path
+        instead of a mirrored copy of it.
+        """
+        with self._lock:
+            if self._state is not CallState.IDLE and not self._expired_locked():
+                return False, "", "a call is already in progress"
+
+            self._reset_locked()
+            self._state = CallState.CALLING
+            self._session = uuid.uuid4().hex[:16]
+            self._caller = device
+            self._since = time.time()
+            # Longer than a ring inwards: somebody has to notice a
+            # notification, unlock a phone and tap it, which is not the same as
+            # a page that answers in half a second.
+            self._deadline = time.monotonic() + self.call_out_timeout_s
+            log.info("call: ringing %s (session %s)", device, self._session)
+            self._lock.notify_all()
+            return True, self._session, ""
+
+    def picked_up(self, session: str) -> bool:
+        """Somebody answered on the phone. Only valid while we are calling it."""
+        with self._lock:
+            if self._state is not CallState.CALLING or session != self._session:
+                return False
+            self._state = CallState.CONNECTING
+            self._deadline = time.monotonic() + self.connect_timeout_s
+            log.info("call: the phone picked up (session %s)", self._session)
+            # The Pi's page is waiting on this to open the Brio: until now it
+            # has shown "calling" without touching a capture device, for the
+            # same reason `RINGING` does not own the camera.
+            self._post_locked(PI, {"type": "answered", "session": self._session})
+            return True
 
     def answer(self, session: str) -> bool:
         """The Pi picked up. Only valid while that exact session is ringing."""

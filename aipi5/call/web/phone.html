@@ -58,6 +58,42 @@
   #dial:disabled { background: #2a3240; color: var(--ink-dim); }
   #note { font-size: 15px; color: var(--ink-dim); min-height: 22px; }
   #note.bad { color: var(--danger); }
+  #allow-ring {
+    margin-top: 4px; padding: 12px 20px; border-radius: 12px;
+    border: 1px solid var(--panel-edge); background: var(--panel);
+    color: var(--ink); font-size: 16px; font-family: inherit; cursor: pointer;
+  }
+  #allow-ring[hidden] { display: none; }
+
+  /* ── being rung ──────────────────────────────────────────────── */
+  #incoming {
+    flex: 1; display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 20px;
+    padding: calc(env(safe-area-inset-top) + 24px) 28px
+             calc(env(safe-area-inset-bottom) + 24px);
+    text-align: center;
+  }
+  #incoming.on { display: flex; }
+  #incoming h1 { margin: 0; font-size: 30px; font-weight: 600; }
+  #incoming p { margin: 0; color: var(--ink-dim); font-size: 16px; }
+  #accept {
+    margin-top: 14px; width: 170px; height: 170px; border-radius: 50%;
+    border: none; background: #1d7a44; color: #fff;
+    font-size: 20px; font-family: inherit; font-weight: 600;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 8px; cursor: pointer;
+    /* Pulsing, because this screen may be looked at from across a room and
+       the difference between "ringing" and "a screen that is just sitting
+       there" is motion. */
+    animation: ring 1.4s ease-in-out infinite;
+  }
+  #accept .glyph { font-size: 46px; line-height: 1; }
+  @keyframes ring { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+  #decline {
+    padding: 12px 26px; border-radius: 12px; border: 1px solid var(--panel-edge);
+    background: transparent; color: var(--ink-dim); font-size: 17px;
+    font-family: inherit; cursor: pointer;
+  }
 
   /* ── the call ────────────────────────────────────────────────── */
   #call { flex: 1; position: relative; background: #05070a; display: none; }
@@ -129,6 +165,21 @@
   <p id="who">Checking this phone…</p>
   <button id="dial" disabled><span class="glyph">📞</span>Call AIPI5</button>
   <div id="note"></div>
+  <!-- Only shown when the phone is not yet set up to be rung. Asking for
+       notification permission has to come from a tap — iOS refuses a request
+       made on page load — so it is a button rather than something automatic. -->
+  <button id="allow-ring" hidden>Let AIPI5 ring this phone</button>
+</div>
+
+<!-- The Pi is calling. A separate screen rather than a variant of the dialler,
+     because the only two things that matter here are answer and decline, and
+     anything else on the screen is something to hit by mistake while reaching
+     for one of them. -->
+<div id="incoming">
+  <h1>AIPI5 is calling</h1>
+  <p id="incoming-note">Answer to open the camera and microphone.</p>
+  <button id="accept"><span class="glyph">📞</span>Answer</button>
+  <button id="decline">Decline</button>
 </div>
 
 <div id="call">
@@ -214,6 +265,12 @@ let iceServers = [];
 // wire — and `addIceCandidate` before `setRemoteDescription` throws, which
 // loses exactly the candidate that would have connected the call.
 let pendingCandidates = [];
+//: The session the Pi is ringing us with, while the answer screen is up.
+let incomingSession = "";
+//: Polls state slowly while idle, so an open app notices a ring even when the
+//: push did not arrive — which on iOS is a real possibility rather than a
+//: theoretical one.
+let idleTimer = null;
 
 async function api(path, options) {
   const response = await fetch(path, Object.assign({
@@ -242,6 +299,113 @@ function send(message) {
     method: "POST",
     body: JSON.stringify({ session, message }),
   }).catch((err) => console.warn("send failed", err));
+}
+
+// ── being rung ──────────────────────────────────────────────────────
+//
+// The Pi cannot reach a page that is not running, so something on the phone
+// has to be listening: a service worker, woken by iOS when a push arrives.
+// Registering it and subscribing is all this section does; `sw.js` is the part
+// that exists while the app does not.
+//
+// Two iOS rules shape it. The app must be installed to the Home Screen before
+// Web Push works at all, and permission must be asked from a **tap** — a
+// request made on page load is refused outright and, worse, can count as a
+// denial that is then remembered.
+
+function urlB64ToUint8Array(base64) {
+  const padded = (base64 + "=".repeat((4 - base64.length % 4) % 4))
+    .replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(padded);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+let swReg = null;
+
+async function registerWorker() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
+  try {
+    swReg = await navigator.serviceWorker.register("/sw.js");
+    return swReg;
+  } catch (err) {
+    console.warn("service worker did not register", err);
+    return null;
+  }
+}
+
+async function subscribeForRings() {
+  const reg = swReg || await registerWorker();
+  if (!reg) return { ok: false, why: "this browser cannot receive calls" };
+  // The permission prompt. Must be inside the tap that called us.
+  let permission = Notification.permission;
+  if (permission === "default") permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    return { ok: false, why: "notifications are turned off for this app" };
+  }
+  try {
+    const keyResponse = await fetch("/call/v1/vapid", { cache: "no-store" });
+    const { key } = await keyResponse.json();
+    if (!key) return { ok: false, why: "the Pi has no push key" };
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,               // required, and true on iOS
+        applicationServerKey: urlB64ToUint8Array(key),
+      });
+    }
+    const response = await api("/call/v1/subscribe", {
+      method: "POST", body: JSON.stringify({ subscription: sub.toJSON() }),
+    });
+    const body = await response.json();
+    return body.ok ? { ok: true } : { ok: false, why: "the Pi refused it" };
+  } catch (err) {
+    return { ok: false, why: (err && err.message) || "could not subscribe" };
+  }
+}
+
+function showIncoming(session, on) {
+  incomingSession = on ? session : "";
+  el("incoming").classList.toggle("on", !!on);
+  el("home").style.display = on ? "none" : "";
+}
+
+// Answering. Deliberately only ever reached from a tap — there is no path here
+// from a poll or a push, because a phone that answered by itself would be a
+// microphone anybody at the Pi could open.
+async function acceptIncoming() {
+  const session = incomingSession;
+  if (!session) return;
+  el("accept").disabled = true;
+  try {
+    local = await openMedia();
+  } catch (err) {
+    el("accept").disabled = false;
+    el("incoming-note").textContent =
+      "Camera and microphone permission is needed to answer.";
+    return;
+  }
+  let payload;
+  try {
+    const response = await api("/call/v1/pickup", {
+      method: "POST", body: JSON.stringify({ session }),
+    });
+    payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error("the call has gone");
+  } catch (err) {
+    stopLocal();
+    el("accept").disabled = false;
+    showIncoming("", false);
+    note(err.message || "That call is no longer ringing.", true);
+    return;
+  }
+
+  showIncoming("", false);
+  el("accept").disabled = false;
+  startSession(session, payload.ice_servers || []);
+  // The phone is still the one that offers, even though the Pi rang. Who rings
+  // and who offers are separate; keeping the offer here means an outgoing call
+  // reuses the media path that already works.
+  await makeOffer();
 }
 
 async function openMedia() {
@@ -448,19 +612,27 @@ async function dial() {
     return;
   }
 
-  session = payload.session;
-  iceServers = payload.ice_servers || [];
+  startSession(payload.session, payload.ice_servers || []);
+}
+
+// Everything between "we have a session and a camera" and "a call is running".
+// Shared, because the two ways in — dialling the Pi, and answering it — differ
+// only in how the session was obtained and who offers first.
+function startSession(sess, ice) {
+  session = sess;
+  iceServers = ice || [];
   cursor = 0;
   pendingCandidates = [];
 
   el("home").style.display = "none";
+  el("incoming").classList.remove("on");
   el("call").classList.add("on");
   el("self").srcObject = local;
   say("Calling…", false);
 
   pc = buildPeer();
   for (const track of local.getTracks()) pc.addTrack(track, local);
-  await tuneVideoSender(pc);
+  tuneVideoSender(pc);
 
   poll();
 }
@@ -556,6 +728,62 @@ function endCall(why, remote) {
 }
 
 el("dial").addEventListener("click", dial);
+
+el("accept").addEventListener("click", acceptIncoming);
+
+el("decline").addEventListener("click", () => {
+  const had = incomingSession;
+  showIncoming("", false);
+  note("Call declined.");
+  if (had) {
+    api("/call/v1/bye", { method: "POST",
+      body: JSON.stringify({ session: had, reason: "declined on the phone" }) })
+      .catch(() => {});
+  }
+});
+
+// Permission has to be asked inside a tap. Doing it on load is refused by iOS
+// and can be remembered as a denial, which is worse than not asking.
+el("allow-ring").addEventListener("click", async () => {
+  el("allow-ring").disabled = true;
+  const outcome = await subscribeForRings();
+  el("allow-ring").disabled = false;
+  if (outcome.ok) {
+    el("allow-ring").hidden = true;
+    note("AIPI5 can ring this phone now.");
+  } else {
+    note(outcome.why, true);
+  }
+});
+
+// The service worker telling us a notification was tapped. Faster than waiting
+// for the idle poll, and it carries the session so there is no guessing which
+// call was meant.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    const data = event.data || {};
+    if (data.type === "answer-call" && !session) {
+      showIncoming(data.session || incomingSession, true);
+    }
+  });
+}
+
+// While idle, ask occasionally whether the Pi is ringing. Slow on purpose: the
+// push is the mechanism, and this is the backstop for a push that was dropped,
+// delayed, or never permitted.
+async function idleCheck() {
+  if (session || !token) return;
+  try {
+    const response = await api("/call/v1/state");
+    const state = await response.json();
+    if (state.state === "calling" && state.session) {
+      showIncoming(state.session, true);
+    } else if (incomingSession && state.state !== "calling") {
+      // Stopped ringing — timed out, or answered somewhere else.
+      showIncoming("", false);
+    }
+  } catch (err) { /* offline; the next tick tries again */ }
+}
 el("hang").addEventListener("click", () => endCall("you hung up"));
 
 el("mic").addEventListener("click", () => {
@@ -621,6 +849,20 @@ window.addEventListener("pagehide", () => {
       note("AIPI5 is already on a call.");
     }
     el("dial").disabled = false;
+
+    // Offer to be rung, if this phone is not set up for it yet. Only in an
+    // installed app: iOS refuses Web Push in a plain Safari tab, and offering
+    // a button that cannot work is worse than not offering it.
+    const installed = window.navigator.standalone === true
+      || window.matchMedia("(display-mode: standalone)").matches;
+    await registerWorker();
+    const already = swReg && await swReg.pushManager.getSubscription();
+    if (installed && !already && "Notification" in window) {
+      el("allow-ring").hidden = false;
+    }
+    if (idleTimer) clearInterval(idleTimer);
+    idleTimer = setInterval(idleCheck, 4000);
+    idleCheck();
   } catch (err) {
     el("who").textContent = "Could not reach AIPI5.";
     note(err.message || "Check that you are on the same network.", true);

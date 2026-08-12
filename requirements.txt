@@ -24,6 +24,22 @@ openai>=1.0
 # change in AIA from breaking this one silently.
 requests
 
+# Web push, so the Pi can ring a phone whose app is closed. Only needed for
+# outgoing calls; everything else works without it.
+#
+# **The versions are pinned, and the pin is load-bearing.** Installing current
+# pywebpush pulls `cryptography>=47`, and this Pi's venv sees the system
+# `python3-openssl`, which requires `cryptography<45`. Upgrading therefore
+# breaks pyopenssl inside the venv — measured, as
+# `AttributeError: module 'lib' has no attribute 'GEN_EMAIL'` — while leaving
+# every import AIPI5 itself does working, so nothing looks wrong until
+# something reaches for TLS through pyopenssl.
+#
+# 1.14.1 is the last line that supports the cryptography the system ships.
+# Before changing it, check what `python3-openssl` on the device requires.
+pywebpush==1.14.1
+py-vapid==1.9.0
+
 # ── on the Pi, and not from PyPI ──────────────────────────────────────
 #
 # Two things this project needs are Debian packages rather than wheels, and

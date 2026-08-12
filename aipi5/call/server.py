@@ -33,7 +33,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from aipi5.call import tailscale, tls, turn
+from aipi5.call import push, tailscale, tls, turn
 from aipi5.call.signaling import PHONE, PI, POLL_TIMEOUT_S, SignalingHub
 
 log = logging.getLogger(__name__)
@@ -223,6 +223,16 @@ class _Handler(BaseHTTPRequestHandler):
             self._page()
         elif route.path in ("/icon-180.png", "/icon-512.png"):
             self._asset(route.path.lstrip("/"), "image/png")
+        elif route.path == "/sw.js":
+            # Served from the root deliberately: a service worker may only
+            # control pages at or below its own path, and this one has to
+            # control "/".
+            self._asset("sw.js", "application/javascript; charset=utf-8")
+        elif route.path == "/call/v1/vapid":
+            # The public half only, and unauthenticated because the phone needs
+            # it to build a subscription. It is a public key; publishing it is
+            # what it is for.
+            self._json({"key": self.call.push.keys.public()})
         elif route.path == "/manifest.webmanifest":
             self._manifest()
         elif route.path == "/call/v1/poll":
@@ -290,7 +300,9 @@ class _Handler(BaseHTTPRequestHandler):
 
         routes = {"/call/v1/ring": self._ring,
                   "/call/v1/send": self._send_message,
-                  "/call/v1/bye": self._bye}
+                  "/call/v1/bye": self._bye,
+                  "/call/v1/subscribe": self._subscribe,
+                  "/call/v1/pickup": self._pickup}
         handler = routes.get(path)
         if handler is None:
             self._json({"error": "not found"}, 404)
@@ -361,6 +373,42 @@ class _Handler(BaseHTTPRequestHandler):
         # cellular path only, which is the hardest kind to reproduce.
         self._json({"ok": True, "session": session, "role": PHONE,
                     "ice_servers": self.call.ice_servers(device["name"])})
+
+    def _subscribe(self) -> None:
+        """The phone offering a way to be rung when its app is closed.
+
+        Stored against the paired device name, so re-pairing a phone replaces
+        its subscription instead of leaving a dead endpoint behind that every
+        future ring pays a failed request for.
+        """
+        device = self._device()
+        if device is None:
+            return
+        subscription = self._body().get("subscription")
+        if not isinstance(subscription, dict):
+            self._json({"error": "expected a subscription"}, 400)
+            return
+        ok = self.call.subscriptions.register(device["name"], subscription)
+        self._json({"ok": ok}, 200 if ok else 400)
+
+    def _pickup(self) -> None:
+        """Somebody answered on the phone.
+
+        The counterpart of the Pi's auto-answer, and deliberately *not*
+        automatic: this only ever runs because a person tapped. The Pi may
+        answer a trusted phone by itself because the trust was established at
+        pairing; a phone must not answer the Pi by itself, because the phone
+        belongs to somebody who may be anywhere.
+        """
+        device = self._device()
+        if device is None:
+            return
+        session = str(self._body().get("session", ""))
+        ok = self.call.hub.picked_up(session)
+        self.call.on_change()
+        self._json({"ok": ok, "role": PHONE,
+                    "ice_servers": self.call.ice_servers(device["name"])},
+                   200 if ok else 409)
 
     def _send_message(self) -> None:
         """One signalling message from the phone to the Pi."""
@@ -436,6 +484,12 @@ class CallServer:
         self.cfg = cfg
         self.hub = hub
         self.devices = devices
+        # Ringing a phone whose app is closed. Optional: without the library or
+        # a subscription the Pi simply cannot start an outgoing call, and
+        # everything else works exactly as before.
+        self.push_keys = push.PushKeys(cfg.devices.parent)
+        self.subscriptions = push.Subscriptions(cfg.devices.parent)
+        self.push = push.Pusher(self.push_keys, self.subscriptions)
         self.on_change = on_change
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -607,6 +661,7 @@ class CallServer:
                             else ""),
             "ice": turn.describe(self.cfg),
             "tailscale": tailscale.describe(),
+            "push": self.push.describe(),
             "call": self.hub.snapshot(),
             "updated": time.time(),
         }

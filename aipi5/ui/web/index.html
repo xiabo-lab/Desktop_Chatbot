@@ -344,6 +344,19 @@
   }
   #call-placeholder b { display: block; color: var(--ink); font-size: 34px;
                         font-weight: 500; margin-bottom: 14px; }
+  /* The one control on this page that starts something rather than ending it.
+     Sized for a thumb like everything else on this panel, and hidden entirely
+     when no phone has registered to be rung — a button that cannot work is
+     worse than no button. */
+  #call-out {
+    display: block; margin: 28px auto 0; padding: 0 34px; height: 78px;
+    border-radius: 14px; border: 1px solid var(--panel-edge);
+    background: #1d7a44; color: #fff; font-size: 24px; font-family: inherit;
+    cursor: pointer;
+  }
+  #call-out[hidden] { display: none; }
+  #call-out:active { background: #249854; }
+  #call-out:disabled { background: #2a3240; color: var(--ink-dim); }
 
   /* The Brio's own picture, small and in the corner, so whoever is standing
      here can see what they are sending. Mirrored, because a self-view that is
@@ -545,8 +558,9 @@
 
     <div id="call-placeholder">
       <span class="glyph">📞</span>
-      <b>Video calling is not set up yet</b>
-      This screen is ready; the call itself is not connected.
+      <b id="call-headline">No call</b>
+      <span id="call-blurb">A paired phone can call this device.</span>
+      <button id="call-out" hidden>Call my phone</button>
     </div>
 
     <video id="call-self" autoplay playsinline muted></video>
@@ -823,6 +837,13 @@ function applyState(state) {
     node.className = "status s-" + assistant;
     node.querySelector("[data-status-text]").textContent = text;
   }
+
+  // The dialler appears only when a phone has registered to be rung. Offering
+  // a button that cannot work is worse than not offering one — it produces a
+  // failure the person has no way to interpret.
+  const canRing = !!(state.call && state.call.can_ring);
+  const dialler = el("call-out");
+  if (dialler) dialler.hidden = !canRing;
 
   serverCooldowns = state.cooldowns || {};
   drawCooldowns();
@@ -1445,7 +1466,6 @@ async function answerCall(session, caller) {
     if (!response.ok) throw new Error("the call had already gone");
     const answered = await response.json().catch(() => ({}));
     callIceServers = answered.ice_servers || [];
-    callLocal = await openBrio();
   } catch (err) {
     // The reason travels to the server rather than only to a console nobody
     // can open: this is a kiosk with no keyboard, so a failure that is only in
@@ -1460,6 +1480,28 @@ async function answerCall(session, caller) {
     return;
   }
 
+  answering = false;
+  if (!(await openLocalMedia())) return;
+  pollCall();
+}
+
+// Open the Brio and build the peer. Shared by both directions, and called at
+// the same moment in each: once somebody has agreed to the call. For an
+// incoming ring that is the Pi answering; for an outgoing one it is the phone
+// picking up, which arrives as an `answered` message.
+async function openLocalMedia() {
+  try {
+    callLocal = await openBrio();
+  } catch (err) {
+    const why = (err && (err.name ? err.name + ": " + err.message : err.message))
+                || "unknown";
+    console.warn("could not open the Brio", err);
+    setCallStatus("The camera or microphone is not available.");
+    hangUp("the Brio could not be opened — " + why);
+    return false;
+  }
+
+  el("call-placeholder").style.display = "none";
   el("call-self").srcObject = callLocal;
   el("call-self").classList.add("on");
   el("call-cam").disabled = false;
@@ -1476,11 +1518,16 @@ async function answerCall(session, caller) {
   callPc = buildCallPeer();
   for (const track of callLocal.getTracks()) callPc.addTrack(track, callLocal);
   await tuneVideoSender(callPc);
-  answering = false;
-  pollCall();
+  return true;
 }
 
 async function handleCallMessage(message) {
+  if (message.type === "answered" && !callPc) {
+    // An outgoing call the phone has just picked up. Only now is a capture
+    // device opened — the same rule as an incoming ring, from the other side.
+    await openLocalMedia();
+    return;
+  }
   if (message.type === "bye") {
     teardownCall();
     show("main");
@@ -1578,12 +1625,51 @@ function hangUp(why) {
   if (currentPage === "call") show("main");
 }
 
+// The Pi ringing a phone. The mirror of `answerCall`, and shorter, because
+// nothing here opens a capture device: the Brio stays with the assistant until
+// somebody actually picks up at the other end. See `CallState.CALLING`.
+async function callOut() {
+  if (callSession || answering) return;
+  el("call-out").disabled = true;
+  el("call-headline").textContent = "Calling…";
+  el("call-blurb").textContent = "Ringing your phone.";
+  try {
+    const response = await callApi("/api/call/out", {});
+    const body = await response.json();
+    if (!response.ok || !body.ok) throw new Error(body.error || "could not call");
+    callSession = body.session;
+    callIceServers = body.ice_servers || [];
+    callCursor = 0;
+    callPending = [];
+    callActive = true;                       // holds the screensaver off
+    el("call-banner").classList.add("on");
+    el("call-who").textContent = "to " + (body.device || "your phone");
+    // Polling starts now, before anyone has picked up, because the pickup
+    // arrives as a message on this channel.
+    pollCall();
+    if (!body.notified) {
+      // The ring is up and the phone may still see it by polling, but say so
+      // — otherwise "it rang and nothing happened" has no explanation.
+      el("call-blurb").textContent =
+        "Ringing, but the notification did not send. Open the app on the phone.";
+    }
+  } catch (err) {
+    el("call-headline").textContent = "Could not call";
+    el("call-blurb").textContent = (err && err.message) || "unknown";
+    el("call-out").disabled = false;
+    callActive = false;
+  }
+}
+
 function startCall() {
   // Reached by navigating to the page rather than by a call arriving — the
   // Call button on the main screen. There is nothing to dial from here: this
   // device answers, it does not originate.
   if (callSession) return;
   el("call-placeholder").style.display = "";
+  el("call-headline").textContent = "No call";
+  el("call-blurb").textContent = "A paired phone can call this device.";
+  el("call-out").disabled = false;
   setCallStatus("Not connected");
 }
 
@@ -1593,6 +1679,8 @@ function stopCall() {
   if (callSession) hangUp("the screen left the call");
   else teardownCall();
 }
+
+el("call-out").addEventListener("click", callOut);
 
 el("call-end").addEventListener("click", () => {
   if (callSession) hangUp("the Pi hung up");
@@ -1628,7 +1716,22 @@ el("call-cam").addEventListener("click", () => {
 function callFromState(state) {
   const call = state.call;
   if (!call) return;
-  if (call.state === "ringing" && !callSession && !answering) {
+  if (call.state === "calling" && !callSession && !answering) {
+    // The Pi is ringing a phone and this page does not know about it — it was
+    // reloaded, or the call was started before it opened. Adopt it rather than
+    // showing "no call" over a call that is happening.
+    callSession = call.session;
+    callCursor = 0;
+    callPending = [];
+    callActive = true;
+    show("call");
+    el("call-banner").classList.add("on");
+    el("call-who").textContent = "to " + (call.caller || "your phone");
+    el("call-headline").textContent = "Calling…";
+    el("call-blurb").textContent = "Ringing your phone.";
+    el("call-out").disabled = true;
+    pollCall();
+  } else if (call.state === "ringing" && !callSession && !answering) {
     answerCall(call.session, call.caller);
   } else if (call.state === "idle" && callSession) {
     // The server gave up on the call — a timeout, or the phone hung up while

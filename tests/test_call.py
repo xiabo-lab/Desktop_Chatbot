@@ -288,6 +288,63 @@ class TestSignalingHub(unittest.TestCase):
         accepted, _, _ = hub.ring("an iPhone")
         self.assertTrue(accepted, "the device must be callable again")
 
+    # ── the Pi ringing the phone ─────────────────────────────────────
+
+    def test_calling_out_owns_no_hardware_until_somebody_answers(self):
+        # The mirror of the incoming rule, and the more important half: a phone
+        # being rung has not agreed to anything, so the Pi must not have opened
+        # its camera while it waits.
+        ok, session, _ = self.hub.call_out("an iPhone")
+        self.assertTrue(ok)
+        self.assertIs(self.hub.state, CallState.CALLING)
+        self.assertFalse(self.hub.live, "the Brio must not be open yet")
+        self.assertTrue(self.hub.picked_up(session))
+        self.assertTrue(self.hub.live)
+
+    def test_an_outgoing_call_is_never_auto_answered(self):
+        # There is deliberately no path from CALLING to CONNECTING except
+        # `picked_up`, which only ever runs because a person tapped. If a
+        # future change adds one, this fails.
+        _, session, _ = self.hub.call_out("an iPhone")
+        self.assertFalse(self.hub.answer(session),
+                         "`answer` is the Pi picking up an INCOMING call and "
+                         "must not advance an outgoing one")
+        self.assertIs(self.hub.state, CallState.CALLING)
+
+    def test_picking_up_a_stale_session_does_nothing(self):
+        self.hub.call_out("an iPhone")
+        self.assertFalse(self.hub.picked_up("not-the-session"))
+        self.assertIs(self.hub.state, CallState.CALLING)
+
+    def test_the_pi_is_told_when_the_phone_picks_up(self):
+        # That message is what makes the Pi's page open the Brio, so without it
+        # the call connects to a black rectangle.
+        _, session, _ = self.hub.call_out("an iPhone")
+        self.hub.picked_up(session)
+        messages, _ = self.hub.collect(PI, 0, timeout=0.1)
+        self.assertIn("answered", [m["type"] for m in messages])
+
+    def test_a_call_out_nobody_answers_expires(self):
+        hub = SignalingHub(call_out_timeout_s=0.05)
+        hub.call_out("an iPhone")
+        time.sleep(0.06)
+        self.assertTrue(hub.sweep())
+        self.assertIs(hub.state, CallState.IDLE)
+
+    def test_calling_out_is_refused_while_a_call_is_up(self):
+        self.ring()
+        ok, _, why = self.hub.call_out("an iPhone")
+        self.assertFalse(ok)
+        self.assertIn("already", why)
+
+    def test_an_incoming_call_is_refused_while_calling_out(self):
+        # Both directions share one hub and one Brio, so they must exclude each
+        # other rather than racing for it.
+        self.hub.call_out("an iPhone")
+        accepted, _, why = self.hub.ring("an iPhone")
+        self.assertFalse(accepted)
+        self.assertIn("already", why)
+
     def test_a_phone_that_vanishes_mid_call_ends_it(self):
         # The one way a connected call can be stuck forever: the phone stops
         # existing without hanging up — app killed, handset off, battery flat.
@@ -427,9 +484,19 @@ class TestSignalingHub(unittest.TestCase):
 
     def test_the_snapshot_carries_no_secret(self):
         # It goes to the screen and into /api/state, which the phone can read.
+        # Pinned exactly rather than checked for absences, so a field added in
+        # passing has to be looked at rather than sliding through.
         self.ring()
         self.assertEqual(set(self.hub.snapshot()),
-                         {"state", "session", "caller", "since", "live"})
+                         {"state", "session", "caller", "since", "live",
+                          "can_ring"})
+
+    def test_the_hub_does_not_decide_whether_a_phone_can_be_rung(self):
+        # `can_ring` is in the snapshot because the screen needs it, but the
+        # hub knows nothing about notifications — it moves JSON between two
+        # seats. The assistant fills it in. If this ever becomes True here, the
+        # hub has grown a dependency it should not have.
+        self.assertFalse(self.hub.snapshot()["can_ring"])
 
 
 class TestTurnCredentials(unittest.TestCase):

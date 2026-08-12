@@ -306,7 +306,39 @@ class _Handler(BaseHTTPRequestHandler):
         hub = self.ui.call.hub
         session = str(payload.get("session", ""))
 
-        if path == "/api/call/answer":
+        if path == "/api/call/out":
+            # The Pi ringing a phone. Loopback-only, like everything else on
+            # this server, so the only thing that can start one is the screen
+            # in front of the device — which is the point: a call out is
+            # somebody at the Pi choosing to ring somebody, not a remote
+            # request that could open a phone's microphone.
+            phones = self.ui.call.subscriptions.names()
+            device = str(payload.get("device", "")) or (phones[0] if phones else "")
+            if not device:
+                self._json({"ok": False,
+                            "error": "no phone has registered for calls"}, 409)
+                return
+            started, session, why = hub.call_out(device)
+            if not started:
+                self._json({"ok": False, "error": why}, 409)
+                return
+            self.ui.on_call_change()
+            sent, detail = self.ui.call.push.ring(device, {
+                "type": "call", "session": session,
+                "title": "AIPI5 is calling",
+                "body": "Tap to answer",
+            })
+            if not sent:
+                # The ring is still up — the phone may have the app open and
+                # see it by polling — but say plainly that the notification did
+                # not go, because "it rang and nothing happened" otherwise has
+                # no explanation anywhere.
+                log.warning("calling %s but the notification failed: %s",
+                            device, detail)
+            self._json({"ok": True, "session": session, "device": device,
+                        "notified": sent, "detail": detail,
+                        "ice_servers": self.ui.call.ice_servers("aipi5")})
+        elif path == "/api/call/answer":
             # The camera is taken *here*, on the way to picking up, rather than
             # by the page before it asks. The order matters: `lend` is what
             # makes `getUserMedia` able to succeed, so answering before
