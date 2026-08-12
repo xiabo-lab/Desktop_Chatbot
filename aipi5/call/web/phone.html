@@ -65,6 +65,91 @@
   }
   #allow-ring[hidden] { display: none; }
 
+  /* ── files ───────────────────────────────────────────────────── */
+  /*
+     A phone-shaped page rather than a shrunk copy of the Pi's: one column,
+     rows big enough to hit with a thumb, and nothing that depends on hovering
+     or dragging. The Files app is the destination for everything downloaded
+     here, so the page's job ends at handing Safari a link.
+  */
+  #files {
+    flex: 1; display: none; flex-direction: column;
+    padding: calc(env(safe-area-inset-top) + 16px) 18px
+             calc(env(safe-area-inset-bottom) + 16px);
+    overflow: hidden;
+  }
+  #files.on { display: flex; }
+  .bar-top {
+    display: flex; align-items: center; gap: 12px; flex: 0 0 auto;
+    margin-bottom: 14px;
+  }
+  .bar-top h2 { margin: 0; font-size: 21px; font-weight: 600; flex: 1; }
+  .plain {
+    padding: 10px 14px; border-radius: 10px; border: 1px solid var(--panel-edge);
+    background: var(--panel); color: var(--ink); font-size: 16px;
+    font-family: inherit; cursor: pointer;
+  }
+  .plain:active { border-color: var(--accent); }
+  #files-send {
+    width: 100%; padding: 16px; border-radius: 14px; border: none;
+    background: #1d5fa8; color: #fff; font-size: 18px; font-weight: 600;
+    font-family: inherit; cursor: pointer; flex: 0 0 auto;
+  }
+  #files-send:active { background: #2a76c9; }
+  #files-send:disabled { background: #2a3240; color: var(--ink-dim); }
+  #files-storage {
+    font-size: 13px; color: var(--ink-dim); margin: 10px 2px 4px;
+    flex: 0 0 auto;
+  }
+  #files-progress { display: none; margin: 8px 0 4px; flex: 0 0 auto; }
+  #files-progress.on { display: block; }
+  #files-progress .what {
+    display: flex; justify-content: space-between; gap: 10px;
+    font-size: 13px; color: var(--ink-dim); margin-bottom: 6px;
+  }
+  #files-progress .what b { color: var(--ink); font-weight: 500;
+                            overflow: hidden; text-overflow: ellipsis;
+                            white-space: nowrap; }
+  .bar { height: 10px; border-radius: 5px; background: var(--panel);
+         border: 1px solid var(--panel-edge); overflow: hidden; }
+  .bar span { display: block; height: 100%; width: 0; background: var(--accent);
+              transition: width 0.2s linear; }
+  #files-progress.failed .bar span { background: var(--danger); }
+  #files-progress.done .bar span { background: #4ec97a; }
+  #files-list {
+    flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    margin-top: 10px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .frow {
+    background: var(--panel); border: 1px solid var(--panel-edge);
+    border-radius: 12px; padding: 12px 14px; display: flex;
+    align-items: center; gap: 12px;
+  }
+  .frow .kind { font-size: 22px; flex: 0 0 auto; }
+  .frow .about { flex: 1; min-width: 0; }
+  .frow .name { font-size: 16px; overflow: hidden; text-overflow: ellipsis;
+                white-space: nowrap; }
+  .frow .meta { font-size: 12px; color: var(--ink-dim); margin-top: 3px; }
+  .frow .go { flex: 0 0 auto; padding: 10px 14px; border-radius: 10px;
+              border: 1px solid var(--panel-edge); background: #1a2230;
+              color: var(--ink); font-size: 15px; font-family: inherit; }
+  .frow .go.danger { color: var(--danger); }
+  /* The Open link, which is an anchor rather than a button so that tapping it
+     is a real navigation gesture — see `downloadFile`. */
+  .frow a.go { text-decoration: none; display: inline-block; }
+  .frow a.go.ready { border-color: var(--accent); color: var(--accent); }
+  .frow.confirming { border-color: var(--danger); }
+  #files-empty { margin: auto; text-align: center; color: var(--ink-dim);
+                 font-size: 15px; line-height: 1.6; padding: 20px; }
+  #files-note { font-size: 13px; color: var(--ink-dim); min-height: 18px;
+                margin-top: 8px; flex: 0 0 auto; }
+  #files-note.bad { color: var(--danger); }
+  #open-files {
+    margin-top: 4px; padding: 12px 20px; border-radius: 12px;
+    border: 1px solid var(--panel-edge); background: var(--panel);
+    color: var(--ink); font-size: 16px; font-family: inherit; cursor: pointer;
+  }
+
   /* ── being rung ──────────────────────────────────────────────── */
   #incoming {
     flex: 1; display: none; flex-direction: column;
@@ -169,6 +254,34 @@
        notification permission has to come from a tap — iOS refuses a request
        made on page load — so it is a button rather than something automatic. -->
   <button id="allow-ring" hidden>Let AIPI5 ring this phone</button>
+  <button id="open-files">⇅ Files</button>
+</div>
+
+<!-- Sending and fetching files, on the same connection and the same token as
+     the call. A separate screen rather than something under the dialler: the
+     dialler is one button on purpose, and a file list under it is a list to
+     scroll past while trying to press Call. -->
+<div id="files">
+  <div class="bar-top">
+    <button class="plain" id="files-back">‹ Back</button>
+    <h2>Files</h2>
+    <button class="plain" id="files-refresh">Refresh</button>
+  </div>
+
+  <button id="files-send">Upload File</button>
+  <!-- No `accept` attribute: iOS reads it as a filter and this feature exists
+       to move whatever somebody has. `multiple` so a set of photos is one
+       trip. The picker opens on a tap and never on its own. -->
+  <input id="files-picker" type="file" multiple hidden>
+
+  <div id="files-progress">
+    <div class="what"><b id="files-progress-name"></b><span id="files-progress-detail"></span></div>
+    <div class="bar"><span id="files-progress-bar"></span></div>
+  </div>
+
+  <div id="files-storage"></div>
+  <div id="files-list"></div>
+  <div id="files-note"></div>
 </div>
 
 <!-- The Pi is calling. A separate screen rather than a variant of the dialler,
@@ -251,6 +364,384 @@ const note = (text, bad) => {
   el("note").textContent = text || "";
   el("note").classList.toggle("bad", !!bad);
 };
+
+// ── files ───────────────────────────────────────────────────────────
+//
+// The same folder the Pi's own screen shows, over the same authenticated
+// connection as the call. Two things here are shaped by iOS rather than by
+// preference.
+//
+// **A download has to be a plain link.** Safari saves a file to the Files app
+// when the person taps a URL; fetching it with the bearer token and handing
+// back a blob would mean the whole file in the phone's memory first, which for
+// the videos this exists to move does not survive. So the page asks for a
+// one-shot ticket — authenticated, like everything else — and then navigates
+// to a link that carries it. See `aipi5/files/tickets.py`.
+//
+// **Progress needs XMLHttpRequest.** `fetch` cannot report upload progress in
+// WebKit, and every browser on iOS is WebKit. A 300 MB video with no bar is
+// indistinguishable from a phone that has frozen.
+
+let filesBusy = false;
+let filesConfirming = "";
+// The folder's revision, as of the last time this page looked. A file put on
+// the Pi — by the screen, over ssh, by anything — shows up here on the idle
+// poll rather than waiting for somebody to press Refresh.
+let filesRev = null;
+
+function filesFromState(state) {
+  const revision = state.files_rev;
+  if (revision === undefined) return;
+  if (filesRev === null) { filesRev = revision; return; }
+  if (revision === filesRev) return;
+  filesRev = revision;
+  // Only when the list is on screen, and never over a half-finished gesture.
+  if (el("files").classList.contains("on") && !filesBusy && !filesConfirming) {
+    loadFiles();
+  }
+}
+
+function filesNote(text, bad) {
+  el("files-note").textContent = text || "";
+  el("files-note").classList.toggle("bad", !!bad);
+}
+
+function showFiles(on) {
+  el("files").classList.toggle("on", !!on);
+  el("home").style.display = on ? "none" : "";
+  if (on) loadFiles();
+}
+
+function sizeText(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024, index = 0;
+  while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1; }
+  return value.toFixed(1) + " " + units[index];
+}
+
+function kindGlyph(type, name) {
+  if (/^image\//.test(type || "")) return "🖼";
+  if (/^video\//.test(type || "")) return "🎬";
+  if (/^audio\//.test(type || "")) return "🎵";
+  if (/pdf$/.test(type || "")) return "📕";
+  if (/^text\//.test(type || "")) return "📄";
+  if (/zip|tar|gzip|compressed/.test(type || "")
+      || /\.(zip|tar|gz|xz|7z)$/i.test(name)) return "🗜";
+  return "📦";
+}
+
+async function loadFiles() {
+  try {
+    const response = await api("/call/v1/files");
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "unavailable");
+    drawFiles(payload);
+    filesNote("");
+  } catch (err) {
+    el("files-list").innerHTML = "";
+    el("files-storage").textContent = "";
+    filesNote(err.message || "Could not read the folder.", true);
+  }
+}
+
+function drawFiles(payload) {
+  const storage = payload.storage || {};
+  el("files-storage").textContent =
+    "Free: " + sizeText(storage.free || 0) + " · Used: " + sizeText(storage.used || 0);
+
+  const list = el("files-list");
+  list.innerHTML = "";
+  const files = payload.files || [];
+  if (!files.length) {
+    const empty = document.createElement("div");
+    empty.id = "files-empty";
+    empty.textContent = "Nothing on AIPI5 yet. Upload something, or put a file "
+      + "in the folder on the Pi and pull it down here.";
+    list.appendChild(empty);
+    return;
+  }
+  for (const file of files) list.appendChild(fileRow(file));
+}
+
+function fileRow(file) {
+  const row = document.createElement("div");
+  row.className = "frow";
+
+  const kind = document.createElement("div");
+  kind.className = "kind";
+  kind.textContent = kindGlyph(file.type, file.name);
+
+  const about = document.createElement("div");
+  about.className = "about";
+  const name = document.createElement("div");
+  name.className = "name";
+  name.textContent = file.name;             // never innerHTML: somebody's text
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  meta.textContent = sizeText(file.size) + " · "
+    + (file.modified_iso || "").replace("T", " ").slice(0, 16);
+  about.appendChild(name);
+  about.appendChild(meta);
+
+  const get = document.createElement("button");
+  get.className = "go";
+  // "Save", because that is what happens: it lands in the Files app. "Get"
+  // said nothing about where the file went, which is the one thing somebody
+  // needs to know afterwards.
+  get.textContent = "Save";
+  get.addEventListener("click", () => downloadFile(file, get));
+
+  const remove = document.createElement("button");
+  remove.className = "go danger";
+  remove.textContent = "Delete";
+  remove.addEventListener("click", () => confirmDelete(row, file, remove));
+
+  row.appendChild(kind);
+  row.appendChild(about);
+  row.appendChild(get);
+  row.appendChild(remove);
+  return row;
+}
+
+// Getting a file onto the phone without navigating anywhere.
+//
+// Three attempts, and the first two are worth writing down because they are
+// the obvious ones and they both trap somebody in an installed app.
+//
+// `location.href = url` replaces the app with the file. The app *is* the page
+// here, so there is no back button, no address bar and no tabs: the only way
+// out is to force-quit it.
+//
+// An anchor with `download`, clicked programmatically, fails the same way for
+// a subtler reason — a scripted click is not a user gesture, so WebKit ignores
+// both `download` and `target="_blank"` and navigates this window instead.
+//
+// A real tap on that anchor is a gesture, and it *still* fails: WebKit takes
+// a `Content-Disposition: attachment` and draws its own download page — the
+// file icon, "Open in Preview", "More…" — inside the app, again with nothing
+// to go back to. `target="_blank"` does not escape a standalone web app.
+//
+// The answer is not to navigate at all. `XMLHttpRequest` carries the bearer
+// token and reads the file into memory, and `navigator.share` hands it to the
+// iOS share sheet, which appears *over* the app: "Save to Files", then the
+// sheet closes and the file list is exactly where it was. Two taps, because
+// `share()` needs a user gesture of its own and the fetch has to happen first.
+//
+// The cost is the file in the phone's memory for a moment, which is why very
+// large ones fall back to a link — and that link is the least-bad remaining
+// option rather than a good one.
+
+//: Beyond this, the share sheet is not worth the memory on a phone.
+const SHARE_MAX_BYTES = 300 * 1024 * 1024;
+
+function fetchIntoMemory(file) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("GET", "/call/v1/files/raw/" + encodeURIComponent(file.name));
+    request.setRequestHeader("Authorization", "Bearer " + token);
+    request.responseType = "blob";
+    request.addEventListener("progress", (event) => {
+      if (!event.lengthComputable) return;
+      const percent = Math.round((event.loaded / event.total) * 100);
+      filesProgress("busy", file.name,
+                    sizeText(event.loaded) + " / " + sizeText(event.total)
+                    + " · " + percent + "%", percent);
+    });
+    request.addEventListener("load", () => {
+      if (request.status === 200) resolve(request.response);
+      else reject(new Error("HTTP " + request.status));
+    });
+    request.addEventListener("error", () => reject(new Error("the connection dropped")));
+    request.addEventListener("abort", () => reject(new Error("cancelled")));
+    request.send();
+  });
+}
+
+function offerShare(file, blob, button) {
+  const shareable = new File([blob], file.name,
+                             { type: file.type || "application/octet-stream" });
+  const share = document.createElement("button");
+  share.className = "go ready";
+  share.textContent = "Share ↗";
+  share.addEventListener("click", async () => {
+    // Synchronous inside the tap: `share()` needs the gesture, and an `await`
+    // before it is what turns this into "NotAllowedError".
+    try {
+      await navigator.share({ files: [shareable], title: file.name });
+      filesNote("Saved. Choose Save to Files, or send it anywhere.");
+    } catch (err) {
+      // AbortError is somebody closing the sheet, which is not a failure.
+      if (!err || err.name !== "AbortError") {
+        filesNote((err && err.message) || "The share sheet did not open.", true);
+      }
+    }
+  });
+  button.replaceWith(share);
+  filesNote("Tap Share → Save to Files. The sheet opens over this page, so "
+            + "nothing here is lost.");
+}
+
+function offerLink(file, button, why) {
+  // No share sheet available, or the file is too big to hold in memory. A
+  // link, with what it costs said out loud rather than discovered.
+  api("/call/v1/files/ticket", {
+    method: "POST", body: JSON.stringify({ name: file.name }),
+  }).then((response) => response.json()).then((payload) => {
+    if (!payload.url) throw new Error(payload.error || "no link");
+    const link = document.createElement("a");
+    link.className = "go ready";
+    link.textContent = "Open ↗";
+    link.href = payload.url;
+    link.rel = "noopener";
+    link.target = "_blank";
+    button.replaceWith(link);
+    filesNote(why + " Tap Open, then Share to save it — and swipe up and "
+              + "reopen AIPI5 to come back.", true);
+  }).catch((err) => {
+    filesNote(err.message || "Could not fetch that file.", true);
+    button.disabled = false;
+  });
+}
+
+async function downloadFile(file, button) {
+  button.disabled = true;
+
+  const probe = new File([new Blob([])], file.name,
+                         { type: file.type || "application/octet-stream" });
+  const canShare = !!(navigator.canShare && navigator.share
+                      && navigator.canShare({ files: [probe] }));
+  if (!canShare) {
+    offerLink(file, button, "This browser cannot open a share sheet.");
+    return;
+  }
+  if (file.size > SHARE_MAX_BYTES) {
+    offerLink(file, button, "That file is too large to hold in memory.");
+    return;
+  }
+
+  filesNote("Fetching " + file.name + "…");
+  filesProgress("busy", file.name, "starting…", 0);
+  try {
+    const blob = await fetchIntoMemory(file);
+    filesProgress("done", "Ready to save", file.name, 100);
+    setTimeout(() => filesProgress("idle"), 3000);
+    offerShare(file, blob, button);
+  } catch (err) {
+    filesProgress("failed", "Could not fetch it", (err && err.message) || "", 100);
+    filesNote((err && err.message) || "Could not fetch that file.", true);
+    button.disabled = false;
+  }
+}
+
+function confirmDelete(row, file, button) {
+  if (filesConfirming !== file.name) {
+    filesConfirming = file.name;
+    row.classList.add("confirming");
+    button.textContent = "Sure?";
+    filesNote("Delete “" + file.name + "”? Press again to confirm.");
+    setTimeout(() => {
+      if (filesConfirming === file.name) {
+        filesConfirming = "";
+        filesNote("");
+        loadFiles();
+      }
+    }, 6000);
+    return;
+  }
+  filesConfirming = "";
+  api("/call/v1/files/delete", {
+    method: "POST", body: JSON.stringify({ name: file.name }),
+  }).then(() => { filesNote("Deleted " + file.name); loadFiles(); })
+    .catch((err) => filesNote(err.message || "Could not delete it.", true));
+}
+
+function filesProgress(state, name, detail, percent) {
+  const box = el("files-progress");
+  box.classList.toggle("on", state !== "idle");
+  box.classList.toggle("failed", state === "failed");
+  box.classList.toggle("done", state === "done");
+  el("files-progress-name").textContent = name || "";
+  el("files-progress-detail").textContent = detail || "";
+  el("files-progress-bar").style.width = (percent || 0) + "%";
+}
+
+function uploadFiles(chosen) {
+  if (filesBusy || !chosen.length) return;
+  filesBusy = true;
+  el("files-send").disabled = true;
+  const queue = Array.from(chosen);
+  let index = 0;
+
+  const finish = () => {
+    filesBusy = false;
+    el("files-send").disabled = false;
+  };
+  const next = () => {
+    if (index >= queue.length) {
+      finish();
+      filesProgress("done", "Upload complete",
+                    queue.length > 1 ? queue.length + " files" : "", 100);
+      loadFiles();
+      setTimeout(() => { if (!filesBusy) filesProgress("idle"); }, 4000);
+      return;
+    }
+    const file = queue[index];
+    index += 1;
+    sendOneFile(file, queue.length > 1 ? `(${index}/${queue.length}) ` : "",
+                next, finish);
+  };
+  next();
+}
+
+function sendOneFile(file, prefix, done, failed) {
+  const form = new FormData();
+  form.append("file", file, file.name);
+
+  const request = new XMLHttpRequest();
+  request.open("POST", "/call/v1/files/upload");
+  // The same bearer token as every other request from this page. It is a
+  // header, not a query parameter, for the reason it always was: a token in a
+  // URL is a token in a log.
+  request.setRequestHeader("Authorization", "Bearer " + token);
+  request.upload.addEventListener("progress", (event) => {
+    if (!event.lengthComputable) return;
+    const percent = Math.round((event.loaded / event.total) * 100);
+    filesProgress("busy", prefix + file.name,
+                  sizeText(event.loaded) + " / " + sizeText(event.total)
+                  + " · " + percent + "%", percent);
+  });
+  request.addEventListener("load", () => {
+    if (request.status >= 200 && request.status < 300) {
+      done();
+      return;
+    }
+    let why = "";
+    try { why = (JSON.parse(request.responseText) || {}).error || ""; } catch (e) {}
+    failed();
+    filesProgress("failed", "Upload failed", why || ("HTTP " + request.status), 100);
+    loadFiles();
+  });
+  request.addEventListener("error", () => {
+    // Wi-Fi to cellular mid-upload, a tunnel, a locked phone. Nothing partial
+    // survives on the Pi — it deletes what it had — so this is safe to retry.
+    failed();
+    filesProgress("failed", "Upload failed",
+                  "the connection dropped — try again", 100);
+  });
+  request.addEventListener("abort", () => { failed(); filesProgress("idle"); });
+  filesProgress("busy", prefix + file.name, "starting…", 0);
+  request.send(form);
+}
+
+el("open-files").addEventListener("click", () => showFiles(true));
+el("files-back").addEventListener("click", () => showFiles(false));
+el("files-refresh").addEventListener("click", loadFiles);
+el("files-send").addEventListener("click", () => el("files-picker").click());
+el("files-picker").addEventListener("change", (event) => {
+  uploadFiles(event.target.files);
+  event.target.value = "";
+});
 
 // ── the call ────────────────────────────────────────────────────────
 
@@ -399,6 +890,10 @@ function showIncoming(session, on) {
   incomingSession = on ? session : "";
   el("incoming").classList.toggle("on", !!on);
   el("home").style.display = on ? "none" : "";
+  // A call outranks a file list. Somebody browsing the folder when the Pi
+  // rings must see Answer and Decline and nothing else — and on the way back
+  // the dialler is what should be there, not a half-scrolled listing.
+  if (on) el("files").classList.remove("on");
 }
 
 // Answering. Deliberately only ever reached from a tap — there is no path here
@@ -656,6 +1151,7 @@ function startSession(sess, ice) {
   cursor = 0;
   pendingCandidates = [];
 
+  el("files").classList.remove("on");
   el("home").style.display = "none";
   el("incoming").classList.remove("on");
   el("call").classList.add("on");
@@ -814,6 +1310,7 @@ async function idleCheck() {
       // Stopped ringing — timed out, or answered somewhere else.
       showIncoming("", false);
     }
+    filesFromState(state);
   } catch (err) { /* offline; the next tick tries again */ }
 }
 el("hang").addEventListener("click", () => endCall("you hung up"));

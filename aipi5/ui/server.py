@@ -34,6 +34,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from aipi5.call import signaling as call_signaling
+from aipi5.files import web as files_web
+from aipi5.files.store import FileError
 
 log = logging.getLogger(__name__)
 
@@ -129,6 +131,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._camera_stream()
         elif route.path == "/api/call/poll":
             self._call_poll(params)
+        elif route.path == "/api/files":
+            self._file_list(params)
+        elif route.path.startswith("/api/files/download/"):
+            self._file_download(route.path, params)
         elif route.path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         else:
@@ -136,6 +142,12 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        # First, and before the body is read: an upload is the one body this
+        # server must not buffer. It is streamed to disk in
+        # `aipi5/files/web.py` rather than read whole in order to be parsed.
+        if path == "/api/files/upload":
+            self._file_upload()
+            return
         # The Pi's half of a call. No token on any of these, and that is the
         # same reasoning as everything else on this server: it is bound to
         # loopback, so the only thing that can reach it is a process on this
@@ -145,7 +157,7 @@ class _Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/call/"):
             self._call_post(path)
             return
-        if path not in ("/api/action", "/api/shutdown"):
+        if path not in ("/api/action", "/api/shutdown", "/api/files/delete"):
             self._json({"error": "not found"}, 404)
             return
 
@@ -170,6 +182,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._shutdown_post(payload)
             return
 
+        if path == "/api/files/delete":
+            self._file_delete(payload)
+            return
+
         action = str(payload.get("action", ""))
         # The membership check is inside `UiState.request`, deliberately —
         # one place decides what an action is, and it is the same place that
@@ -178,6 +194,78 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "action": action})
         else:
             self._json({"ok": False, "error": "not accepted"}, 400)
+
+    # ── files ────────────────────────────────────────────────────────
+    #
+    # The same folder the phone reaches through `aipi5/call/server.py`, and the
+    # same code underneath. What is missing here is the authentication, and
+    # that is the whole difference between the two servers: this one is bound
+    # to loopback, so the only thing that can reach it is a process on this
+    # device — the kiosk Chromium showing the assistant's own screen. There is
+    # no token to check because there is no network to check it against.
+    #
+    # No download ticket either, for the same reason. Tickets exist because
+    # Safari cannot put a bearer token on a link; the screen here has nothing
+    # to prove, so `/api/files/download/<name>` is the plain thing it looks
+    # like. The name still goes through `FileStore.resolve`, which is what
+    # keeps it inside the folder.
+
+    def _files(self):
+        """The store, or None having answered."""
+        store = getattr(self.ui, "files", None)
+        if store is None or not store.ready:
+            self._json({"error": (store.error if store else "")
+                        or "file transfer is not available"}, 503)
+            return None
+        return store
+
+    def _file_list(self, params: dict) -> None:
+        store = self._files()
+        if store is None:
+            return
+        sort = (params.get("sort") or ["date"])[0]
+        ascending = (params.get("order") or ["desc"])[0] == "asc"
+        self._json(files_web.payload(store, sort, ascending))
+
+    def _file_download(self, path: str, params: dict | None = None) -> None:
+        store = self._files()
+        if store is None:
+            return
+        name = files_web.name_from_path(path, "/api/files/download/")
+        # `?inline=1` is how the screen looks at a photo without leaving the
+        # page. Only pictures, video and sound are ever honoured — see
+        # `may_show_inline`, which is where that decision is made and not here.
+        inline = ((params or {}).get("inline") or ["0"])[0] == "1"
+        try:
+            files_web.send_file(self, store, name, who="the screen",
+                                inline=inline)
+        except FileError as exc:
+            self._json({"error": str(exc)}, exc.status)
+
+    def _file_delete(self, payload: dict) -> None:
+        store = self._files()
+        if store is None:
+            return
+        try:
+            gone = store.delete(str(payload.get("name", "")))
+        except FileError as exc:
+            self._json({"error": str(exc)}, exc.status)
+            return
+        self._json({"ok": True, "name": gone})
+
+    def _file_upload(self) -> None:
+        store = getattr(self.ui, "files", None)
+        if store is None or not store.ready:
+            files_web.refuse_upload(
+                self, 503,
+                (store.error if store else "") or "file transfer is not available")
+            return
+        try:
+            self._json(files_web.receive_upload(self, store, who="the screen"))
+        except FileError as exc:
+            files_web.refuse_upload(self, exc.status, str(exc))
+        except (ConnectionError, TimeoutError):
+            self.close_connection = True
 
     def _shutdown_post(self, payload: dict) -> None:
         """The screen's two words about a countdown it did not start.
@@ -218,6 +306,12 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _state(self) -> None:
         payload = self.ui.state.snapshot()
+        # Whether the transfer folder has changed since the page last looked.
+        # Carried on the poll the page already makes rather than given a poll
+        # of its own: the file list is only worth re-reading when it is both
+        # visible and different, and this is one `stat` against a listing.
+        store = getattr(self.ui, "files", None)
+        payload["files_rev"] = store.revision() if store is not None else 0
         # The Pi's clock, not the browser's. The screensaver draws the time and
         # the two can disagree — a Chromium with no network time on a device
         # that has it, or the reverse.
@@ -483,12 +577,15 @@ class WebUI:
 
     def __init__(self, cfg, *, state, history, info,
                  weather=None, news=None, camera=None, call=None,
-                 on_call_change=lambda: None, countdown=None):
+                 on_call_change=lambda: None, countdown=None, files=None):
         self.cfg = cfg
         self.state = state
         # The shutdown countdown, which this module only ever answers about:
         # it is started by the voice loop and drawn by the page.
         self.countdown = countdown
+        # The transfer folder. The same object the call server has, so a file
+        # the phone sent is on the screen's list without anything syncing.
+        self.files = files
         self.history = history
         self.info = info
         # The call server, or None when calling is off. This module knows only

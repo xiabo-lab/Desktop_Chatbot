@@ -223,6 +223,48 @@ class CallConfig:
     fps: int = 30
 
 
+def _max_upload_bytes() -> int:
+    """The upload ceiling, in bytes, honouring `AIPI5_FILE_MAX_UPLOAD_GB`.
+
+    A default factory rather than a constant so the environment is read when
+    the settings are built — including on the path where there is no YAML at
+    all, which is the one a fresh device takes.
+    """
+    raw = os.environ.get("AIPI5_FILE_MAX_UPLOAD_GB", "").strip()
+    if raw:
+        try:
+            gigabytes = float(raw)
+            if gigabytes > 0:
+                return int(gigabytes * 1024 ** 3)
+            log.warning("AIPI5_FILE_MAX_UPLOAD_GB=%r is not positive; ignoring", raw)
+        except ValueError:
+            log.warning("AIPI5_FILE_MAX_UPLOAD_GB=%r is not a number; ignoring", raw)
+    return 2 * 1024 ** 3
+
+
+@dataclass(frozen=True)
+class FilesConfig:
+    """The folder the phone can put things in, and the limits around it.
+
+    **Outside the repository, deliberately.** Uploads are somebody's photos and
+    videos, not source, and a transfer directory inside a git checkout is one
+    `git status` away from being confusing and one `git clean` away from being
+    gone.
+    """
+
+    enabled: bool = True
+    #: `~/Downloads/AIPI5`, expanded when the store is built so the same
+    #: configuration works for whichever user the service runs as.
+    root: Path = Path.home() / "Downloads" / "AIPI5"
+    max_upload_bytes: int = field(default_factory=_max_upload_bytes)
+    #: Never fill the root filesystem. The assistant writes a conversation
+    #: database, Chromium writes a profile, and systemd writes a journal —
+    #: none of which fail gracefully at zero bytes free.
+    reserve_bytes: int = 2 * 1024 ** 3
+    #: The Pi has four cores and one uplink; two at once is already generous.
+    max_concurrent: int = 2
+
+
 @dataclass(frozen=True)
 class AssistantConfig:
     llm_enabled: bool = True
@@ -242,6 +284,7 @@ class Settings:
     screensaver: ScreensaverConfig = field(default_factory=ScreensaverConfig)
     kodama: KodamaLaunchConfig = field(default_factory=KodamaLaunchConfig)
     call: CallConfig = field(default_factory=CallConfig)
+    files: FilesConfig = field(default_factory=FilesConfig)
     assistant: AssistantConfig = field(default_factory=AssistantConfig)
 
     #: Where this was loaded from, for the settings page.
@@ -383,6 +426,7 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
     screensaver = _require_mapping(raw.get("screensaver"), "screensaver")
     kodama = _require_mapping(raw.get("kodama"), "kodama")
     call = _require_mapping(raw.get("call"), "call")
+    files = _require_mapping(raw.get("files"), "files")
     assistant = _require_mapping(raw.get("assistant"), "assistant")
 
     feeds = news.get("feeds") or list(_DEFAULT_FEEDS)
@@ -482,6 +526,23 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
             width=int(call.get("width", 1280)),
             height=int(call.get("height", 720)),
             fps=int(call.get("fps", 30)),
+        ),
+        files=FilesConfig(
+            enabled=bool(files.get("enabled", True)),
+            root=(Path(str(files["root"])).expanduser() if files.get("root")
+                  else Path.home() / "Downloads" / "AIPI5"),
+            # The environment wins over the file here, which is the opposite of
+            # everywhere else in this module and is what the variable is for:
+            # a one-off large transfer without editing YAML on a device with no
+            # keyboard. Absent, `_max_upload_bytes` returns the default and the
+            # file has its usual say.
+            max_upload_bytes=(_max_upload_bytes()
+                              if os.environ.get("AIPI5_FILE_MAX_UPLOAD_GB", "").strip()
+                              else int(_positive(files.get("max_upload_gb", 2.0), 2.0,
+                                                 "files.max_upload_gb") * 1024 ** 3)),
+            reserve_bytes=int(_positive(files.get("reserve_gb", 2.0), 2.0,
+                                        "files.reserve_gb") * 1024 ** 3),
+            max_concurrent=max(1, int(files.get("max_concurrent", 2))),
         ),
         assistant=AssistantConfig(
             llm_enabled=bool(assistant.get("llm_enabled", True)),

@@ -456,6 +456,86 @@
     text-align: center; font-size: 22px; color: var(--ink-dim);
   }
 
+  /* ── file transfer ───────────────────────────────────────────── */
+
+  #files-top {
+    display: flex; align-items: center; gap: 16px; margin-top: 16px;
+    flex: 0 0 auto;
+  }
+  /* The one button on this page that is a button rather than a row. Sized for
+     a finger and labelled with what it does, not with an icon: this is the
+     control somebody presses while holding a phone in the other hand. */
+  #files-upload { flex: 0 0 320px; height: 88px; flex-direction: row; gap: 14px; }
+  #files-storage {
+    flex: 1; text-align: right; font-size: 20px; color: var(--ink-dim);
+    line-height: 1.4;
+  }
+  #files-storage b { color: var(--ink); font-weight: 500; }
+
+  #files-sort { display: flex; gap: 10px; flex: 0 0 auto; }
+  #files-sort button {
+    flex: 0 0 auto; height: 44px; padding: 0 18px; font-size: 18px;
+    flex-direction: row; border-radius: 10px;
+  }
+  #files-sort button.on { border-color: var(--accent); color: var(--accent); }
+
+  /* Progress. Present only while something is transferring — a bar sitting at
+     zero is a bar somebody wonders about. */
+  #files-progress { display: none; margin-top: 14px; flex: 0 0 auto; }
+  #files-progress.on { display: block; }
+  #files-progress .what {
+    display: flex; justify-content: space-between; font-size: 20px;
+    color: var(--ink-dim); margin-bottom: 8px;
+  }
+  #files-progress .what b { color: var(--ink); font-weight: 400; }
+  .bar {
+    height: 14px; border-radius: 7px; background: var(--panel);
+    border: 1px solid var(--panel-edge); overflow: hidden;
+  }
+  .bar span {
+    display: block; height: 100%; width: 0;
+    background: var(--accent); transition: width 0.2s linear;
+  }
+  #files-progress.failed .bar span { background: var(--danger); }
+  #files-progress.done .bar span { background: #4ec97a; }
+
+  #files-list {
+    flex: 1; margin-top: 16px; overflow-y: auto; padding-right: 10px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  #files-list::-webkit-scrollbar { width: 12px; }
+  #files-list::-webkit-scrollbar-thumb { background: var(--panel-edge); border-radius: 6px; }
+
+  .file-row {
+    background: var(--panel); border: 1px solid var(--panel-edge);
+    border-radius: 14px; padding: 14px 18px;
+    display: flex; align-items: center; gap: 18px;
+  }
+  .file-row .kind {
+    flex: 0 0 46px; font-size: 30px; text-align: center;
+    font-family: "Noto Color Emoji", "Noto Emoji", "Segoe UI Emoji", sans-serif;
+  }
+  .file-row .about { flex: 1; min-width: 0; }
+  .file-row .name {
+    font-size: 23px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .file-row .meta { font-size: 17px; color: var(--ink-faint); margin-top: 5px; }
+  .file-row .act {
+    flex: 0 0 auto; height: 56px; padding: 0 22px; font-size: 19px;
+    flex-direction: row; border-radius: 12px;
+  }
+  .file-row .act.danger { color: var(--danger); border-color: #3a2630; }
+  .file-row.confirming { border-color: var(--danger); }
+  .file-row .ask { flex: 0 0 auto; font-size: 19px; color: var(--danger); }
+
+  #files-empty {
+    margin: auto; text-align: center; color: var(--ink-faint); font-size: 22px;
+    line-height: 1.6;
+  }
+  #files-empty b { display: block; color: var(--ink-dim); font-size: 26px;
+                   margin-bottom: 10px; }
+
   /* ── the screensaver ─────────────────────────────────────────── */
 
   /* Full 1280x800, over everything. Section 24: the time and the weather, and
@@ -485,6 +565,37 @@
      screensaver away — section 26 — but a touch is proof of a person even
      when the camera disagrees, so it wakes too. */
   #ss-hint { position: absolute; bottom: 30px; font-size: 18px; color: #3b4553; }
+
+  /* ── the file viewer ─────────────────────────────────────────── */
+
+  /* Looking at a photo somebody sent, on the device they sent it to. This is
+     what "Download" used to be on this screen, and Download was the wrong verb
+     here: the file is already on this machine, so downloading it copies it
+     into another folder on the same disk and shows nothing. */
+  #viewer {
+    position: fixed; inset: 0; width: 1280px; height: 800px;
+    background: rgba(6, 8, 11, 0.97); display: none;
+    flex-direction: column; align-items: center; justify-content: center;
+    z-index: 20; padding: 24px;
+  }
+  #viewer.on { display: flex; }
+  #viewer img, #viewer video {
+    max-width: 1180px; max-height: 620px; border-radius: 12px;
+    background: #000;
+  }
+  #viewer audio { width: 700px; }
+  #viewer .caption {
+    margin-top: 18px; font-size: 22px; color: var(--ink-dim);
+    max-width: 1100px; text-align: center; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  #viewer .cannot { font-size: 24px; color: var(--ink-dim); text-align: center;
+                    line-height: 1.6; }
+  #viewer-close {
+    position: absolute; top: 24px; right: 28px;
+    width: 72px; height: 72px; border-radius: 36px; font-size: 30px;
+    flex-direction: row;
+  }
 
   /* ── the shutdown countdown ──────────────────────────────────── */
 
@@ -542,6 +653,12 @@
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
     <button data-action="kodama"><span class="glyph">🎵</span><span class="label">Music</span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
+    <!-- Navigation only. Every other button here posts an action into the
+         assistant's queue because it asks for work — a capture, a fetch, a
+         launch — and gets a ten-second cooldown for it. Opening a folder is
+         not work, there is nothing for the voice loop to do about it, and
+         nothing here may be rate limited into looking broken. -->
+    <button data-page="files"><span class="glyph">⇅</span><span class="label">Files</span></button>
   </div>
 </div>
 
@@ -683,6 +800,47 @@
   <div id="news-list"><div class="loading">Fetching today's stories…</div></div>
 </div>
 
+<!-- ── files ───────────────────────────────────────────────────── -->
+<div id="page-files" class="page">
+  <header>
+    <button class="back" data-back><span class="glyph">‹</span> Back</button>
+    <h1>FILE TRANSFER</h1>
+    <div class="headline-weather" data-weather-headline></div>
+  </header>
+
+  <div id="files-top">
+    <button id="files-upload"><span class="glyph">⬆</span><span class="label">Upload File</span></button>
+    <div id="files-sort">
+      <button data-sort="date" class="on">Newest</button>
+      <button data-sort="name">Name</button>
+      <button data-sort="size">Size</button>
+      <button id="files-refresh">Refresh</button>
+    </div>
+    <div id="files-storage"></div>
+  </div>
+
+  <!-- `multiple` because a person picking holiday photos picks all of them.
+       Hidden, and opened only by the button above: a file picker that opens
+       by itself on a kiosk is a modal nobody asked for over the assistant. -->
+  <input id="files-picker" type="file" multiple hidden>
+
+  <div id="files-progress">
+    <div class="what"><b id="files-progress-name"></b><span id="files-progress-detail"></span></div>
+    <div class="bar"><span id="files-progress-bar"></span></div>
+  </div>
+
+  <div id="files-list"></div>
+</div>
+
+<!-- Looking at one file, over the file list. A view rather than a new page,
+     for the reason every other view here is one: this is a kiosk, and a window
+     somebody cannot get back from is worse than no window. -->
+<div id="viewer">
+  <button id="viewer-close">✕</button>
+  <div id="viewer-body"></div>
+  <div class="caption" id="viewer-caption"></div>
+</div>
+
 <div id="screensaver">
   <div id="ss-time">--:--</div>
   <div id="ss-date"></div>
@@ -762,11 +920,18 @@ function show(page) {
   if (page === "call") startCall();
   if (page === "weather") loadWeather();
   if (page === "news") loadNews();
+  if (page === "files") loadFiles();
   return true;
 }
 
 for (const button of document.querySelectorAll("[data-back]")) {
   button.addEventListener("click", () => show("main"));
+}
+
+// Buttons that only navigate. `data-action` buttons ask the assistant for
+// something and are rate limited for it; these open a page and nothing else.
+for (const button of document.querySelectorAll("[data-page]")) {
+  button.addEventListener("click", () => show(button.dataset.page));
 }
 
 // `#weather`, `#news`, `#camera`, `#talk` open a page directly.
@@ -779,7 +944,7 @@ for (const button of document.querySelectorAll("[data-back]")) {
 // assistant speak.
 function fromHash() {
   const page = (location.hash || "").replace(/^#/, "");
-  if (page && (page === "main" || PAGE_OF[page])) show(page);
+  if (page && (page === "main" || page === "files" || PAGE_OF[page])) show(page);
 }
 window.addEventListener("hashchange", fromHash);
 
@@ -892,6 +1057,7 @@ function applyState(state) {
   cameraAnswerFromState(state, assistant);
   callFromState(state);
   shutdownFromState(state);
+  filesFromState(state);
   lastAssistantState = assistant;
 
   const wanted = !!state.screensaver;
@@ -917,6 +1083,332 @@ function setScreensaver(on) {
   screensaverOn = on;
   screensaver.classList.toggle("on", on);
   if (on) drawClock();
+}
+
+// ── file transfer ───────────────────────────────────────────────────
+//
+// The same folder the phone sees, reached through the loopback server rather
+// than the tailnet one — so there is no token here and no download ticket,
+// which is the only difference between this and the phone's version of this
+// page. Both talk to `aipi5/files/`.
+//
+// Progress comes from `XMLHttpRequest` rather than `fetch`, and that is not
+// nostalgia: `fetch` still cannot report upload progress in either browser
+// this device has to satisfy, and a 500 MB video with no progress bar is
+// indistinguishable from a device that has stopped responding.
+
+let filesSort = "date";
+let filesBusy = false;
+let filesConfirming = "";        // the one file with its Delete confirmed
+
+const KINDS = [
+  [/^image\//, "🖼"], [/^video\//, "🎬"], [/^audio\//, "🎵"],
+  [/pdf$/, "📕"], [/^text\//, "📄"],
+  [/zip|tar|gzip|compressed/, "🗜"],
+];
+
+function fileGlyph(type, name) {
+  for (const [pattern, glyph] of KINDS) {
+    if (pattern.test(type || "")) return glyph;
+  }
+  return /\.(zip|tar|gz|xz|7z)$/i.test(name) ? "🗜" : "📦";
+}
+
+function fileSize(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024, index = 0;
+  while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1; }
+  return value.toFixed(1) + " " + units[index];
+}
+
+function fileWhen(iso) {
+  // The server's local time, already formatted — the browser's own timezone is
+  // not necessarily the Pi's, and a file uploaded "just now" showing tomorrow's
+  // date is the kind of small wrongness that makes a screen untrustworthy.
+  return (iso || "").replace("T", " ").slice(0, 16);
+}
+
+// A file the phone sent appears here without anybody pressing Refresh. The
+// server puts the folder's revision on the state poll this page already makes
+// twice a second, so the listing is re-read only when it is both visible and
+// actually different — and Refresh stays, because a button that does what the
+// page does anyway is what somebody presses when they doubt it.
+//
+// Not reloaded while a Delete is armed or an upload is running: pulling the
+// rows out from under a half-finished gesture is worse than being a second
+// out of date.
+let filesRev = null;
+
+function filesFromState(state) {
+  const revision = state.files_rev;
+  if (revision === undefined) return;
+  if (filesRev === null) { filesRev = revision; return; }
+  if (revision === filesRev) return;
+  filesRev = revision;
+  if (currentPage === "files" && !filesBusy && !filesConfirming) loadFiles();
+}
+
+async function loadFiles() {
+  const list = el("files-list");
+  try {
+    const response = await fetch("/api/files?sort=" + filesSort,
+                                 { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "unavailable");
+    drawFiles(payload);
+  } catch (err) {
+    list.innerHTML = "";
+    const empty = document.createElement("div");
+    empty.id = "files-empty";
+    empty.innerHTML = "<b>File transfer is not available</b>" +
+      escapeHtml(err.message || "The folder could not be read.");
+    list.appendChild(empty);
+    el("files-storage").textContent = "";
+  }
+}
+
+function drawFiles(payload) {
+  const storage = payload.storage || {};
+  el("files-storage").innerHTML =
+    "Free: <b>" + fileSize(storage.free || 0) + "</b> · Used: <b>" +
+    fileSize(storage.used || 0) + "</b><br>" + escapeHtml(payload.root || "");
+
+  const list = el("files-list");
+  list.innerHTML = "";
+  const files = payload.files || [];
+  if (!files.length) {
+    const empty = document.createElement("div");
+    empty.id = "files-empty";
+    empty.innerHTML = "<b>Nothing here yet</b>Files sent from the phone appear " +
+      "here, and anything you upload can be downloaded from the phone.";
+    list.appendChild(empty);
+    return;
+  }
+  for (const file of files) {
+    list.appendChild(fileRow(file));
+  }
+}
+
+function fileRow(file) {
+  const row = document.createElement("div");
+  row.className = "file-row";
+
+  const kind = document.createElement("div");
+  kind.className = "kind";
+  kind.textContent = fileGlyph(file.type, file.name);
+
+  const about = document.createElement("div");
+  about.className = "about";
+  const name = document.createElement("div");
+  name.className = "name";
+  // `textContent`, not `innerHTML`: a filename is somebody else's text and it
+  // arrived from a phone.
+  name.textContent = file.name;
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  meta.textContent = fileSize(file.size) + " · " + fileWhen(file.modified_iso)
+    + (file.type ? " · " + file.type : "");
+  about.appendChild(name);
+  about.appendChild(meta);
+
+  // **Open, not Download.** The file is already on this machine: "download"
+  // here meant Chromium copying it into ~/Downloads with no visible download
+  // shelf in a kiosk, so nothing appeared to happen and the copy was somewhere
+  // nobody could reach. What somebody standing at the Pi actually wants is to
+  // look at the photo their phone just sent.
+  const open = document.createElement("button");
+  open.className = "act";
+  open.textContent = "Open";
+  open.addEventListener("click", () => showFile(file));
+
+  const remove = document.createElement("button");
+  remove.className = "act danger";
+  remove.textContent = "Delete";
+  remove.addEventListener("click", () => confirmDelete(row, file, remove));
+
+  row.appendChild(kind);
+  row.appendChild(about);
+  row.appendChild(open);
+  row.appendChild(remove);
+  return row;
+}
+
+// What can be looked at here. The server decides this too, and refuses to send
+// anything else inline — this list only decides what the page bothers to try.
+function viewable(type) {
+  const kind = (type || "").split(";")[0];
+  if (kind === "image/svg+xml") return "";     // an image that can run script
+  if (kind.startsWith("image/")) return "img";
+  if (kind.startsWith("video/")) return "video";
+  if (kind.startsWith("audio/")) return "audio";
+  return "";
+}
+
+function showFile(file) {
+  const body = el("viewer-body");
+  body.innerHTML = "";
+  el("viewer-caption").textContent = file.name + " · " + fileSize(file.size);
+
+  const how = viewable(file.type);
+  const url = "/api/files/download/" + encodeURIComponent(file.name) + "?inline=1";
+  if (how === "img") {
+    const image = document.createElement("img");
+    image.src = url;
+    image.alt = file.name;
+    body.appendChild(image);
+  } else if (how === "video" || how === "audio") {
+    const media = document.createElement(how);
+    media.src = url;
+    media.controls = true;
+    media.autoplay = false;
+    body.appendChild(media);
+  } else {
+    // Said plainly rather than opened anyway. A PDF or a zip in a kiosk
+    // browser is a window with no way back, which is the failure this whole
+    // page is arranged to avoid.
+    const note = document.createElement("div");
+    note.className = "cannot";
+    note.textContent = "This screen can show pictures, video and sound. "
+      + "Fetch it from the phone, or use the folder on the Pi.";
+    body.appendChild(note);
+  }
+  el("viewer").classList.add("on");
+}
+
+function closeViewer() {
+  el("viewer").classList.remove("on");
+  // Emptied on the way out: a <video> left in the document keeps its file
+  // open, and an <img> keeps a decoded copy of a 12 MP photo in memory.
+  el("viewer-body").innerHTML = "";
+}
+
+el("viewer-close").addEventListener("click", closeViewer);
+el("viewer").addEventListener("click", (event) => {
+  // Anywhere off the picture closes it, which on a touchscreen is the gesture
+  // people try first.
+  if (event.target === el("viewer")) closeViewer();
+});
+
+function confirmDelete(row, file, button) {
+  // Two presses, and the second one says what it is deleting. A single tap on
+  // a touchscreen is not a decision — this is the same reasoning as the
+  // shutdown countdown, at a smaller scale.
+  if (filesConfirming !== file.name) {
+    filesConfirming = file.name;
+    row.classList.add("confirming");
+    const ask = document.createElement("div");
+    ask.className = "ask";
+    ask.textContent = "Delete “" + file.name + "”?";
+    row.insertBefore(ask, row.lastChild);
+    button.textContent = "Delete";
+    // Forgotten if nobody follows through, so a stray tap does not leave a
+    // primed Delete on the screen indefinitely.
+    setTimeout(() => {
+      if (filesConfirming === file.name) {
+        filesConfirming = "";
+        loadFiles();
+      }
+    }, 6000);
+    return;
+  }
+  filesConfirming = "";
+  fetch("/api/files/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: file.name }),
+  }).then(loadFiles).catch(() => loadFiles());
+}
+
+function filesProgress(state, name, detail, percent) {
+  const box = el("files-progress");
+  box.classList.toggle("on", state !== "idle");
+  box.classList.toggle("failed", state === "failed");
+  box.classList.toggle("done", state === "done");
+  el("files-progress-name").textContent = name || "";
+  el("files-progress-detail").textContent = detail || "";
+  el("files-progress-bar").style.width = (percent || 0) + "%";
+}
+
+// One request per file, in order. The server takes several parts in one body
+// perfectly well, but a person watching wants to know which file is moving and
+// how far along it is — and one failure out of four should not take the other
+// three with it.
+function uploadFiles(chosen) {
+  if (filesBusy || !chosen.length) return;
+  filesBusy = true;
+  const queue = Array.from(chosen);
+  let index = 0;
+
+  const next = () => {
+    if (index >= queue.length) {
+      filesBusy = false;
+      filesProgress("done", "Upload complete",
+                    queue.length > 1 ? queue.length + " files" : "", 100);
+      loadFiles();
+      setTimeout(() => { if (!filesBusy) filesProgress("idle"); }, 4000);
+      return;
+    }
+    const file = queue[index];
+    index += 1;
+    sendOneFile(file, queue.length > 1 ? `(${index}/${queue.length}) ` : "", next);
+  };
+  next();
+}
+
+function sendOneFile(file, prefix, done) {
+  const form = new FormData();
+  form.append("file", file, file.name);
+
+  const request = new XMLHttpRequest();
+  request.open("POST", "/api/files/upload");
+  request.upload.addEventListener("progress", (event) => {
+    if (!event.lengthComputable) return;
+    const percent = Math.round((event.loaded / event.total) * 100);
+    filesProgress("busy", prefix + "Uploading " + file.name,
+                  fileSize(event.loaded) + " / " + fileSize(event.total)
+                  + "  ·  " + percent + "%", percent);
+  });
+  request.addEventListener("load", () => {
+    if (request.status >= 200 && request.status < 300) {
+      done();
+      return;
+    }
+    let why = "";
+    try { why = (JSON.parse(request.responseText) || {}).error || ""; } catch (e) {}
+    filesBusy = false;
+    filesProgress("failed", "Upload failed", why || ("HTTP " + request.status), 100);
+    loadFiles();
+  });
+  request.addEventListener("error", () => {
+    // The Pi went away, or the browser gave up. Nothing partial survives on
+    // the far end — the server deletes what it had — so this is safe to retry.
+    filesBusy = false;
+    filesProgress("failed", "Upload failed", "the connection dropped", 100);
+  });
+  request.addEventListener("abort", () => {
+    filesBusy = false;
+    filesProgress("idle");
+  });
+  filesProgress("busy", prefix + "Uploading " + file.name, "starting…", 0);
+  request.send(form);
+}
+
+el("files-upload").addEventListener("click", () => el("files-picker").click());
+el("files-picker").addEventListener("change", (event) => {
+  uploadFiles(event.target.files);
+  // Cleared so choosing the same file twice in a row fires `change` again.
+  event.target.value = "";
+});
+el("files-refresh").addEventListener("click", loadFiles);
+for (const button of document.querySelectorAll("#files-sort [data-sort]")) {
+  button.addEventListener("click", () => {
+    filesSort = button.dataset.sort;
+    for (const other of document.querySelectorAll("#files-sort [data-sort]")) {
+      other.classList.toggle("on", other === button);
+    }
+    loadFiles();
+  });
 }
 
 // ── the shutdown countdown ──────────────────────────────────────────

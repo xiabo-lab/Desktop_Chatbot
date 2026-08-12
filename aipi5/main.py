@@ -75,6 +75,7 @@ from aipi5.core import preflight
 from aipi5.core.audio_priority import AudioPriority
 from aipi5.core.presence import Presence, PresenceTracker, ScreensaverPolicy
 from aipi5.core.shutdown import ShutdownCountdown, countdown_and_run
+from aipi5.files import FileStore, human_size
 from aipi5.kodama.launcher import KodamaLauncher
 from aipi5.llm import prompts
 from aipi5.llm.client import OpenAIClient
@@ -231,9 +232,15 @@ class Assistant:
         # authentication, and deciding who owns the Brio.
         self.call_hub = SignalingHub()
         self.call_devices = TrustedDevices(settings.call.devices)
+        # The transfer folder, shared by both servers so a file the phone sent
+        # is on the screen's list with nothing synchronising the two. Built
+        # before the call server, which is handed it.
+        self.files = FileStore(settings.files)
+        self.files.start()
         self.call = CallServer(settings.call, hub=self.call_hub,
                                devices=self.call_devices,
-                               on_change=self.on_call_change)
+                               on_change=self.on_call_change,
+                               files=self.files)
         #: What the call was doing last time we looked, so a transition can be
         #: acted on once rather than on every poll.
         self._call_live = False
@@ -253,7 +260,7 @@ class Assistant:
                          weather=self.weather, news=self.news,
                          camera=self.camera if settings.camera.enabled else None,
                          call=self.call, on_call_change=self.on_call_change,
-                         countdown=self.countdown)
+                         countdown=self.countdown, files=self.files)
         self.report: preflight.Report | None = None
         # Filled in by `start()`; defaulted here so `verify()` and the settings
         # page are safe to call against an assistant that failed to finish
@@ -354,8 +361,21 @@ class Assistant:
             wake=self.detector_wake,
             ui_started=self._ui_started,
             call=self._call_status(),
+            files=self._files_status(),
         )
         self.publish()
+
+    def _files_status(self) -> tuple[bool, str]:
+        """Whether the phone can send files here, and where they land.
+
+        Names the folder and the free space, because "file transfer ok" is not
+        what somebody needs on the day the SD card is full — the number is.
+        """
+        if not self.files.ready:
+            return False, self.files.error or "not available"
+        storage = self.files.storage()
+        return True, (f"{self.files.root} — {human_size(storage['free'])} free, "
+                      f"{len(self.files.listing())} file(s)")
 
     def _call_snapshot(self) -> dict:
         """The hub's state, plus whether a phone could be rung.
@@ -512,6 +532,7 @@ class Assistant:
             "kodama": {"running": self.player.available(),
                        "service": self.settings.kodama.service},
             "call": self.call.describe(),
+            "files": self.files.describe(),
             "checks": self.report.as_dict() if self.report else {},
         }
 

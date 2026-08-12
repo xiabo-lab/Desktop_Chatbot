@@ -35,6 +35,8 @@ from urllib.parse import parse_qs, urlparse
 
 from aipi5.call import push, tailscale, tls, turn
 from aipi5.call.signaling import PHONE, PI, POLL_TIMEOUT_S, SignalingHub
+from aipi5.files import Tickets, web as files_web
+from aipi5.files.store import FileError
 
 log = logging.getLogger(__name__)
 
@@ -250,6 +252,19 @@ class _Handler(BaseHTTPRequestHandler):
             self._poll(parse_qs(route.query))
         elif route.path == "/call/v1/state":
             self._state()
+        elif route.path == "/call/v1/files":
+            self._file_list(parse_qs(route.query))
+        elif route.path.startswith("/call/v1/files/raw/"):
+            # The bytes, to an `XMLHttpRequest` carrying the bearer token —
+            # never to a navigation. This is what the phone reads a file into
+            # memory with so it can hand it to the iOS share sheet; see the
+            # long note in `phone.html`, which is where the reason lives.
+            self._file_raw(route.path)
+        elif route.path.startswith("/files/dl/"):
+            # The one route on this server that carries its own permission
+            # rather than a bearer token — see `aipi5/files/tickets.py`. It has
+            # to be a plain link or Safari cannot save the file.
+            self._file_download(route.path)
         elif route.path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         else:
@@ -304,6 +319,15 @@ class _Handler(BaseHTTPRequestHandler):
         a future route to reintroduce it.
         """
         path = urlparse(self.path).path
+
+        # **Before the body is read.** An upload is a body this server must not
+        # buffer — the whole feature is that a 2 GB file never exists in memory
+        # here — so it is dispatched to a handler that streams it to disk
+        # instead of to `_read_body`, which would read it all to parse JSON.
+        if path == "/call/v1/files/upload":
+            self._upload()
+            return
+
         payload = self._read_body()
         if payload is None:
             return                      # already answered with 400 or 413
@@ -313,7 +337,9 @@ class _Handler(BaseHTTPRequestHandler):
                   "/call/v1/send": self._send_message,
                   "/call/v1/bye": self._bye,
                   "/call/v1/subscribe": self._subscribe,
-                  "/call/v1/pickup": self._pickup}
+                  "/call/v1/pickup": self._pickup,
+                  "/call/v1/files/ticket": self._file_ticket,
+                  "/call/v1/files/delete": self._file_delete}
         handler = routes.get(path)
         if handler is None:
             self._json({"error": "not found"}, 404)
@@ -374,6 +400,10 @@ class _Handler(BaseHTTPRequestHandler):
         # believes it is set up while the Pi lists no phone at all. The Pi is
         # the authority, so it says so on every poll.
         state["can_ring"] = bool(self.call.subscriptions.get(device["name"]))
+        # So the phone's file list notices a file that arrived from the Pi,
+        # on the poll it is already making while idle.
+        state["files_rev"] = (self.call.files.revision()
+                              if self.call.files is not None else 0)
         self._json(state)
 
     def _ring(self) -> None:
@@ -427,6 +457,154 @@ class _Handler(BaseHTTPRequestHandler):
             # something unrelated happened to walk past the camera.
             self.call.on_change()
         self._json({"ok": ok}, 200 if ok else 400)
+
+    # ── files ────────────────────────────────────────────────────────
+
+    def _files(self):
+        """The store, or None having answered — file transfer may be off."""
+        if self.call.files is None or not self.call.files.ready:
+            reason = (self.call.files.error if self.call.files
+                      else "file transfer is not configured")
+            self._json({"error": reason or "file transfer is not available"}, 503)
+            return None
+        return self.call.files
+
+    def _file_list(self, params: dict) -> None:
+        if self._device() is None:
+            return
+        store = self._files()
+        if store is None:
+            return
+        sort = (params.get("sort") or ["date"])[0]
+        ascending = (params.get("order") or ["desc"])[0] == "asc"
+        self._json(files_web.payload(store, sort, ascending))
+
+    def _file_ticket(self) -> None:
+        """Permission to download one file through a plain link.
+
+        The phone cannot put its bearer token on a `<a href>` and Safari cannot
+        save a file any other way, so it asks here — authenticated, as usual —
+        and gets a one-shot ticket that expires in a minute.
+        """
+        device = self._device()
+        if device is None:
+            return
+        store = self._files()
+        if store is None:
+            return
+        name = str(self._body().get("name", ""))
+        try:
+            # Resolved now rather than at redemption: a ticket is only ever
+            # issued for a file that exists inside the folder, so a redeemed
+            # one cannot be the first time a name is checked.
+            path, size, kind = store.open_for_download(name)
+        except FileError as exc:
+            self._json({"error": str(exc)}, exc.status)
+            return
+        ticket = self.call.tickets.issue(path.name, device["name"])
+        self._json({"ok": True, "ticket": ticket, "url": "/files/dl/" + ticket,
+                    "name": path.name, "size": size, "type": kind})
+
+    def _file_raw(self, path: str) -> None:
+        """The file itself, to an authenticated request rather than a link.
+
+        The ticket route below exists because a *navigation* cannot carry a
+        header. This one is the opposite case: `XMLHttpRequest` can carry the
+        token perfectly well, and what it cannot do is trap somebody in a
+        download page — because nothing navigates.
+        """
+        if self._device() is None:
+            return
+        store = self._files()
+        if store is None:
+            return
+        name = files_web.name_from_path(path, "/call/v1/files/raw/")
+        try:
+            files_web.send_file(self, store, name, who="the phone")
+        except FileError as exc:
+            self._json({"error": str(exc)}, exc.status)
+
+    def _file_download(self, path: str) -> None:
+        """Redeem a ticket and stream the file. No bearer token here.
+
+        Unauthenticated in the sense that no `Authorization` header arrives —
+        but not unauthorised: the ticket was issued to a device that proved
+        itself moments ago, it names one file, it works once, and it is dead in
+        a minute.
+        """
+        store = self._files()
+        if store is None:
+            return
+        ticket = files_web.name_from_path(path, "/files/dl/")
+        name = self.call.tickets.redeem(ticket)
+        if name is None:
+            log.info("a download ticket was refused (expired, used, or invented)")
+            self._json({"error": "that download link has expired"}, 403)
+            return
+        try:
+            files_web.send_file(self, store, name, who="the phone")
+        except FileError as exc:
+            self._json({"error": str(exc)}, exc.status)
+
+    def _file_delete(self) -> None:
+        """POST rather than DELETE, to match every other route on this server.
+
+        The phone's page has one way of talking to the Pi — a JSON POST with a
+        bearer token — and a second shape here would mean a second code path in
+        the page for one button. The confirmation that makes this safe is on
+        the screen, not in the verb.
+        """
+        if self._device() is None:
+            return
+        store = self._files()
+        if store is None:
+            return
+        try:
+            gone = store.delete(str(self._body().get("name", "")))
+        except FileError as exc:
+            self._json({"error": str(exc)}, exc.status)
+            return
+        self._json({"ok": True, "name": gone})
+
+    def _upload(self) -> None:
+        """A file arriving from the phone, written to disk as it comes.
+
+        Authenticated *before* a byte is read, and a refusal closes the
+        connection rather than draining what may be gigabytes.
+        """
+        device = self._device_for_upload()
+        if device is None:
+            return
+        store = self.call.files
+        if store is None or not store.ready:
+            files_web.refuse_upload(
+                self, 503, (store.error if store else "") or
+                "file transfer is not available")
+            return
+        try:
+            answer = files_web.receive_upload(self, store, who=device["name"])
+        except FileError as exc:
+            files_web.refuse_upload(self, exc.status, str(exc))
+            return
+        except (ConnectionError, TimeoutError):
+            self.close_connection = True
+            return
+        self._json(answer)
+
+    def _device_for_upload(self) -> dict | None:
+        """`_device`, but a refusal hangs up instead of leaving a body unread."""
+        address = self._peer()
+        left = self.call.devices.blocked(address)
+        if left > 0:
+            files_web.refuse_upload(self, 429, "too many attempts")
+            return None
+        match = _BEARER.match(self.headers.get("Authorization", "") or "")
+        device = self.call.devices.authenticate(match.group(1) if match else "",
+                                                address)
+        if device is None:
+            files_web.refuse_upload(self, 401, "unauthorized")
+            return None
+        return device
 
     def _pickup(self) -> None:
         """Somebody answered on the phone.
@@ -517,10 +695,14 @@ class CallServer:
     """
 
     def __init__(self, cfg, *, hub: SignalingHub, devices,
-                 on_change=lambda: None):
+                 on_change=lambda: None, files=None):
         self.cfg = cfg
         self.hub = hub
         self.devices = devices
+        # The transfer folder, or None where file transfer is not configured.
+        # This module owns no filesystem logic: it authenticates, and asks.
+        self.files = files
+        self.tickets = Tickets()
         # Ringing a phone whose app is closed. Optional: without the library or
         # a subscription the Pi simply cannot start an outgoing call, and
         # everything else works exactly as before.

@@ -149,7 +149,7 @@ Outcome = tuple  # (ok: bool, detail: str)
 def run(settings, *, mic=None, stt=None, speaker: Outcome = (False, ""),
         camera: Outcome = (False, ""), detector: Outcome = (False, ""),
         llm: Outcome = (False, ""), wake=None, ui_started=True,
-        call: Outcome = (False, "")) -> Report:
+        call: Outcome = (False, ""), files: Outcome = (False, "")) -> Report:
     """Check everything, decide what is fatal, and say so in the journal.
 
     Subsystem arguments are `(ok, detail)` pairs rather than objects, and that
@@ -246,6 +246,17 @@ def run(settings, *, mic=None, stt=None, speaker: Outcome = (False, ""),
         report.add("remote calls", call_ok,
                    call_detail or ("ready" if call_ok else
                                    "the call server is not listening"))
+
+    # File transfer, on the same terms as calling: never critical, and never
+    # silent either. A folder that turned out to be unwritable is exactly the
+    # kind of failure that otherwise only shows up as a button that does
+    # nothing, on a phone, in another room.
+    if not settings.files.enabled:
+        report.add("file transfer", True, "disabled in the configuration")
+    else:
+        files_ok, files_detail = files
+        report.add("file transfer", files_ok,
+                   files_detail or ("ready" if files_ok else "not available"))
 
     report.log()
     for check in report.fatal:
