@@ -87,6 +87,13 @@ PREVIEW_WIDTH = 640
 # somebody notices.
 RECLAIM_WINDOW_S = 60.0
 RECLAIM_RETRY_S = 2.0
+
+# A camera that was unplugged is looked for forever, because it comes back when
+# somebody plugs it in and that may be tomorrow — the alternative is a cable
+# reseated in the morning needing a service restart nobody knows to do. What is
+# bounded is the noise: the fast cadence above for the first minute, then this.
+LOST_PATIENCE_S = 60.0
+LOST_SLOW_RETRY_S = 30.0
 PREVIEW_QUALITY = 70
 
 
@@ -241,6 +248,8 @@ class Camera:
         self._reclaiming = ""
         self._reclaim_until = 0.0
         self._last_attempt = 0.0
+        #: When the device went away mid-run, or 0. See `_mark_lost`.
+        self._lost_since = 0.0
 
         if not cfg.enabled:
             self._error = "disabled in the configuration"
@@ -475,13 +484,42 @@ class Camera:
                 # A camera unplugged mid-run fails here rather than raising.
                 # Say so once, at the level that gets read, because every
                 # symptom downstream of this is silence.
-                log.warning("the camera stopped delivering frames")
+                self._mark_lost("it stopped delivering frames")
                 return None
         ok, frame = capture.retrieve()
         if not ok or frame is None or not getattr(frame, "size", 0):
             log.warning("the camera returned an empty frame")
             return None
         return frame
+
+    def _mark_lost(self, why: str) -> None:
+        """The device went away mid-run. Caller holds the lock.
+
+        Before this, a Brio unplugged while the assistant was running left it
+        reporting `running=True` forever with a handle to a device that no
+        longer existed — no frames, no error, and a settings page that said
+        everything was fine. Replugging did not help either, because the
+        by-name search only runs inside `open()` and nothing called it again.
+
+        And the search is exactly what a replug needs: measured on the device,
+        a Brio unbound and rebound came back as **/dev/video1 rather than
+        /dev/video0**, because node numbers are handed out in order of arrival.
+        The stable identity is the name, which is why `device: auto` matches on
+        it — but a match that only happens once at startup is a match that
+        cannot survive the cable being knocked out.
+        """
+        if not self._started:
+            return
+        log.warning("lost the camera: %s", why)
+        capture, self._capture = self._capture, None
+        self._started = False
+        self._lost_since = time.monotonic()
+        self._last_attempt = 0.0
+        if capture is not None:
+            try:
+                capture.release()
+            except Exception:
+                log.debug("releasing the lost camera failed", exc_info=True)
 
     def capture_still(self) -> Capture | None:
         """A fresh frame, written to tmpfs as JPEG.
@@ -668,14 +706,21 @@ class Camera:
         return self.retry_reclaim(immediately=True)
 
     def retry_reclaim(self, immediately: bool = False) -> bool:
-        """One bounded attempt to reopen a camera a call has finished with.
+        """One bounded attempt to reopen a camera we should have and do not.
 
-        Called from the voice loop's idle path, so it must be cheap when there
-        is nothing to do — which is almost always. Returns True once the camera
-        is running again.
+        Two cases, and they share everything but the reason. A call has just
+        finished and the browser has not let go yet; or the device was
+        unplugged and may since have been plugged back in. Both want the same
+        thing — call `open()` again, which re-runs the search by name — and
+        both must be cheap on the paths that call this every frame.
+
+        Called from the voice loop's idle path. Returns True once the camera is
+        running again.
         """
         with self._lock:
             if not self._reclaiming:
+                if self._lost_since:
+                    return self._retry_lost_locked()
                 return self._started
             borrower = self._reclaiming
             now = time.monotonic()
@@ -701,9 +746,46 @@ class Camera:
                       borrower, RECLAIM_WINDOW_S, self._error)
         return False
 
+    def _retry_lost_locked(self) -> bool:
+        """Look for a camera that went away. Caller holds the lock.
+
+        **Unbounded, unlike the reclaim above, and that is deliberate.** A
+        borrowed camera comes back in seconds or something is wrong; an
+        unplugged one comes back when somebody plugs it in, which may be
+        tomorrow. Giving up would mean a cable reseated in the morning needing
+        a service restart nobody knows to do.
+
+        What is bounded is the *noise*: every two seconds for the first minute,
+        then every thirty. `open()` logs its own failure, so an absent camera
+        would otherwise write a warning every two seconds forever.
+        """
+        now = time.monotonic()
+        patient = (now - self._lost_since) > LOST_PATIENCE_S
+        interval = LOST_SLOW_RETRY_S if patient else RECLAIM_RETRY_S
+        if now - self._last_attempt < interval:
+            return False
+        self._last_attempt = now
+
+        # `open()` takes the lock, so it cannot be called from here. Released
+        # and retaken around it: nothing else can be mid-read, because
+        # `_started` is False and every reader checks it.
+        self._lock.release()
+        try:
+            ok = self.open()
+        finally:
+            self._lock.acquire()
+        if ok:
+            self._lost_since = 0.0
+            log.info("the camera is back")
+        return ok
+
     @property
     def lent(self) -> bool:
         return bool(self._lent)
+
+    @property
+    def lost(self) -> bool:
+        return bool(self._lost_since)
 
     @property
     def reclaiming(self) -> bool:
@@ -718,6 +800,9 @@ class Camera:
             "name": self._name,
             "still": f"{self._size[0]}x{self._size[1]}",
             "lent_to": self._lent or None,
+            # Distinguishes "no camera was ever found" from "the camera was
+            # working and the cable came out", which want different actions.
+            "lost": bool(self._lost_since),
             "error": self._error,
         }
 

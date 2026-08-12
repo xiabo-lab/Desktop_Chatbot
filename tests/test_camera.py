@@ -310,5 +310,102 @@ class TestLendingTheCameraToACall(unittest.TestCase):
         self.assertEqual(self.camera.describe()["lent_to"], "a video call")
 
 
+class TestTheCameraBeingUnplugged(unittest.TestCase):
+    """A cable knocked out, and put back.
+
+    Measured on the device before this worked: unbinding the Brio left the
+    assistant reporting `running=True` with a handle to a device that no longer
+    existed — no frames, no error, and a settings page that said everything was
+    fine. Replugging did not help, because the by-name search only runs inside
+    `open()` and nothing called it again.
+
+    The replug detail that makes the search matter: the Brio came back as
+    **/dev/video1, not /dev/video0**. Node numbers are handed out in order of
+    arrival, so a reopen that assumed the old node would have failed even with
+    the camera sitting there working.
+    """
+
+    def setUp(self):
+        from aipi5.core.config import CameraConfig
+        from aipi5.vision.camera import Camera
+        self.camera = Camera(CameraConfig(enabled=True))
+        self.present = True
+        self.opens = 0
+
+        def fake_open():
+            self.opens += 1
+            if not self.present:
+                self.camera._error = "no USB camera found — check the cable"
+                return False
+            self.camera._started = True
+            self.camera._error = None
+            return True
+
+        self.camera.open = fake_open
+        self.camera._started = True
+
+    def unplug(self):
+        self.present = False
+        with self.camera._lock:
+            self.camera._mark_lost("it stopped delivering frames")
+
+    def test_losing_the_camera_stops_it_claiming_to_be_available(self):
+        # The bug in its simplest form: a settings page that lies.
+        self.assertTrue(self.camera.available())
+        self.unplug()
+        self.assertFalse(self.camera.available(),
+                         "a camera that is gone must not report running")
+        self.assertTrue(self.camera.describe()["lost"])
+
+    def test_it_keeps_looking_and_recovers_when_replugged(self):
+        self.unplug()
+        self.assertFalse(self.camera.retry_reclaim())
+        self.present = True                       # the cable goes back in
+        self.camera._last_attempt = 0.0           # let the next attempt run
+        self.assertTrue(self.camera.retry_reclaim())
+        self.assertTrue(self.camera.available())
+        self.assertFalse(self.camera.lost)
+
+    def test_it_does_not_give_up_the_way_a_reclaim_does(self):
+        # A borrowed camera comes back in seconds or something is wrong. An
+        # unplugged one comes back when somebody plugs it in, which may be
+        # tomorrow — so this must still be trying long after a reclaim would
+        # have stopped.
+        from aipi5.vision import camera as camera_mod
+        self.unplug()
+        self.camera._lost_since = time.monotonic() - (camera_mod.RECLAIM_WINDOW_S * 10)
+        self.camera._last_attempt = 0.0
+        before = self.opens
+        self.camera.retry_reclaim()
+        self.assertGreater(self.opens, before, "it must still be looking")
+        self.assertTrue(self.camera.lost)
+
+    def test_it_slows_down_rather_than_warning_every_two_seconds(self):
+        from aipi5.vision import camera as camera_mod
+        self.unplug()
+        self.camera._lost_since = time.monotonic() - (camera_mod.LOST_PATIENCE_S + 5)
+        self.camera._last_attempt = time.monotonic() - 3      # 3s ago
+        before = self.opens
+        self.camera.retry_reclaim()
+        self.assertEqual(self.opens, before,
+                         "past the patience window it should wait ~30s, not 2s")
+
+    def test_an_idle_retry_costs_nothing_when_the_camera_is_fine(self):
+        # It runs on the voice loop's idle path, every frame.
+        before = self.opens
+        for _ in range(50):
+            self.camera.retry_reclaim()
+        self.assertEqual(self.opens, before)
+
+    def test_losing_it_twice_does_not_reset_the_clock(self):
+        self.unplug()
+        first = self.camera._lost_since
+        with self.camera._lock:
+            self.camera._mark_lost("again")
+        self.assertEqual(self.camera._lost_since, first,
+                         "already-lost must be a no-op, or the backoff never "
+                         "reaches its slow cadence")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1532,12 +1532,88 @@ Two fixes, and the second matters more than the first:
 | ring → auto-answer | camera taken by `chromium` |
 | hang up | camera back with Python in ~3 s |
 
+### The Brio unplugged, and the assistant that did not notice
+
+Simulated by unbinding the USB device rather than by pulling the cable, which
+is the same thing as far as the kernel is concerned. Two findings, one of them
+the more serious kind: a status that lies.
+
+**Unplugged, the assistant kept reporting `running=True`.** It survived — zero
+restarts, still answering — but `available()` returns `_started`, and nothing
+cleared it. The settings page said the camera was fine, on `/dev/video0`, while
+that node did not exist. Every symptom downstream is silence: no person
+detection, no screensaver, a black camera page, and "what do you see" answering
+without looking.
+
+**Replugged, it did not come back.** The by-name search that makes `device:
+auto` work only runs inside `open()`, and after startup nothing calls it again.
+
+And the search is exactly what a replug needs, because **the node number
+moves**. Measured across two unbind/rebind cycles: `/dev/video0` →
+`/dev/video1` → `/dev/video0`. Numbers are handed out in order of arrival, so a
+reopen that assumed the old path would fail with a working camera sitting in
+front of it.
+
+The first test of this appeared to pass, and did so for the wrong reason: it
+included a call, and the call's lend/reclaim happened to run `open()` again.
+Re-run without a call, it failed. A test that exercises the fix by accident is
+a test that will not notice when the fix goes away.
+
+Fixed: a failed read marks the camera lost — closing the handle and clearing
+`_started`, so `available()` stops lying — and arms a reopen that the voice
+loop's idle path drives. **Unbounded, unlike the reclaim after a call**: a
+borrowed camera comes back in seconds or something is wrong, but an unplugged
+one comes back when somebody plugs it in, which may be tomorrow. What is
+bounded is the noise — every two seconds for the first minute, then every
+thirty.
+
+Measured after the fix, with no call and no restart anywhere in the test:
+
+```
+before:  running=True   lost=False  device=/dev/video1   frame 456127 bytes
+unplug:  running=False  lost=True
+replug:  running=True   lost=False  device=/dev/video0   <- different node
+20s on:  running=True   lost=False  device=/dev/video0   frame 455029 bytes
+```
+
+### The microphone unplugged: recovers, but takes two and a half minutes
+
+Nearly reported as a defect and is not one. Unplugged, the assistant stays up
+and logs the failure; replugged, it recovers on its own with **no service
+restart**. The first measurement said otherwise only because the observation
+window was 45 s and recovery is slower than that:
+
+```
+RECOVERED after 150s
+microphone recovered after 8 failed attempts
+```
+
+That is AIA's own retry, backing off from 1 s to a 30 s ceiling, and it is
+tuned where it was measured. Worth knowing rather than changing: a cable
+knocked out and pushed back in leaves the assistant deaf for about two and a
+half minutes, silently, while every status command reports it healthy.
+
+One consequence found while reading that code: `frames()` blocks inside the
+generator during an outage, so the voice loop is parked for the duration — call
+sweeps and camera retries do not run either. Nothing depends on them during a
+microphone outage today, but a future timeout that does would not fire.
+
+### An unreachable TURN relay does not break calls
+
+Configured a relay at a hostname that does not resolve, with a missing secret
+file, and rang. The ICE list was still offered, the call still reached
+`connecting`, and Chromium still took the camera — the peers pair on host
+candidates and the dead relay is simply never used. The credential-less entry
+is offered with a warning rather than dropped, which is the designed
+degradation.
+
 ### What is still untested
 
 Different Wi-Fi networks; a deliberately slow or lossy link; a mid-call network
-drop (the ICE restart is implemented and has never fired in anger); the Brio
-unplugged and replugged while running; the speaker unavailable. And the one
-that needs a person: whether a caller in a different room hears an echo.
+drop (the ICE restart is implemented and has never fired in anger); the speaker
+unavailable; and the End Call button pressed on the panel itself, as against
+the hang-up sent over the API. And the one that needs a person: whether a
+caller in a different room hears an echo.
 
 The Brio being unavailable *during* an incoming call is covered, though it was
 verified by accident rather than design — see the portal failure in section
