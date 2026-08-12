@@ -6,8 +6,21 @@
      a full-bleed video otherwise puts the End Call button under the home
      indicator, where the swipe-up gesture wins and the tap does not. -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<!-- Added to the Home Screen this behaves like an app: its own icon, no address
+     bar, launched full-screen. `apple-mobile-web-app-capable` is what does it
+     and is Safari-only — a shortcut added from Chrome on iOS reopens Chrome
+     with its chrome over the video, which is why the pairing instructions say
+     to install from Safari.
+     Without `apple-touch-icon` iOS makes an icon out of a screenshot of the
+     page, which for a mostly-black page is a black square. -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AIPI5">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="icon" href="/icon-180.png">
+<!-- Android and desktop Chrome install from this instead. iOS ignores it and
+     uses the Apple tags above, so both are needed. -->
+<link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#0e1116">
 <title>Call AIPI5</title>
 <style>

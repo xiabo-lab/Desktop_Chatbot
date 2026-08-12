@@ -106,9 +106,9 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'none'; script-src 'unsafe-inline'; "
-            "style-src 'unsafe-inline'; img-src data:; media-src blob:; "
-            "connect-src 'self'; base-uri 'none'; form-action 'none'; "
-            "frame-ancestors 'none'")
+            "style-src 'unsafe-inline'; img-src 'self' data:; "
+            "media-src blob:; connect-src 'self'; manifest-src 'self'; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -216,6 +216,10 @@ class _Handler(BaseHTTPRequestHandler):
         route = urlparse(self.path)
         if route.path in ("/", "/index.html", "/call"):
             self._page()
+        elif route.path in ("/icon-180.png", "/icon-512.png"):
+            self._asset(route.path.lstrip("/"), "image/png")
+        elif route.path == "/manifest.webmanifest":
+            self._manifest()
         elif route.path == "/call/v1/poll":
             self._poll(parse_qs(route.query))
         elif route.path == "/call/v1/state":
@@ -267,6 +271,37 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"error": "the phone page is missing"}, 500)
             return
         self._send(200, body, "text/html; charset=utf-8")
+
+    def _asset(self, name: str, content_type: str) -> None:
+        """One of the two home-screen icons.
+
+        Unauthenticated, like the page itself: an icon reveals nothing about
+        the device and has to be fetchable before anybody has proved anything,
+        because iOS reads it while the shortcut is being created. The name is
+        matched against a fixed list in `do_GET` rather than joined onto a
+        directory, so there is nothing here for a crafted path to traverse.
+        """
+        body = self.call.asset(name)
+        if body is None:
+            self._json({"error": "not found"}, 404)
+            return
+        self._send(200, body, content_type)
+
+    def _manifest(self) -> None:
+        """What Android and desktop Chrome install from. iOS ignores it."""
+        self._send(200, json.dumps({
+            "name": "Call AIPI5",
+            "short_name": "AIPI5",
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#0e1116",
+            "theme_color": "#0e1116",
+            "icons": [
+                {"src": "/icon-180.png", "sizes": "180x180", "type": "image/png"},
+                {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png",
+                 "purpose": "any maskable"},
+            ],
+        }).encode("utf-8"), "application/manifest+json")
 
     def _state(self) -> None:
         if self._device() is None:
@@ -362,6 +397,7 @@ class CallServer:
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._page: bytes | None = None
+        self._assets: dict[str, bytes] = {}
         self.error: str = ""
         self.url: str = ""
 
@@ -376,6 +412,27 @@ class CallServer:
         returns expire, which is why this is built per call.
         """
         return turn.ice_servers(self.cfg, name)
+
+    def asset(self, name: str) -> bytes | None:
+        """A file from the web directory, read once and held.
+
+        Only ever called with a name `do_GET` matched against a fixed list, and
+        the join is checked against the directory afterwards regardless —
+        cheap, and it means the guarantee does not depend on the caller.
+        """
+        cached = self._assets.get(name)
+        if cached is not None:
+            return cached
+        path = (PAGE.parent / name).resolve()
+        if path.parent != PAGE.parent.resolve():
+            log.warning("refusing to serve %r from outside the web directory", name)
+            return None
+        try:
+            self._assets[name] = path.read_bytes()
+        except OSError as exc:
+            log.warning("could not read %s: %s", path, exc)
+            return None
+        return self._assets[name]
 
     def page(self) -> bytes | None:
         if self._page is None:
