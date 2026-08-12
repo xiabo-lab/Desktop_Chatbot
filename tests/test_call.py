@@ -611,6 +611,33 @@ class TestKeptAliveConnectionsStaySynchronised(unittest.TestCase):
         self.assertEqual(self.request(conn, "POST", "/call/v1/ring", huge), 413)
         self.assertEqual(self.request(conn, "GET", "/call/v1/state"), 200)
 
+    def test_head_answers_and_leaves_the_connection_usable(self):
+        # Two things at once: HEAD used to be `501 Unsupported method`, and a
+        # HEAD that wrote a body would desynchronise the connection the same
+        # way an unread POST body does.
+        conn = self.connection()
+        self.addCleanup(conn.close)
+        conn.request("HEAD", "/", headers={})
+        response = conn.getresponse()
+        body = response.read()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(body, b"", "HEAD must send no body")
+        self.assertGreater(int(response.getheader("Content-Length")), 0,
+                           "but it must still report the real length")
+        self.assertEqual(self.request(conn, "GET", "/call/v1/state"), 200)
+
+    def test_head_is_not_routed_to_the_long_poll(self):
+        # `/call/v1/poll` blocks for 25 s by design. A HEAD parked there would
+        # be a way to exhaust threads without ever authenticating.
+        conn = self.connection()
+        self.addCleanup(conn.close)
+        began = time.monotonic()
+        conn.request("HEAD", "/call/v1/poll?since=0", headers={})
+        response = conn.getresponse()
+        response.read()
+        self.assertEqual(response.status, 404)
+        self.assertLess(time.monotonic() - began, 5.0, "it must not block")
+
     def test_a_body_that_is_not_json_is_refused_without_desynchronising(self):
         conn = self.connection()
         self.addCleanup(conn.close)

@@ -110,6 +110,11 @@ class _Handler(BaseHTTPRequestHandler):
             "media-src blob:; connect-src 'self'; manifest-src 'self'; "
             "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
         self.end_headers()
+        # `Content-Length` is still the real length on a HEAD — that is the
+        # whole point of the request — but the body itself must not follow, or
+        # the connection desynchronises exactly as an unread POST body does.
+        if getattr(self, "_head_only", False):
+            return
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
@@ -228,6 +233,33 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(204, b"", "image/x-icon")
         else:
             self._json({"error": "not found"}, 404)
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        """Same headers as `GET`, no body — for the static routes only.
+
+        Without this the stdlib answers every HEAD with `501 Unsupported
+        method`, and clients do probe with it: a phone deciding whether a saved
+        page has changed, a proxy checking liveness, a link preview. None of
+        them are load-bearing here, which is why this went unnoticed, but a 501
+        to a liveness probe is a device that looks down.
+
+        Deliberately **not** routed to the API. `/call/v1/poll` blocks for
+        twenty-five seconds by design, and a HEAD that parked a thread there
+        would be a free way to exhaust them without ever authenticating.
+        """
+        path = urlparse(self.path).path
+        self._head_only = True
+        try:
+            if path in ("/", "/index.html", "/call"):
+                self._page()
+            elif path in ("/icon-180.png", "/icon-512.png"):
+                self._asset(path.lstrip("/"), "image/png")
+            elif path == "/manifest.webmanifest":
+                self._manifest()
+            else:
+                self._json({"error": "not found"}, 404)
+        finally:
+            self._head_only = False
 
     def do_POST(self) -> None:  # noqa: N802
         """Read the body, then dispatch. The order is the whole point.
