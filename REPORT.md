@@ -1393,6 +1393,48 @@ reports a component is *connected* is not a diagnostic that the component is
 *exclusive*; the second output path was invisible to every measurement taken
 until somebody looked at the links.
 
+### The canceller sent silence, and was removed
+
+**It is not installed, and `scripts/setup-echo-cancel.sh` now carries a warning
+block saying why.** Everything below about the bypass and the default sink was
+correct as far as it went; the canceller itself was worse than the problem.
+
+Reported from a real call across networks: the phone could hear nothing from
+the Pi. Recording the two sources side by side settled it in eight seconds:
+
+```
+raw Brio   rms  -40.8 dBFS  peak  -24.4 dBFS  nonzero 100.0%
+cancelled  rms -180.0 dBFS  peak -180.0 dBFS  nonzero   0.0%
+```
+
+`aipi5_call_mic` was emitting **pure zeros**. Why was never established, and
+deliberately so — the feature was removed rather than debugged, because it was
+solving a problem that has never been confirmed to exist (see the next
+section), and it had broken one that certainly does.
+
+**Every signal available said the call was healthy.** The microphone opened,
+the constraints applied (`aec=true ns=true agc=true`), the track existed, the
+route was direct at 11–16 ms, and the diagnostic printed a tidy line about echo
+return loss. The only thing that knew was the person on the phone. Two rounds
+of verification had been run over this configuration — routing through the
+graph, and links in `pw-link` — and both confirmed the canceller was
+*connected*. Neither asked whether it was *carrying anything*.
+
+That is the lesson worth keeping from the whole episode: **a component
+verified as connected is not a component verified as working**, and on a device
+nobody is standing next to, the difference is invisible until somebody calls.
+
+Two things came out of it that stay:
+
+* `reportAudio` now sends `audioLevel` and `totalAudioEnergy`, and writes
+  `** THE MICROPHONE IS SENDING SILENCE **` into the journal when the energy is
+  zero. A silent microphone is now a log line rather than a phone call.
+* `config/wireplumber-reserve-aia-mic.conf` is **kept**. It stops PipeWire
+  claiming the capsule AIA opens exclusively, which is what made the assistant
+  restart-loop after a reboot, and it has nothing to do with cancellation.
+
+Confirmed working on the raw Brio afterwards, by the person on the other end.
+
 ### The echo may not have been the Pi's at all
 
 Worth recording, because it reframes everything above. The echo was heard while

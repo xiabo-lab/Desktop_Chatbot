@@ -1,5 +1,25 @@
 #!/usr/bin/env bash
 #
+# ############################################################################
+# ## DO NOT INSTALL THIS WITHOUT READING THE NEXT PARAGRAPH.                 ##
+# ##                                                                        ##
+# ## On this hardware the canceller's output measured as DIGITAL SILENCE —   ##
+# ## pure zeros — so the caller heard nothing at all. It reached a real call ##
+# ## before it was caught, because every other signal said the call was      ##
+# ## healthy: the microphone opened, the constraints applied, the track      ##
+# ## existed, the media went direct. Only the person on the phone knew.      ##
+# ##                                                                        ##
+# ##     raw Brio   rms  -40.8 dBFS  peak  -24.4 dBFS  nonzero 100.0%        ##
+# ##     cancelled  rms -180.0 dBFS  peak -180.0 dBFS  nonzero   0.0%        ##
+# ##                                                                        ##
+# ## Why it produced silence was never established. Do not reinstall it      ##
+# ## without first recording `aipi5_call_mic` and checking it carries audio, ##
+# ## and without somebody able to hear the result. Echo has never actually   ##
+# ## been confirmed as a problem in normal use — it was heard only with the  ##
+# ## phone in the same room as the Pi, which is an acoustic loop no          ##
+# ## canceller can win. See REPORT.md section 27d.                           ##
+# ############################################################################
+#
 # Install (or remove) echo cancellation for the video call.
 #
 #   ./scripts/setup-echo-cancel.sh            # install and verify

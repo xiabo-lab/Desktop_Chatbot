@@ -383,6 +383,15 @@ certificate warnings. AIPI5 **refuses to start** with `tls: false` on any
 non-loopback address, because a bearer token over plaintext is a bearer token
 anyone on the path can read.
 
+**Echo cancellation is deliberately not installed.** A PipeWire canceller was
+tried and its output measured as digital silence — the caller heard nothing at
+all, while every other signal said the call was healthy. It is removed, and
+`scripts/setup-echo-cancel.sh` carries a warning saying why. Echo has never
+been confirmed as a problem in normal use: it was heard only with the phone in
+the same room as the Pi, which is an acoustic loop no canceller can win. The
+call now reports `level=` and `energy=` per call, so a silent microphone is a
+line in the journal rather than something a caller discovers.
+
 Putting a connection-pooling proxy in front exposed three bugs that were
 already present and invisible without one — an unread POST body corrupting the
 *next* request on the same connection, a timed-out call never giving the camera

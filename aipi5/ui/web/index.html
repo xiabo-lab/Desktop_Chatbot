@@ -1303,10 +1303,27 @@ async function reportAudio(peer) {
     const stats = await peer.getStats();
     stats.forEach((report) => {
       if (report.type === "media-source" && report.kind === "audio") {
-        detail += " erl=" + (report.echoReturnLoss != null
+        // `audioLevel` is the one that matters, and it is here because of a
+        // regression that reached a real call: an echo canceller was inserted
+        // in front of the Brio and its output was **digital silence** — pure
+        // zeros. Every other signal said the call was healthy. The microphone
+        // opened, the constraints applied, the track existed, the route was
+        // direct, and the person on the phone heard nothing.
+        //
+        // A level of 0 across a whole call is a microphone that is on and
+        // sending nothing, which is worth a line in the journal rather than a
+        // phone call to find out.
+        detail += " level=" + (report.audioLevel != null
+                               ? report.audioLevel.toFixed(4) : "absent") +
+                  " energy=" + (report.totalAudioEnergy != null
+                                ? report.totalAudioEnergy.toExponential(2) : "absent") +
+                  " erl=" + (report.echoReturnLoss != null
                              ? report.echoReturnLoss.toFixed(1) : "absent") +
                   " erle=" + (report.echoReturnLossEnhancement != null
                               ? report.echoReturnLossEnhancement.toFixed(1) : "absent");
+        if (report.totalAudioEnergy === 0) {
+          detail += "  ** THE MICROPHONE IS SENDING SILENCE **";
+        }
       }
     });
   } catch (err) {
