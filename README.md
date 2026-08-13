@@ -5,7 +5,7 @@ milliseconds **or** a conversation with GPT — plus weather, local news, bedtim
 stories, a camera that can describe the room, local person detection, and a
 1280×800 touchscreen that gives way to a clock when nobody is there.
 
-**Status: deployed and running on `aipi5.local`.** 184 tests pass on the Pi as
+**Status: deployed and running on `aipi5.local`.** 412 tests pass on the Pi as
 well as off it. Verified on the device: SenseVoice loads, both Piper voices
 speak, the wake model loads, the OpenAI model answers, live weather and local
 news reach the speaker, Kodama-Lite starts by command and answers over MPRIS,
@@ -23,6 +23,24 @@ Verified in the room, not just in tests:
   and noticed when a sheet of paper was held up to the lens.
 * **Person detection** on the AI HAT+ 2 at **28 ms** an inference, driving the
   screensaver through a full engage → clear → return cycle.
+
+Since then, four things the specification left for later have been built and
+verified on the device:
+
+* **A video call in both directions.** A phone rings the Pi from a cellular
+  network and it answers; the Pi rings the phone through Web Push and waits for
+  a tap. Measured over 5G: `host/udp -> prflx rtt 34ms`, no relay.
+* **File transfer.** A folder the phone can put photos and video into and take
+  them out of, over the same HTTPS and the same token. A 220 MB upload moved
+  the service's memory by +0.0 MB.
+* **A shutdown that can be stopped.** "Shut down" now counts 3, 2, 1 on the
+  screen and a touch anywhere cancels it, because `poweroff` takes the audio
+  stack with it and a spoken confirmation is a question this device cannot
+  finish asking.
+* **A weather dashboard** on the touchscreen: current conditions, an hourly
+  strip, seven days, the sun's position through the day, and whether to go
+  outside — the last decided by rules rather than by a model, so the page
+  renders the instant it opens.
 
 **Not yet done:** Cantonese has not been spoken to it, and twenty-one of the
 twenty-two Kodama commands are covered by routing tests but have not been said
@@ -110,11 +128,14 @@ Plus:
 | press | what opens | what it says |
 |---|---|---|
 | **Talk** | the conversation, and nothing else on it | starts listening, as the wake word does |
-| **Call** | the remote video call page, full screen | nothing — the Pi answers calls, it does not place them |
+| **Call** | the remote video call page, full screen | nothing — the call has its own two directions, below |
 | **Camera** | a live preview, with the answer drawn over the picture and faded ten seconds after the speaking stops | what it sees |
-| **News** | today's Bay Area stories, headline and summary | two sentences on what matters — not the list, which is on the screen |
-| **Weather** | temperature, high/low, feels-like, UV, humidity, wind, chance of rain | the sky, the range, and at most one thing worth acting on |
+| **Weather** | the dashboard: now, hourly, seven days, sun, and whether to go out | the sky, the range, and at most one thing worth acting on |
 | **Music** | Kodama-Lite itself | whether it opened |
+| **Files** | the transfer folder, to send and fetch | nothing — it is a folder, not a turn |
+
+The news **page** was removed: it duplicated on a screen what the assistant
+says better out loud, and the button with it. Ask for the news instead.
 
 ## Two things worth knowing before you deploy
 
@@ -281,6 +302,16 @@ Verified on the device: ten rapid Camera presses produce one action, and all
 five buttons pressed in a row produce five. (Measured before Call was added;
 the equivalent test now covers six.)
 
+**A button carries no language.** The four that speak answer in the configured
+language, not in whichever one was last spoken to the device — that variable
+follows the conversation, and following it here meant News and Weather answered
+in Chinese for the rest of a session because somebody had said 关机 an hour
+earlier, with nothing on screen to explain it.
+
+**Files navigates without acting**, which is the shape any future button that
+opens a folder rather than asking for work should take: no action queued, no
+cooldown, nothing for the voice loop to do.
+
 ## Call: a phone rings the Pi and it picks up
 
 **Off by default.** It is the one setting here whose failure mode is a camera
@@ -428,6 +459,50 @@ and expire within the hour, so nothing reusable reaches the phone.
 `REPORT.md` §27a has the Brio's measured formats, §27b the call architecture
 and §27c phase 3.
 
+## Files: a folder the phone can reach
+
+The same HTTPS the call uses, the same bearer token, and one folder —
+`~/Downloads/AIPI5`, outside this repository. Photos, video and documents go
+both ways: the phone uploads through Safari with real progress, the Pi's own
+screen lists what arrived and can open pictures, video and sound over the list.
+
+Three properties, each of which is a test:
+
+* **Nothing is ever buffered whole.** `cgi` was removed in Python 3.13 and
+  `email.parser` wants the entire body, so `aipi5/files/multipart.py` is a
+  streaming reader that holds back the tail of its buffer — a boundary split
+  across two reads cannot corrupt a file, and that is tested at every offset.
+  A 220 MB upload at 40 MB/s moved the service's memory by +0.0 MB.
+* **An upload never wears its final name until it is whole.** It arrives in
+  `.name.<pid>.uploading` and is `os.replace`d into position, so a name in the
+  listing is a complete file. A killed connection leaves neither.
+* **The folder is the boundary, enforced by resolution.** A name is reduced to
+  a bare filename, joined, then *resolved* — symlinks and all — and must still
+  be underneath the root. Checked against the running device in nine spellings
+  on three routes: `../../etc/passwd`, `%2e%2e`, `..%2f`, `....//`, a raw `../`
+  in the request line. None of them reached anything.
+
+Getting a file *onto* an iPhone took three attempts and the first two trap the
+person in the app; `phone.html` records all three, because the next person will
+reach for the same two dead ends first.
+
+## Shutdown: three seconds and a touch
+
+Every other destructive command here is answered out loud. Shutdown cannot be,
+and not as a matter of taste: `poweroff` takes the audio stack down with it, so
+the one command this device cannot narrate is the last one it runs.
+
+So it is answered by presence. The screen shows **3, 2, 1** and a touch
+anywhere cancels. Two rules hold it together, both failing towards a device
+that stays on: it **fails closed** — if nothing says the countdown is on a
+screen within two seconds, the shutdown does not happen — and the clock starts
+when the screen says it is drawing it, so the poll does not eat the first
+second of somebody's three.
+
+`aipi5/core/shutdown.py`, and it reads the command's *name* rather than AIA's
+`confirm` flag: the two AIA checkouts in this house disagree about that flag
+and the behaviour must not.
+
 ## The assistant's voice outranks the music
 
 When the assistant speaks, Kodama is **paused** and then resumed where it
@@ -444,6 +519,30 @@ counts holders and only the outermost touches the bus.
 
 Measured on the device: playing at 106 s, paused at 108.7 when the Weather page
 spoke, playing again nine seconds later at 108.9.
+
+## Weather: a dashboard, and rules rather than a model
+
+The provider is unchanged — Open-Meteo, no key, no account — but it is asked
+for more: hourly readings, seven days, sunrise and sunset, pressure, and this
+hour's chance of rain. Two payload shapes, deliberately. `as_dict()` goes into
+the state the page polls twice a second and into the model's context on every
+weather question; `as_page_dict()` carries the hourly strip and is fetched only
+by the page that draws it. Thirty-six hours of readings in the first would be a
+few hundred tokens and a few kilobytes a second for one card.
+
+The four judgements — UV, outdoor, umbrella, clothing — and the "should I go
+outside" line are **rules** in `aipi5/tools/advice.py`. Not because a model
+would answer badly, but because the page must render the moment it opens on a
+device that may be on a hotspot, and because the same weather should always
+give the same advice. Rain already falling outranks any probability; a missing
+UV reading is not a low one.
+
+The rest is a screen: glass cards on a sky that follows the conditions, a very
+large current temperature, °F/°C converted locally and remembered, and the last
+good reading kept on screen with *"Offline — showing cached weather"* when the
+network goes. It fits 1280×800 with no scrolling — measured, not assumed, which
+is how a card that was 291 px in a 258 px row was caught being drawn over the
+row beneath it.
 
 ## The camera
 
@@ -510,7 +609,7 @@ well as today's outcome.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests -t .    # 184 tests, no hardware needed
+python -m unittest discover -s tests -t .    # 412 tests, no hardware needed
 ```
 
 No microphone, no camera, no accelerator, no network, no API key. That
@@ -519,20 +618,26 @@ presence debounce, the screensaver timing, the feed parsing, the weather cache,
 the conversation trimming and the tool gate are all exactly the parts where a
 mistake is silent on the device.
 
-Two of them have already earned their keep. `test_the_mandarin_phrases_keep_
+Four of them have already earned their keep. `test_the_mandarin_phrases_keep_
 their_measured_margin` disproved a claim in a code comment that was wrong by
 0.19; `test_respects_the_limit` found that headlines carrying one
-distinguishing word are collapsed as duplicates.
+distinguishing word are collapsed as duplicates; the multipart tests caught a
+boundary split across two reads; and the file tests caught the suite itself
+writing into the developer's real `~/.config/aipi5` and reading it back in the
+next test.
 
 ## Layout
 
 ```
 aipi5/
-  core/       aia_bridge (finds AIA), config (YAML), presence, preflight
+  core/       aia_bridge (finds AIA), config (YAML), presence, preflight,
+              shutdown (the countdown that can be cancelled)
   llm/        the OpenAI client, bounded conversation, tool schemas, prompts
-  tools/      weather, news, clock, bedtime stories
+  tools/      weather, news, clock, bedtime stories, advice (the weather rules)
   vision/     camera (one V4L2 handle, shared), description, person detection
   kodama/     the one command AIA does not have: open the player
+  call/       signalling, device tokens, TLS, push, the phone's page
+  files/      the transfer folder, a streaming multipart reader, download tickets
   ui/         the 1280×800 page, its server, and the shared state
 config/       aipi5.yaml — the settings a person changes
 scripts/      hardware check, model fetch, service install, the kiosk browser

@@ -36,6 +36,7 @@ from urllib.parse import parse_qs, urlparse
 from aipi5.call import signaling as call_signaling
 from aipi5.files import web as files_web
 from aipi5.files.store import FileError
+from aipi5.tools.advice import should_go_outside
 
 log = logging.getLogger(__name__)
 
@@ -383,10 +384,23 @@ class _Handler(BaseHTTPRequestHandler):
             # send it down the network-failure path instead.
             self._json({"weather": None, "now": time.time()})
             return
-        self._json({"weather": weather.as_dict(), "now": time.time()})
+        # The page's shape, not the model's: this one carries the hourly strip
+        # and the advice, neither of which belongs in the state poll.
+        payload = weather.as_page_dict()
+        payload["advice"] = should_go_outside(payload)
+        self._json({"weather": payload, "now": time.time()})
 
     def _news(self, params: dict) -> None:
-        """Today's local stories, for the news page."""
+        """Today's local stories, as the feeds give them.
+
+        **No page reads this any more.** The news page was removed; the News
+        button now speaks its summary and nothing draws a list. Kept because it
+        is the only way to see what the feeds actually returned — the spoken
+        report is a model's two sentences about them, which is no use at all on
+        the day the question is "is the feed broken?". `curl -s
+        localhost:8092/api/news` on the device answers that; `?force=1` skips
+        the cache.
+        """
         if self.ui.news is None:
             self._json({"error": "news is not configured"}, 503)
             return

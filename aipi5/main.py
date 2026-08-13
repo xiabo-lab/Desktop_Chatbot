@@ -99,17 +99,20 @@ log = logging.getLogger("aipi5")
 # another — ducking and un-ducking the music on every pass.
 EMPTY_TURN_REFRACTORY_S = 1.0
 
-# What the news *page* asks the model for, as against what a spoken "what's
-# the local news" asks for. The page is already showing the headlines and the
-# summaries in a list somebody can read at their own pace, so reading them out
-# in order duplicates the screen and takes about three minutes. Two sentences
-# about what actually matters is the part a screen is bad at.
+# What the News button asks the model for.
+#
+# There is no news page any more, so this is the whole of the report rather
+# than a spoken companion to a list somebody could read at their own pace. It
+# is still two sentences: reading fifteen headlines aloud takes about three
+# minutes, and nobody stands in front of a screen for that. What a person
+# wants from a button is what has actually happened, first.
 NEWS_BRIEF = {
     "en": ("Give me a two-sentence spoken summary of the most important local "
-           "news right now. Do not list the headlines one by one — the screen "
-           "is already showing them."),
-    "zh": ("用两句话简单说一下现在最重要的本地新闻。不要一条一条念标题，"
-           "屏幕上已经显示了。"),
+           "news right now, most important thing first. This is read aloud and "
+           "there is nothing on screen to look at, so do not read out a list "
+           "of headlines."),
+    "zh": ("用两句话说一下现在最重要的本地新闻，最重要的先说。这段话是要念出来的，"
+           "屏幕上没有列表可看，所以不要一条一条念标题。"),
 }
 
 LISTENING_TEXT = {"en": "Listening…", "zh": "我在听…"}
@@ -839,7 +842,21 @@ def main() -> int:
                     # A button that names what it wants. It does not need the
                     # microphone at all, so the turn is served straight from
                     # the tools and the loop goes back to listening.
-                    handle_button(assistant, requested, stt_language, turn)
+                    # **Not `stt_language`.** That variable follows whatever
+                    # was last *spoken* to the device, and a button is not
+                    # speech: it is a press on a screen whose labels are all in
+                    # one language, carrying no opinion about which language
+                    # the answer should be in. Inheriting the last utterance's
+                    # made News and Weather answer in Chinese for the rest of
+                    # the session because somebody had said 关机 an hour
+                    # earlier — with nothing on the screen to explain it and no
+                    # way to change it back except by speaking English at it.
+                    #
+                    # The configured default is the honest answer, and it is
+                    # already the knob for this: `stt.default_language` in
+                    # AIA's configuration is what the loop above starts from.
+                    handle_button(assistant, requested, cfg.stt.default_language,
+                                  turn)
                     machine.end_turn()
                     assistant.publish()
                     continue
@@ -1043,6 +1060,11 @@ def handle_button(assistant, action: str, language: str, turn=None) -> None:
     by a different door. None of them is destructive — `aipi5/ui/state.py`
     holds the list and explains why.
 
+    `language` is the *configured* one, not the language of the last thing
+    anybody said. A button carries no language of its own, and following the
+    conversation meant a session that had once been Chinese stayed Chinese for
+    every press afterwards. See the call site.
+
     `turn` is marked the moment audio starts, for the same reason the voice
     path marks it there: reading a reply aloud is the answer arriving, not
     latency. Without it every button press logged a budget violation the length
@@ -1090,6 +1112,11 @@ def handle_button(assistant, action: str, language: str, turn=None) -> None:
         assistant.refresh_weather()
         role = "aia:weather"
     elif action == "news":
+        # Spoken only, and no longer reached from the screen at all: the page
+        # of headlines and the button that opened it are both gone. The report
+        # is not — it is asked for out loud, and this path remains as the way
+        # to trigger the same two sentences without a microphone. What is said
+        # lands in the feed on the main screen, like any other reply.
         reply = assistant.answer(NEWS_BRIEF.get(language, NEWS_BRIEF["en"]),
                                  language)
         role = "aia:news"

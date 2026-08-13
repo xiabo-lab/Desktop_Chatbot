@@ -54,7 +54,12 @@ ACTIONS = (
     "call",         # open the remote video call page
     "camera",       # take a picture and describe it
     "weather",      # today's weather, on its page and briefly out loud
-    "news",         # today's local news, on its page and briefly out loud
+    # No button posts this one. The news page was removed and its button with
+    # it, and asking out loud is now the way to hear the report — but the
+    # handler is the report, so it stays reachable: `POST /api/action` with
+    # `{"action":"news"}` on the device speaks it, which is how the spoken half
+    # gets tested without standing in the room saying "what's the news".
+    "news",
     "kodama",       # open the music player, or raise the window it already has
     "wake",         # start a turn, as though the wake word had fired
 )

@@ -24,6 +24,8 @@
     --user: #1d2b3d;
     --aia: #1b2620;
     --danger: #ff6b6b;
+    /* The reference design accents in gold: the live unit, "Now", today. */
+    --wx-gold: #ffc454;
   }
 
   * { box-sizing: border-box; }
@@ -236,305 +238,367 @@
   }
 
   /* ── the weather page ────────────────────────────────────────── */
-
-  #weather-body { flex: 1; display: flex; gap: 22px; margin-top: 18px; min-height: 0; }
-
-  #wx-now {
-    flex: 0 0 430px; background: var(--panel); border: 1px solid var(--panel-edge);
-    border-radius: 18px; padding: 26px 30px;
-    display: flex; flex-direction: column; justify-content: center;
-  }
-  #wx-icon { font-size: 96px; line-height: 1;
-             font-family: "Noto Color Emoji", "Noto Emoji", sans-serif; }
-  #wx-temp { font-size: 108px; font-weight: 200; line-height: 1; margin-top: 6px; }
-  #wx-conditions { font-size: 30px; color: var(--ink-dim); margin-top: 10px; }
-  #wx-feels { font-size: 22px; color: var(--ink-faint); margin-top: 14px; }
-  #wx-range { font-size: 26px; margin-top: 18px; }
-  #wx-range b { font-weight: 600; }
-  #wx-range .lo { color: var(--accent); }
-  #wx-range .hi { color: var(--accent-warm); }
-
-  /* Six tiles, three across. A grid rather than flex because every tile is
-     the same size and should stay that way when one of them has no value. */
-  #wx-tiles {
-    flex: 1; display: grid; gap: 18px;
-    grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr);
-  }
-  .tile {
-    background: var(--panel); border: 1px solid var(--panel-edge);
-    border-radius: 18px; padding: 20px 22px;
-    display: flex; flex-direction: column; justify-content: space-between;
-  }
-  .tile .name {
-    font-size: 18px; color: var(--ink-dim); letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-  .tile .value { font-size: 46px; font-weight: 300; line-height: 1; }
-  .tile .value small { font-size: 22px; color: var(--ink-dim); margin-left: 4px; }
-  .tile .note { font-size: 18px; color: var(--ink-faint); }
-
-  #wx-updated { flex: 0 0 auto; margin-top: 16px; font-size: 17px; color: var(--ink-faint); }
-
-  /* ── the news page ───────────────────────────────────────────── */
-
-  #news-list {
-    flex: 1; margin-top: 18px; overflow-y: auto; padding-right: 10px;
-    display: flex; flex-direction: column; gap: 14px;
-  }
-  #news-list::-webkit-scrollbar { width: 12px; }
-  #news-list::-webkit-scrollbar-thumb { background: var(--panel-edge); border-radius: 6px; }
-
-  .story {
-    background: var(--panel); border: 1px solid var(--panel-edge);
-    border-radius: 16px; padding: 18px 24px;
-    display: flex; gap: 20px; align-items: flex-start;
-  }
-  .story .rank {
-    flex: 0 0 42px; font-size: 34px; font-weight: 200; color: var(--ink-faint);
-    line-height: 1.1; font-variant-numeric: tabular-nums;
-  }
-  .story .title { font-size: 26px; line-height: 1.3; }
-  .story .summary {
-    font-size: 20px; line-height: 1.45; color: var(--ink-dim); margin-top: 8px;
-    /* Two lines. The page is a scan, not a read — the assistant is saying the
-       part that matters and the rest is for somebody who wants to look. */
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  .story .source { font-size: 17px; color: var(--ink-faint); margin-top: 10px; }
-
-  .loading { margin: auto; color: var(--ink-dim); font-size: 26px; }
-
-  /* ── the call page ───────────────────────────────────────────── */
   /*
-     The remote caller fills the panel and everything else is drawn over the
-     top of them. No header and no Back button here: leaving this page means
-     ending a call, which is a decision rather than navigation, so the only
-     way out is the End Call button — a chevron in the corner would hang up on
-     somebody by looking like the chevron on every other page.
+     Built to a reference design: a dark weather sky, translucent cards, a very
+     large current temperature, and everything on one 1280x800 screen with no
+     scrolling. The numbers below are that budget spent — 800 px of height into
+     a header and three rows — which is why they are absolute rather than
+     proportional. A layout that reflows on this device is a layout with
+     something below the fold, and there is no scrollbar on a panel nobody can
+     scroll.
 
-     Nothing on this page is wired to a call yet. What exists is the screen
-     and its controls; the WebRTC session that fills the two <video> elements
-     is the next piece of work. It is drawn in its disconnected state rather
-     than left out, because the alternative is a button on the main screen
-     that opens nothing.
+     Performance shapes the rest. Chromium renders this beside a wake
+     recogniser and a person detector, so every animation is a `transform` or
+     an `opacity` on its own layer, `backdrop-filter` appears once at a small
+     radius, and nothing repaints on a timer.
   */
-  #call-stage {
-    flex: 1; position: relative; background: #05070a;
-    display: flex; align-items: center; justify-content: center;
-    overflow: hidden;
-  }
-  /* `contain`, never `cover`. A phone held in portrait into a 1280x800
-     landscape panel is the normal case here, and `cover` would crop the
-     caller's face to fill the corners. Letterboxing is the correct answer to
-     "must not be stretched". */
-  #call-remote {
-    width: 100%; height: 100%; object-fit: contain;
-    display: none; background: #05070a;
-  }
-  #call-remote.on { display: block; }
 
-  #call-placeholder {
-    position: absolute; text-align: center; padding: 0 80px;
-    color: var(--ink-dim); font-size: 26px; line-height: 1.5;
+  #page-weather { padding: 0; }
+
+  /* The sky. A gradient and one moving texture under everything, with a dark
+     wash over them so white text stays readable whatever the weather is. */
+  #wx-sky {
+    position: absolute; inset: 0; z-index: 0; overflow: hidden;
+    background: linear-gradient(165deg, #1b2b3f 0%, #16212f 45%, #0d141d 100%);
   }
-  #call-placeholder .glyph {
-    display: block; font-size: 84px; line-height: 1; margin-bottom: 24px;
+  #wx-sky::after {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(120% 80% at 78% 8%, rgba(120,170,220,0.18), transparent 60%),
+                radial-gradient(90% 40% at 50% 104%, rgba(96,140,190,0.14), transparent 70%),
+                linear-gradient(180deg, rgba(8,11,16,0.08) 0%, rgba(8,11,16,0.52) 100%);
+  }
+  /* Clouds: soft radial bands drifting. One composited layer, translated,
+     never repainted. */
+  #wx-clouds {
+    position: absolute; inset: -10% -30%;
+    background:
+      radial-gradient(44% 30% at 18% 26%, rgba(203,224,246,0.16), transparent 72%),
+      radial-gradient(34% 26% at 58% 14%, rgba(203,224,246,0.13), transparent 72%),
+      radial-gradient(48% 32% at 88% 38%, rgba(203,224,246,0.11), transparent 72%),
+      radial-gradient(60% 26% at 40% 78%, rgba(150,180,210,0.08), transparent 76%);
+    animation: wx-drift 90s linear infinite;
+    will-change: transform;
+  }
+  @keyframes wx-drift {
+    from { transform: translate3d(-4%, 0, 0); }
+    to   { transform: translate3d(4%, 0, 0); }
+  }
+  /* Rain and snow, drawn only when the weather is doing it. A repeating
+     gradient translated by exactly one tile loops seamlessly for the cost of
+     one layer; a particle system costs a repaint every frame. */
+  #wx-fall { position: absolute; inset: -20% 0 -20% 0; opacity: 0; }
+  #page-weather.rain #wx-fall {
+    opacity: 0.5;
+    background-image: repeating-linear-gradient(
+      104deg, rgba(190,215,240,0) 0 12px, rgba(190,215,240,0.20) 12px 13px,
+      rgba(190,215,240,0) 13px 26px);
+    background-size: 120px 120px;
+    animation: wx-rain 0.9s linear infinite;
+    will-change: transform;
+  }
+  #page-weather.storm #wx-fall { opacity: 0.65; }
+  @keyframes wx-rain {
+    from { transform: translate3d(0, -120px, 0); }
+    to   { transform: translate3d(0, 0, 0); }
+  }
+  #page-weather.snow #wx-fall {
+    opacity: 0.55;
+    background-image:
+      radial-gradient(2.2px 2.2px at 20px 30px, rgba(255,255,255,0.85), transparent),
+      radial-gradient(1.8px 1.8px at 90px 70px, rgba(255,255,255,0.70), transparent),
+      radial-gradient(2px 2px at 150px 20px, rgba(255,255,255,0.75), transparent);
+    background-size: 200px 200px;
+    animation: wx-snow 14s linear infinite;
+  }
+  @keyframes wx-snow {
+    from { transform: translate3d(0, -200px, 0); }
+    to   { transform: translate3d(10px, 0, 0); }
+  }
+  /* One flash, rarely. A storm that strobes is a storm nobody can sit near. */
+  #page-weather.storm #wx-sky::before {
+    content: ""; position: absolute; inset: 0; background: #cfe4ff;
+    opacity: 0; animation: wx-flash 17s linear infinite;
+  }
+  @keyframes wx-flash {
+    0%, 96%, 100% { opacity: 0; }
+    97% { opacity: 0.13; }
+    98% { opacity: 0.03; }
+    99% { opacity: 0.08; }
+  }
+  /* A clear day gets warmth in the corner instead of weather. */
+  #page-weather.clear #wx-sky {
+    background: linear-gradient(165deg, #22364d 0%, #17232f 45%, #0d141d 100%);
+  }
+
+  #wx-page {
+    position: relative; z-index: 1; display: flex; flex-direction: column;
+    height: 800px; padding: 12px 20px 14px; gap: 10px;
+  }
+
+  /* ── header ─────────────────────────────────────────────────── */
+  #wx-bar { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; height: 46px; }
+  #wx-bar .back {
+    height: 46px; padding: 0 18px; font-size: 18px; flex: 0 0 auto;
+    flex-direction: row; gap: 6px; border-radius: 14px;
+  }
+  #wx-loc {
+    display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 20px;
+    border-radius: 23px; font-size: 20px; flex: 0 0 auto;
+  }
+  #wx-loc .pin { font-size: 21px; line-height: 1.2;
+                 font-family: "Noto Color Emoji", "Noto Emoji", sans-serif; }
+  #wx-updated { flex: 1; font-size: 18px; color: var(--ink-faint); padding-left: 6px; }
+  #wx-updated.stale { color: var(--accent-warm); }
+  #wx-refresh {
+    width: 46px; height: 46px; border-radius: 23px; font-size: 20px; flex: 0 0 auto;
+  }
+  /* The unit toggle from the reference: two round targets, the live one gold. */
+  #wx-units {
+    display: flex; gap: 6px; padding: 4px; border-radius: 27px; flex: 0 0 auto;
+  }
+  #wx-units button {
+    width: 44px; height: 44px; border-radius: 22px; font-size: 17px; flex: 0 0 auto;
+    border-color: transparent; background: transparent; color: var(--ink-dim);
+  }
+  #wx-units button.on { background: var(--wx-gold); color: #17202c; font-weight: 600; }
+
+  /* ── the glass ──────────────────────────────────────────────── */
+  .glass {
+    background: rgba(22, 32, 46, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 20px;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22);
+    /* One blur, small, and only on cards. Bigger radii on more layers is
+       where this compositor starts dropping frames. */
+    backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
+  }
+
+  /* ── the three rows ─────────────────────────────────────────── */
+  #wx-top {
+    display: grid; grid-template-columns: 548px 1fr; gap: 14px;
+    flex: 0 0 268px; min-height: 0;
+  }
+  #wx-mid {
+    display: grid; grid-template-columns: 282px 252px 1fr; gap: 14px;
+    flex: 0 0 180px; min-height: 0;
+  }
+  #wx-week {
+    /* 686 of the 698 available = 258 + 180 + 248, with the slack left at the
+       bottom: the Pi's font metrics run a shade taller than a desktop
+       browser's, and that difference is what put a card through the floor of
+       its row once already. Fixed rather than `1fr` so the week cannot grow
+       into the fold. */
+    flex: 0 0 248px; min-height: 0; padding: 10px 16px 12px;
+    display: flex; flex-direction: column;
+  }
+
+  /* ── current conditions ─────────────────────────────────────── */
+  #wx-now {
+    padding: 16px 24px; display: grid; grid-template-columns: 1fr auto;
+    gap: 10px; align-items: start;
+  }
+  #wx-day { font-size: 33px; font-weight: 600; line-height: 1.1; }
+  #wx-date { font-size: 18px; color: var(--ink-dim); margin-top: 4px; }
+  #wx-fresh {
+    display: inline-block; margin-left: 10px; padding: 4px 11px; font-size: 15px;
+    border-radius: 12px; background: rgba(255,255,255,0.07); color: var(--ink-dim);
+    vertical-align: middle; white-space: nowrap;
+  }
+  #wx-temp {
+    font-size: 82px; font-weight: 300; line-height: 1; margin-top: 8px;
+    letter-spacing: -0.02em;
+  }
+  #wx-temp sup {
+    font-size: 28px; font-weight: 400; vertical-align: super; margin-left: 4px;
+    color: var(--ink-dim);
+  }
+  #wx-feels { font-size: 18px; color: var(--ink-dim); margin-top: 10px; line-height: 1.4; }
+  #wx-feels b { display: block; font-size: 22px; color: var(--ink); font-weight: 400; }
+  #wx-right { text-align: center; padding-right: 4px; }
+  #wx-icon {
+    font-size: 96px; line-height: 1.15; margin-bottom: 10px;
+    font-family: "Noto Color Emoji", "Noto Emoji", "Segoe UI Emoji", sans-serif;
+    filter: drop-shadow(0 6px 14px rgba(0,0,0,0.35));
+  }
+  #wx-cond { font-size: 26px; margin-top: 0; }
+  #wx-range { font-size: 18px; color: var(--ink-dim); margin-top: 10px; }
+  #wx-range b { color: var(--ink); font-weight: 500; }
+
+  /* ── hourly ─────────────────────────────────────────────────── */
+  #wx-hourly { display: flex; flex-direction: column; min-width: 0; }
+  #wx-hourly .head {
+    display: flex; align-items: center; gap: 12px; flex: 0 0 auto; padding: 0 2px 10px;
+  }
+  #wx-hourly .head h2 { margin: 0; font-size: 23px; font-weight: 600; flex: 1; }
+  .pill {
+    height: 44px; padding: 0 18px; border-radius: 22px; font-size: 18px;
+    flex: 0 0 auto; flex-direction: row; gap: 6px;
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10);
+  }
+  #wx-hours {
+    flex: 1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+    min-height: 0;
+  }
+  .hour {
+    padding: 12px 8px; display: flex; flex-direction: column; align-items: center;
+    justify-content: space-between; text-align: center; min-width: 0; gap: 6px;
+  }
+  .hour .when {
+    font-size: 17px; padding: 4px 12px; border-radius: 12px; color: var(--ink-dim);
+    background: rgba(255,255,255,0.06); white-space: nowrap;
+  }
+  .hour.now .when { background: var(--wx-gold); color: #17202c; font-weight: 600; }
+  .hour .glyph {
+    font-size: 30px; line-height: 1.2;
     font-family: "Noto Color Emoji", "Noto Emoji", sans-serif;
   }
-  #call-placeholder b { display: block; color: var(--ink); font-size: 34px;
-                        font-weight: 500; margin-bottom: 14px; }
-  /* The one control on this page that starts something rather than ending it.
-     Sized for a thumb like everything else on this panel, and hidden entirely
-     when no phone has registered to be rung — a button that cannot work is
-     worse than no button. */
-  #call-out {
-    display: block; margin: 28px auto 0; padding: 0 34px; height: 78px;
-    border-radius: 14px; border: 1px solid var(--panel-edge);
-    background: #1d7a44; color: #fff; font-size: 24px; font-family: inherit;
-    cursor: pointer;
+  .hour .deg { font-size: 25px; font-weight: 400; }
+  .hour .sky {
+    font-size: 16px; color: var(--ink-dim); max-width: 100%; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
   }
-  #call-out[hidden] { display: none; }
-  #call-out:active { background: #249854; }
-  #call-out:disabled { background: #2a3240; color: var(--ink-dim); }
+  .hour .rain { font-size: 16px; color: #7fb2e6; }
 
-  /* The Brio's own picture, small and in the corner, so whoever is standing
-     here can see what they are sending. Mirrored, because a self-view that is
-     not mirrored makes people reach the wrong way. */
-  #call-self {
-    position: absolute; right: 28px; bottom: 150px;
-    width: 288px; height: 162px;           /* 16:9, the capture aspect */
-    object-fit: cover; transform: scaleX(-1);
-    border-radius: 14px; border: 1px solid var(--panel-edge);
-    background: #05070a; display: none;
+  /* ── stats, sun, advice ─────────────────────────────────────── */
+  #wx-stats {
+    padding: 12px 14px; display: grid; grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr; gap: 8px;
   }
-  #call-self.on { display: block; }
+  .stat { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .stat .ic {
+    width: 34px; height: 34px; border-radius: 10px; flex: 0 0 auto;
+    background: rgba(255,255,255,0.07); display: flex; align-items: center;
+    justify-content: center; font-size: 17px;
+    font-family: "Noto Color Emoji", "Noto Emoji", sans-serif;
+  }
+  .stat .v { font-size: 18px; line-height: 1.2; white-space: nowrap; }
+  .stat .k { font-size: 15px; color: var(--ink-faint); }
 
-  /* Section "Privacy and Security": whenever the camera and microphone are
-     live for a remote party, the panel says so, in the one place a person
-     glances at first and without having to read it. Never suppressed, and
-     never shown when there is no call. */
-  #call-banner {
-    position: absolute; top: 24px; left: 28px;
-    display: none; align-items: center; gap: 12px;
-    padding: 10px 20px; border-radius: 999px;
-    background: rgba(255,107,107,0.16); border: 1px solid var(--danger);
-    color: var(--danger); font-size: 20px; letter-spacing: 0.08em;
+  #wx-sun {
+    padding: 14px 18px; display: flex; flex-direction: column; justify-content: center;
   }
-  #call-banner.on { display: flex; }
-  #call-banner .live {
-    width: 12px; height: 12px; border-radius: 50%;
-    background: var(--danger); animation: pulse 1.1s infinite;
+  #wx-sun .ends { display: flex; justify-content: space-between; font-size: 16px;
+                  color: var(--ink-dim); }
+  #wx-sun .times { display: flex; justify-content: space-between; font-size: 20px;
+                   margin-top: 2px; }
+  #wx-track {
+    position: relative; height: 3px; border-radius: 2px; margin: 20px 0 10px;
+    background: rgba(255,255,255,0.14);
   }
+  #wx-track .done {
+    position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px;
+    background: var(--wx-gold);
+  }
+  #wx-track .dot {
+    position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%;
+    background: var(--wx-gold); transform: translate(-50%, -50%);
+    box-shadow: 0 0 0 4px rgba(255,196,84,0.18);
+  }
+  #wx-daylight { text-align: center; font-size: 16px; color: var(--ink-faint); }
 
-  #call-who {
-    position: absolute; top: 24px; right: 28px;
-    font-size: 20px; color: var(--ink-dim);
+  #wx-advice { display: grid; grid-template-columns: 272px 1fr; gap: 14px; min-width: 0; }
+  #wx-marks {
+    padding: 10px 14px; display: flex; flex-direction: column; justify-content: space-around;
   }
+  .mark { display: flex; align-items: center; gap: 12px; font-size: 18px; }
+  .mark .ic {
+    width: 30px; height: 30px; border-radius: 9px; flex: 0 0 auto;
+    background: rgba(255,255,255,0.07); display: flex; align-items: center;
+    justify-content: center; font-size: 15px;
+    font-family: "Noto Color Emoji", "Noto Emoji", sans-serif;
+  }
+  .mark .k { flex: 1; color: var(--ink-dim); white-space: nowrap; }
+  .mark .sep { width: 5px; height: 5px; border-radius: 50%; background: var(--wx-gold); }
+  .mark .v { width: 92px; text-align: left; white-space: nowrap; }
 
-  /* On a gradient rather than a bar, so the controls are legible over a light
-     picture without taking a strip of the caller away from them. */
-  #call-controls {
-    position: absolute; left: 0; right: 0; bottom: 0;
-    padding: 80px 28px 24px;
-    background: linear-gradient(to top, rgba(4,7,11,0.92) 35%, rgba(4,7,11,0));
-    display: flex; align-items: center; justify-content: center; gap: 20px;
+  #wx-outside { padding: 14px 18px; display: flex; flex-direction: column; min-width: 0; }
+  #wx-outside h3 { margin: 0; font-size: 22px; font-weight: 600; }
+  #wx-outside .line { font-size: 18px; color: var(--ink-dim); margin-top: 6px; }
+  #wx-verdict {
+    font-size: 19px; margin-top: 12px; display: flex; gap: 10px; align-items: baseline;
   }
-  /* Overrides the `flex: 1` on `button`, for the same reason `.back` does:
-     these are three controls of deliberately different importance, not a row
-     that shares the width equally.
+  #wx-verdict .badge { font-family: "Noto Color Emoji", "Noto Emoji", sans-serif; }
+  #wx-why { font-size: 16px; color: var(--ink-faint); margin-top: 8px; line-height: 1.4; }
 
-     Mic and camera are circles carrying only an icon — a round target reads as
-     a toggle, and the slash inside says which way it is set. End Call is the
-     odd one out and keeps its word, because it is the only irreversible thing
-     on this screen. */
-  .call-control {
-    flex: 0 0 auto; width: 86px; height: 86px;
-    border-radius: 50%; font-size: 19px; padding: 0;
+  /* ── the week ───────────────────────────────────────────────── */
+  #wx-days {
+    flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px;
+    min-height: 0;
   }
-  .call-control svg {
-    width: 38px; height: 38px;
-    /* `currentColor` throughout, so the off state is one colour change here
-       rather than a second copy of every path. */
-    fill: none; stroke: currentColor; color: var(--ink);
+  .day {
+    padding: 8px 6px 10px; display: flex; flex-direction: column; align-items: center;
+    justify-content: space-between; text-align: center; cursor: pointer; gap: 5px;
   }
-  .call-control svg .fill { fill: currentColor; stroke: none; }
-  .call-control svg .line {
-    stroke-width: 2; stroke-linecap: round; fill: none;
+  .day.today { border-color: rgba(255,196,84,0.45); }
+  .day .name { font-size: 19px; color: var(--ink-dim); }
+  .day.today .name { color: var(--wx-gold); }
+  .day .bar { width: 26px; height: 2px; border-radius: 1px; background: transparent; }
+  .day.today .bar { background: var(--wx-gold); }
+  .day .deg { font-size: 23px; }
+  .day .deg small { font-size: 17px; color: var(--ink-faint); margin-left: 4px; }
+  .day .glyph {
+    font-size: 36px; line-height: 1.15;
+    font-family: "Noto Color Emoji", "Noto Emoji", sans-serif;
   }
-  /* The slash, and the gap around it. Two strokes on the same line: the wider
-     one in the button's own background colour cuts a channel through the
-     glyph, which is what makes a struck-through icon legible rather than a
-     smudge. Both hidden until the control is off. */
-  .call-control svg .cut,
-  .call-control svg .slash { display: none; stroke-linecap: round; }
-  .call-control svg .cut { stroke: var(--panel); stroke-width: 5; }
-  .call-control svg .slash { stroke-width: 2.2; }
-  .call-control.off svg .cut,
-  .call-control.off svg .slash { display: block; }
+  .day .rain { font-size: 15px; color: #7fb2e6; }
 
-  /* End Call is the one control somebody reaches for in a hurry, so it is the
-     widest, the reddest, and in the middle where a thumb lands. */
-  #call-end {
-    width: 190px; height: 86px; border-radius: 43px;
-    background: #3a1a1e; border-color: var(--danger);
-    color: #ffd9d9; font-size: 22px; gap: 2px;
+  /* ── the overlays ───────────────────────────────────────────── */
+  /* Full hourly, and one day in detail. Overlays rather than pages, because
+     this is a kiosk and the way back has to be one obvious tap. */
+  #wx-modal {
+    position: absolute; inset: 0; z-index: 5; display: none;
+    align-items: center; justify-content: center; padding: 40px;
+    background: rgba(6, 9, 13, 0.72);
   }
-  #call-end svg { width: 30px; height: 30px; color: #ffd9d9; }
-  #call-end:active { background: #55232a; border-color: var(--danger); }
-  /* A muted microphone or a stopped camera has to read as *off* at a glance
-     from across a room, not as a button that happens to be pressed. The slash
-     carries it; the colour is the second signal, for the same glance. */
-  .call-control.off {
-    background: #3a1a1e; border-color: var(--danger);
+  #wx-modal.on { display: flex; }
+  #wx-modal .sheet {
+    width: 100%; max-width: 1120px; max-height: 700px; padding: 22px 26px;
+    display: flex; flex-direction: column; background: rgba(20, 29, 41, 0.96);
   }
-  .call-control.off svg { color: #ffd9d9; }
-  .call-control.off svg .cut { stroke: #3a1a1e; }
+  #wx-modal .sheet h2 {
+    margin: 0 0 14px; font-size: 26px; font-weight: 600; flex: 0 0 auto;
+  }
+  #wx-modal .close {
+    position: absolute; top: 26px; right: 30px; width: 56px; height: 56px;
+    border-radius: 28px; font-size: 24px;
+  }
+  #wx-modal-body { overflow-y: auto; min-height: 0; }
+  #wx-modal-body::-webkit-scrollbar { width: 10px; }
+  #wx-modal-body::-webkit-scrollbar-thumb { background: var(--panel-edge); border-radius: 5px; }
+  .hrow {
+    display: grid; grid-template-columns: 96px 46px 1fr 78px 72px; gap: 12px;
+    align-items: center; padding: 11px 8px; font-size: 17px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .hrow .glyph { font-size: 22px;
+                 font-family: "Noto Color Emoji", "Noto Emoji", sans-serif; }
+  .hrow .sky { color: var(--ink-dim); }
+  .hrow .rain { color: #7fb2e6; text-align: right; }
+  .detail { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .detail .box {
+    padding: 14px 16px; border-radius: 14px; background: rgba(255,255,255,0.05);
+  }
+  .detail .box .k { font-size: 17px; color: var(--ink-dim); }
+  .detail .box .v { font-size: 26px; margin-top: 6px; }
 
-  #call-status {
-    position: absolute; left: 0; right: 0; bottom: 128px;
-    text-align: center; font-size: 22px; color: var(--ink-dim);
+  /* ── seen from somewhere other than the panel ───────────────── */
+  /*
+     The kiosk fixes the document at 1280x800, which is right for the device.
+     A desktop browser looking through an ssh tunnel may be any shape, so below
+     the panel width the weather page stops being a grid of fixed columns and
+     becomes one column that scrolls. Nothing else about the page changes, and
+     at 1280 none of this applies.
+  */
+  @media (max-width: 1279px) {
+    html, body { width: auto; height: auto; overflow: auto; }
+    #page-weather { position: static; width: auto; height: auto; }
+    #wx-page { height: auto; }
+    #wx-top, #wx-mid, #wx-advice { grid-template-columns: 1fr; flex: 0 0 auto; }
+    #wx-hours { grid-template-columns: repeat(2, 1fr); }
+    #wx-days { grid-template-columns: repeat(4, 1fr); }
+    #wx-now { grid-template-columns: 1fr; }
+    #wx-week { flex: 0 0 auto; }
   }
-
-  /* ── file transfer ───────────────────────────────────────────── */
-
-  #files-top {
-    display: flex; align-items: center; gap: 16px; margin-top: 16px;
-    flex: 0 0 auto;
-  }
-  /* The one button on this page that is a button rather than a row. Sized for
-     a finger and labelled with what it does, not with an icon: this is the
-     control somebody presses while holding a phone in the other hand. */
-  #files-upload { flex: 0 0 320px; height: 88px; flex-direction: row; gap: 14px; }
-  #files-storage {
-    flex: 1; text-align: right; font-size: 20px; color: var(--ink-dim);
-    line-height: 1.4;
-  }
-  #files-storage b { color: var(--ink); font-weight: 500; }
-
-  #files-sort { display: flex; gap: 10px; flex: 0 0 auto; }
-  #files-sort button {
-    flex: 0 0 auto; height: 44px; padding: 0 18px; font-size: 18px;
-    flex-direction: row; border-radius: 10px;
-  }
-  #files-sort button.on { border-color: var(--accent); color: var(--accent); }
-
-  /* Progress. Present only while something is transferring — a bar sitting at
-     zero is a bar somebody wonders about. */
-  #files-progress { display: none; margin-top: 14px; flex: 0 0 auto; }
-  #files-progress.on { display: block; }
-  #files-progress .what {
-    display: flex; justify-content: space-between; font-size: 20px;
-    color: var(--ink-dim); margin-bottom: 8px;
-  }
-  #files-progress .what b { color: var(--ink); font-weight: 400; }
-  .bar {
-    height: 14px; border-radius: 7px; background: var(--panel);
-    border: 1px solid var(--panel-edge); overflow: hidden;
-  }
-  .bar span {
-    display: block; height: 100%; width: 0;
-    background: var(--accent); transition: width 0.2s linear;
-  }
-  #files-progress.failed .bar span { background: var(--danger); }
-  #files-progress.done .bar span { background: #4ec97a; }
-
-  #files-list {
-    flex: 1; margin-top: 16px; overflow-y: auto; padding-right: 10px;
-    display: flex; flex-direction: column; gap: 10px;
-  }
-  #files-list::-webkit-scrollbar { width: 12px; }
-  #files-list::-webkit-scrollbar-thumb { background: var(--panel-edge); border-radius: 6px; }
-
-  .file-row {
-    background: var(--panel); border: 1px solid var(--panel-edge);
-    border-radius: 14px; padding: 14px 18px;
-    display: flex; align-items: center; gap: 18px;
-  }
-  .file-row .kind {
-    flex: 0 0 46px; font-size: 30px; text-align: center;
-    font-family: "Noto Color Emoji", "Noto Emoji", "Segoe UI Emoji", sans-serif;
-  }
-  .file-row .about { flex: 1; min-width: 0; }
-  .file-row .name {
-    font-size: 23px; white-space: nowrap; overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .file-row .meta { font-size: 17px; color: var(--ink-faint); margin-top: 5px; }
-  .file-row .act {
-    flex: 0 0 auto; height: 56px; padding: 0 22px; font-size: 19px;
-    flex-direction: row; border-radius: 12px;
-  }
-  .file-row .act.danger { color: var(--danger); border-color: #3a2630; }
-  .file-row.confirming { border-color: var(--danger); }
-  .file-row .ask { flex: 0 0 auto; font-size: 19px; color: var(--danger); }
-
-  #files-empty {
-    margin: auto; text-align: center; color: var(--ink-faint); font-size: 22px;
-    line-height: 1.6;
-  }
-  #files-empty b { display: block; color: var(--ink-dim); font-size: 26px;
-                   margin-bottom: 10px; }
 
   /* ── the screensaver ─────────────────────────────────────────── */
 
@@ -646,8 +710,6 @@
     <button data-action="call"><span class="glyph">📞</span><span class="label">Call</span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
     <button data-action="camera"><span class="glyph">📷</span><span class="label">Camera</span>
-      <span class="cooldown"></span><span class="cooldown-bar"></span></button>
-    <button data-action="news"><span class="glyph">📰</span><span class="label">News</span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
     <button data-action="weather"><span class="glyph">🌤</span><span class="label">Weather</span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
@@ -770,34 +832,89 @@
 
 <!-- ── weather ─────────────────────────────────────────────────── -->
 <div id="page-weather" class="page">
-  <header>
-    <button class="back" data-back><span class="glyph">‹</span> Back</button>
-    <h1>WEATHER</h1>
-    <div id="wx-place" class="headline-weather"></div>
-  </header>
+  <!-- The sky, under everything. Three empty elements because each is one
+       composited layer and the classes on #page-weather decide which of them
+       is doing anything — see `skyFor`. -->
+  <div id="wx-sky"><div id="wx-clouds"></div><div id="wx-fall"></div></div>
 
-  <div id="weather-body">
-    <div id="wx-now">
-      <div id="wx-icon">·</div>
-      <div id="wx-temp">--°</div>
-      <div id="wx-conditions">Loading…</div>
-      <div id="wx-feels"></div>
-      <div id="wx-range"></div>
+  <div id="wx-page">
+    <div id="wx-bar">
+      <button class="back glass" data-back><span class="glyph">‹</span> Back</button>
+      <!-- The configured location. AIPI5 has one, set in config/aipi5.yaml,
+           and there is no location search behind it to open — so this states
+           where the numbers are from rather than pretending to be a control
+           that does nothing. -->
+      <div id="wx-loc" class="glass"><span class="pin">📍</span><span id="wx-place">—</span></div>
+      <div id="wx-updated"></div>
+      <button id="wx-refresh" class="glass" title="Refresh">⟳</button>
+      <div id="wx-units" class="glass">
+        <button data-unit="F">F°</button>
+        <button data-unit="C">C°</button>
+      </div>
     </div>
-    <div id="wx-tiles"></div>
+
+    <div id="wx-top">
+      <div id="wx-now" class="glass">
+        <div>
+          <div id="wx-day">—</div>
+          <div id="wx-date"><span id="wx-date-text">—</span><span id="wx-fresh" hidden>Recently updated</span></div>
+          <div id="wx-temp">--<sup>°</sup></div>
+          <div id="wx-feels">Feels like<b id="wx-feels-value">--°</b></div>
+        </div>
+        <div id="wx-right">
+          <div id="wx-icon">·</div>
+          <div id="wx-cond">—</div>
+          <div id="wx-range"></div>
+        </div>
+      </div>
+
+      <div id="wx-hourly">
+        <div class="head">
+          <h2>Forecast Hourly</h2>
+          <button id="wx-full" class="pill">Check Full ›</button>
+        </div>
+        <div id="wx-hours"></div>
+      </div>
+    </div>
+
+    <div id="wx-mid">
+      <div id="wx-stats" class="glass"></div>
+
+      <div id="wx-sun" class="glass">
+        <div class="ends"><span>Sunrise</span><span>Sunset</span></div>
+        <div class="times"><span id="wx-sunrise">—</span><span id="wx-sunset">—</span></div>
+        <div id="wx-track"><div class="done"></div><div class="dot"></div></div>
+        <div id="wx-daylight"></div>
+      </div>
+
+      <div id="wx-advice">
+        <div id="wx-marks" class="glass"></div>
+        <div id="wx-outside" class="glass">
+          <h3>Should I go Outside?</h3>
+          <div class="line" id="wx-outside-line">—</div>
+          <div id="wx-verdict"><span class="badge">·</span><span id="wx-verdict-text">—</span></div>
+          <div id="wx-why"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- No heading. Seven columns of weekday names say "seven days" without
+         spending a line of a screen that has none to spare, and the space
+         buys the cards the larger type they are read at from across a room. -->
+    <div id="wx-week" class="glass">
+      <div id="wx-days"></div>
+    </div>
   </div>
-  <div id="wx-updated"></div>
-</div>
 
-<!-- ── news ────────────────────────────────────────────────────── -->
-<div id="page-news" class="page">
-  <header>
-    <button class="back" data-back><span class="glyph">‹</span> Back</button>
-    <h1>LOCAL NEWS</h1>
-    <div id="news-place" class="headline-weather"></div>
-  </header>
-
-  <div id="news-list"><div class="loading">Fetching today's stories…</div></div>
+  <!-- One overlay, two uses: the full hourly list and a single day in detail.
+       Anywhere off the sheet closes it, as well as the button. -->
+  <div id="wx-modal">
+    <div class="sheet glass">
+      <button class="close glass" id="wx-modal-close">✕</button>
+      <h2 id="wx-modal-title">—</h2>
+      <div id="wx-modal-body"></div>
+    </div>
+  </div>
 </div>
 
 <!-- ── files ───────────────────────────────────────────────────── -->
@@ -889,8 +1006,12 @@ let currentPage = "main";
 
 // Which action each page is opened by, so a press can navigate and act in one
 // gesture without the two lists drifting apart.
+// **No `news`.** The news page was removed and so was the button that opened
+// it; the report itself is still there and is asked for out loud. A button may
+// act without navigating — `press` reads this table and simply finds nothing —
+// which is what any future button that speaks rather than shows should do.
 const PAGE_OF = { talk: "talk", call: "call", camera: "camera",
-                  weather: "weather", news: "news" };
+                  weather: "weather" };
 
 function show(page) {
   // Idempotent on purpose: this is what "prevent duplicate instances of the
@@ -916,10 +1037,10 @@ function show(page) {
   // than off the button, which is the only one of the three that has a
   // handler.
   if (previous === "call") stopCall();
+  if (previous === "weather") stopWeather();
   if (page === "camera") startCamera();
   if (page === "call") startCall();
-  if (page === "weather") loadWeather();
-  if (page === "news") loadNews();
+  if (page === "weather") startWeather();
   if (page === "files") loadFiles();
   return true;
 }
@@ -934,7 +1055,7 @@ for (const button of document.querySelectorAll("[data-page]")) {
   button.addEventListener("click", () => show(button.dataset.page));
 }
 
-// `#weather`, `#news`, `#camera`, `#talk` open a page directly.
+// `#weather`, `#camera`, `#talk` open a page directly.
 //
 // This is for the device rather than for anybody using it: the panel is a
 // Wayland kiosk with no keyboard and no way to inject a tap over ssh, so
@@ -2356,15 +2477,43 @@ function callFromState(state) {
 }
 
 // ── the weather page ────────────────────────────────────────────────
+//
+// Drawn from `/api/weather`, which carries the current conditions, the hours,
+// seven days, the sun times and the advice — all of it computed on the Pi from
+// Open-Meteo, none of it from a model. See `aipi5/tools/advice.py`.
+//
+// Three rules shape what is below.
+//
+// **The unit is converted here, never re-fetched.** The provider is asked in
+// whichever unit the household configured; switching °F to °C on the screen is
+// arithmetic on numbers already in hand, and a round trip for that would make
+// a toggle feel like a page load.
+//
+// **The last good answer stays on screen.** A failed fetch leaves what is
+// drawn exactly where it is and says how old it is, because a Pi on a hotspot
+// loses the network regularly and a blank weather page is worse than a
+// slightly old one.
+//
+// **Nothing repaints on a timer.** The clock ticking on the sun track and the
+// "updated" line move on the state poll that already runs; the sky animates
+// with transforms on their own layers.
 
-// WMO weather codes to something that reads at a glance. Grouped rather than
-// enumerated: the API has 28 codes and this panel has one glyph, so what
-// matters is the family — clear, cloud, rain, snow, storm — not whether the
-// drizzle is light or moderate.
+const WX_REFRESH_MS = 10 * 60 * 1000;   // matches the server's cache window
+const WX_STALE_MS = 45 * 60 * 1000;     // past this, say so in gold
+const WX_UNIT_KEY = "aipi5.weather.unit";
+
+let wxData = null;           // the last good payload, in the provider's unit
+let wxUnit = "F";            // what the screen is showing
+let wxTimer = null;
+let wxFailed = false;
+
+// WMO codes to a glyph. Grouped rather than enumerated: the standard has 28
+// codes and this page has one icon per card, so what matters is the family —
+// clear, cloud, rain, snow, storm — not whether the drizzle is light.
 function weatherGlyph(code, isDay) {
   if (code === null || code === undefined) return "·";
-  if (code === 0) return isDay ? "☀️" : "🌙";
-  if (code <= 2) return isDay ? "🌤️" : "☁️";
+  if (code === 0) return isDay === false ? "🌙" : "☀️";
+  if (code <= 2) return isDay === false ? "☁️" : "🌤️";
   if (code === 3) return "☁️";
   if (code <= 48) return "🌫️";
   if (code <= 57) return "🌦️";
@@ -2375,106 +2524,390 @@ function weatherGlyph(code, isDay) {
   return "⛈️";
 }
 
-// The WHO scale, which is what "is this a lot" means for a UV index.
-function uvNote(uv) {
-  if (uv === null || uv === undefined) return "";
-  if (uv < 3) return "Low";
-  if (uv < 6) return "Moderate";
-  if (uv < 8) return "High";
-  if (uv < 11) return "Very high";
-  return "Extreme";
+// Which sky to draw behind the cards.
+function skyFor(code, isDay) {
+  if (code === null || code === undefined) return "";
+  if (code >= 95) return "storm";
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return "snow";
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return "rain";
+  if (code <= 1 && isDay !== false) return "clear";
+  return "";
 }
 
-function tile(name, value, unit, note) {
-  return `<div class="tile">
-    <div class="name">${escapeHtml(name)}</div>
-    <div class="value">${escapeHtml(value)}${unit ? `<small>${escapeHtml(unit)}</small>` : ""}</div>
-    <div class="note">${escapeHtml(note || "")}</div>
-  </div>`;
+// ── units ───────────────────────────────────────────────────────────
+
+function wxTemp(value) {
+  // The payload is in the unit the provider was asked for; the screen may be
+  // showing the other one. Rounded only at the end, so 20.4°C does not become
+  // 20°C and then 68°F.
+  if (value === null || value === undefined) return "--";
+  const from = (wxData && wxData.unit ? wxData.unit : "F").toUpperCase();
+  let out = Number(value);
+  if (from === "F" && wxUnit === "C") out = (out - 32) * 5 / 9;
+  if (from === "C" && wxUnit === "F") out = out * 9 / 5 + 32;
+  return String(Math.round(out));
 }
 
-async function loadWeather() {
-  try {
-    const response = await fetch("/api/weather", { cache: "no-store" });
-    const payload = await response.json();
-    drawWeather(payload.weather);
-  } catch (err) {
-    el("wx-conditions").textContent = "Can't reach the weather right now.";
+function wxPressure(hpa) {
+  if (hpa === null || hpa === undefined) return null;
+  // Inches of mercury beside a Fahrenheit temperature, hectopascals beside a
+  // Celsius one — the two audiences read pressure in different units and it
+  // would be odd to mix them.
+  return wxUnit === "F"
+    ? (hpa * 0.02953).toFixed(2) + " in"
+    : Math.round(hpa) + " hPa";
+}
+
+function wxSetUnit(unit) {
+  wxUnit = unit === "C" ? "C" : "F";
+  try { localStorage.setItem(WX_UNIT_KEY, wxUnit); } catch (e) { /* private mode */ }
+  for (const button of document.querySelectorAll("#wx-units [data-unit]")) {
+    button.classList.toggle("on", button.dataset.unit === wxUnit);
   }
+  if (wxData) drawWeather(wxData);
 }
+
+// ── fetching ────────────────────────────────────────────────────────
+
+async function loadWeather(force) {
+  try {
+    const response = await fetch("/api/weather" + (force ? "?force=1" : ""),
+                                 { cache: "no-store" });
+    const payload = await response.json();
+    if (payload && payload.weather) {
+      wxFailed = false;
+      wxData = payload.weather;
+      drawWeather(wxData);
+    } else {
+      // The server answered and had nothing: it could not reach the provider
+      // either. Keep whatever is drawn and mark it.
+      wxFailed = true;
+      drawUpdated();
+    }
+  } catch (err) {
+    wxFailed = true;
+    drawUpdated();
+  }
+  if (wxTimer) clearTimeout(wxTimer);
+  if (currentPage === "weather") wxTimer = setTimeout(() => loadWeather(), WX_REFRESH_MS);
+}
+
+let wxTick = null;
+
+function startWeather() {
+  // A slow tick for the two things that age rather than change: how long ago
+  // the reading was taken, and where the sun has got to. Thirty seconds, and
+  // only while the page is open — the dot moves about a pixel in two minutes.
+  if (wxTick) clearInterval(wxTick);
+  wxTick = setInterval(() => {
+    if (!wxData) return;
+    drawUpdated();
+    drawSun(wxData);
+  }, 30000);
+  // Cached data first, then a refresh behind it — so opening the page never
+  // shows an empty frame, which is the whole reason `wxData` is kept.
+  if (wxData) drawWeather(wxData);
+  const age = wxData ? Date.now() - wxData.fetched_at * 1000 : Infinity;
+  loadWeather(age > WX_REFRESH_MS);
+}
+
+function stopWeather() {
+  if (wxTimer) clearTimeout(wxTimer);
+  if (wxTick) clearInterval(wxTick);
+  wxTimer = null;
+  wxTick = null;
+  wxCloseModal();
+}
+
+// ── drawing ─────────────────────────────────────────────────────────
 
 function drawWeather(weather) {
-  if (!weather || !weather.current) {
-    el("wx-conditions").textContent = "Can't reach the weather right now.";
-    el("wx-tiles").innerHTML = "";
-    return;
-  }
-  const c = weather.current;
-  const today = (weather.forecast || [])[0];
-  const unit = weather.unit || "F";
+  if (!weather || !weather.current) return;
+  const current = weather.current;
+  const days = weather.forecast || [];
+  const today = days[0] || {};
 
   el("wx-place").textContent = weather.place || "";
-  el("wx-icon").textContent = weatherGlyph(c.code, c.is_day);
-  el("wx-temp").textContent = `${c.temperature}°`;
-  el("wx-conditions").textContent = c.conditions;
-  el("wx-feels").textContent = `Feels like ${c.feels_like}°${unit}`;
-  el("wx-range").innerHTML = today
-    ? `<span class="hi">High <b>${today.high}°</b></span> &nbsp; ` +
-      `<span class="lo">Low <b>${today.low}°</b></span>`
+  el("page-weather").className = "page on " + skyFor(current.code, current.is_day);
+
+  const when = new Date((weather.fetched_at || Date.now() / 1000) * 1000);
+  el("wx-day").textContent = when.toLocaleDateString(undefined, { weekday: "long" });
+  el("wx-date-text").textContent =
+    when.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+  el("wx-temp").innerHTML = wxTemp(current.temperature) + "<sup>°" + wxUnit + "</sup>";
+  el("wx-feels-value").textContent = wxTemp(current.feels_like) + "°";
+  el("wx-icon").textContent = weatherGlyph(current.code, current.is_day);
+  el("wx-cond").textContent = titleCase(current.conditions || "");
+  el("wx-range").innerHTML = days.length
+    ? "High: <b>" + wxTemp(today.high) + "°</b> &nbsp; Low: <b>" +
+      wxTemp(today.low) + "°</b>"
     : "";
 
-  const rain = today && today.precipitation_chance != null
-    ? String(today.precipitation_chance) : "--";
-  const uv = c.uv_index;
-
-  el("wx-tiles").innerHTML = [
-    tile("Chance of rain", rain, "%", today && today.precipitation_chance >= 40
-      ? "Take an umbrella" : "Unlikely today"),
-    tile("UV index", uv == null ? "--" : String(Math.round(uv)), "",
-         uvNote(uv)),
-    tile("Humidity", String(c.humidity), "%", ""),
-    tile("Wind", String(c.wind_mph), " mph", ""),
-    tile("Feels like", `${c.feels_like}°`, unit, ""),
-    tile("Conditions", c.conditions, "", weather.place || ""),
-  ].join("");
-
-  if (weather.fetched_at) {
-    const at = new Date(weather.fetched_at * 1000);
-    el("wx-updated").textContent = "Updated " +
-      at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  }
+  drawHours(weather);
+  drawStats(weather);
+  drawSun(weather);
+  drawAdvice(weather);
+  drawWeek(weather);
+  drawUpdated();
 }
 
-// ── the news page ───────────────────────────────────────────────────
-
-async function loadNews() {
-  const list = el("news-list");
-  list.innerHTML = `<div class="loading">Fetching today's stories…</div>`;
-  try {
-    const response = await fetch("/api/news", { cache: "no-store" });
-    const payload = await response.json();
-    drawNews(payload.stories || []);
-  } catch (err) {
-    list.innerHTML = `<div class="loading">Can't reach the news right now.</div>`;
-  }
+function titleCase(text) {
+  return (text || "").replace(/\b[a-z]/g, (c) => c.toUpperCase());
 }
 
-function drawNews(stories) {
-  const list = el("news-list");
-  if (!stories.length) {
-    list.innerHTML = `<div class="loading">No stories right now.</div>`;
+function hourLabel(iso, index) {
+  if (index === 0) return "Now";
+  const at = new Date(iso);
+  if (isNaN(at)) return "--";
+  return at.toLocaleTimeString(undefined, { hour: "numeric" });
+}
+
+function drawHours(weather) {
+  const hours = (weather.hourly || []).slice(0, 4);
+  const list = el("wx-hours");
+  list.innerHTML = "";
+  if (!hours.length) {
+    // Nothing to show rather than four empty cards: an empty strip says the
+    // provider sent no hourly series, which is a fact and not a layout.
     return;
   }
-  list.innerHTML = stories.map((story, index) => `
-    <div class="story">
-      <div class="rank">${index + 1}</div>
-      <div>
-        <div class="title">${escapeHtml(story.title)}</div>
-        ${story.summary ? `<div class="summary">${escapeHtml(story.summary)}</div>` : ""}
-        <div class="source">${escapeHtml(story.source || "")}</div>
-      </div>
-    </div>`).join("");
-  list.scrollTop = 0;
+  const current = weather.current || {};
+  hours.forEach((entry, index) => {
+    const hour = index === 0
+      ? Object.assign({}, entry, { temperature: current.temperature,
+                                   code: current.code,
+                                   conditions: current.conditions,
+                                   is_day: current.is_day })
+      : entry;
+    const card = document.createElement("div");
+    card.className = "hour glass" + (index === 0 ? " now" : "");
+    card.innerHTML =
+      '<div class="when"></div><div class="glyph"></div>' +
+      '<div class="deg"></div><div class="sky"></div><div class="rain"></div>';
+    card.querySelector(".when").textContent = hourLabel(entry.time, index);
+    card.querySelector(".glyph").textContent = weatherGlyph(hour.code, hour.is_day);
+    card.querySelector(".deg").textContent = wxTemp(hour.temperature) + "°" + wxUnit;
+    card.querySelector(".sky").textContent = titleCase(hour.conditions || "");
+    card.querySelector(".rain").textContent =
+      (hour.precipitation_chance || 0) + "% rain";
+    list.appendChild(card);
+  });
+}
+
+function statCell(icon, value, label) {
+  const cell = document.createElement("div");
+  cell.className = "stat";
+  cell.innerHTML = '<div class="ic"></div><div><div class="v"></div><div class="k"></div></div>';
+  cell.querySelector(".ic").textContent = icon;
+  cell.querySelector(".v").textContent = value;
+  cell.querySelector(".k").textContent = label;
+  return cell;
+}
+
+function drawStats(weather) {
+  const current = weather.current || {};
+  const today = (weather.forecast || [])[0] || {};
+  const rain = current.precipitation_chance != null
+    ? current.precipitation_chance : today.precipitation_chance;
+  const pressure = wxPressure(current.pressure_hpa);
+
+  const stats = el("wx-stats");
+  stats.innerHTML = "";
+  stats.appendChild(statCell("🌬", Math.round(current.wind_mph || 0) + " mph", "Wind"));
+  // Pressure is hidden rather than faked when the provider omits it.
+  if (pressure) stats.appendChild(statCell("🧭", pressure, "Pressure"));
+  stats.appendChild(statCell("💧", (current.humidity || 0) + "%", "Humidity"));
+  stats.appendChild(statCell("🌧", (rain || 0) + "%", "Precipitation"));
+}
+
+function clockTime(iso) {
+  const at = new Date(iso);
+  if (isNaN(at)) return "--";
+  return at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+function drawSun(weather) {
+  const today = (weather.forecast || [])[0] || {};
+  const sunrise = new Date(today.sunrise || "");
+  const sunset = new Date(today.sunset || "");
+  if (isNaN(sunrise) || isNaN(sunset)) {
+    el("wx-sunrise").textContent = "--";
+    el("wx-sunset").textContent = "--";
+    el("wx-daylight").textContent = "";
+    return;
+  }
+  el("wx-sunrise").textContent = clockTime(today.sunrise);
+  el("wx-sunset").textContent = clockTime(today.sunset);
+
+  const total = sunset - sunrise;
+  const hours = Math.floor(total / 3600000);
+  const minutes = Math.round((total % 3600000) / 60000);
+
+  const now = Date.now();
+  const track = el("wx-track");
+  if (now < sunrise || now > sunset) {
+    // Night. The dot is put away rather than pinned to an end, which would
+    // read as "the sun is setting right now" at two in the morning.
+    track.querySelector(".dot").style.display = "none";
+    track.querySelector(".done").style.width = now > sunset ? "100%" : "0%";
+    el("wx-daylight").textContent = hours + " hr " + minutes + " min · after dark";
+    return;
+  }
+  const progress = Math.min(1, Math.max(0, (now - sunrise) / total));
+  track.querySelector(".dot").style.display = "";
+  track.querySelector(".dot").style.left = (progress * 100).toFixed(1) + "%";
+  track.querySelector(".done").style.width = (progress * 100).toFixed(1) + "%";
+  el("wx-daylight").textContent = hours + " hr " + minutes + " min";
+}
+
+const WX_MARK_ICONS = { uv: "😎", outdoor: "🚶", umbrella: "☂️", clothing: "👕" };
+const WX_MARK_NAMES = { uv: "UV Index", outdoor: "Outdoor", umbrella: "Umbrella",
+                        clothing: "Cloth" };
+
+function drawAdvice(weather) {
+  const advice = weather.advice || {};
+  const marks = el("wx-marks");
+  marks.innerHTML = "";
+  for (const key of ["uv", "outdoor", "umbrella", "clothing"]) {
+    const value = advice[key];
+    const row = document.createElement("div");
+    row.className = "mark";
+    row.innerHTML = '<div class="ic"></div><div class="k"></div>' +
+                    '<div class="sep"></div><div class="v"></div>';
+    row.querySelector(".ic").textContent = WX_MARK_ICONS[key];
+    row.querySelector(".k").textContent = WX_MARK_NAMES[key];
+    row.querySelector(".v").textContent = value || "--";
+    marks.appendChild(row);
+  }
+
+  el("wx-outside-line").textContent = advice.summary || "";
+  const badge = advice.verdict === "no" ? "⚠️"
+              : advice.verdict === "caution" ? "🌂" : "✅";
+  el("wx-verdict").firstChild.textContent = badge;
+  el("wx-verdict-text").textContent = advice.headline || "";
+  el("wx-why").textContent = advice.detail || "";
+}
+
+function drawWeek(weather) {
+  const days = (weather.forecast || []).slice(0, 7);
+  const list = el("wx-days");
+  list.innerHTML = "";
+  days.forEach((day, index) => {
+    const card = document.createElement("div");
+    card.className = "day glass" + (index === 0 ? " today" : "");
+    card.innerHTML = '<div class="name"></div><div class="bar"></div>' +
+                     '<div class="deg"></div><div class="glyph"></div>' +
+                     '<div class="rain"></div>';
+    const at = new Date(day.date + "T12:00");
+    card.querySelector(".name").textContent = index === 0 ? "Today"
+      : (isNaN(at) ? "--" : at.toLocaleDateString(undefined, { weekday: "short" }));
+    card.querySelector(".deg").innerHTML =
+      wxTemp(day.high) + "° <small>" + wxTemp(day.low) + "°</small>";
+    card.querySelector(".glyph").textContent = weatherGlyph(day.code, true);
+    card.querySelector(".rain").textContent = (day.precipitation_chance || 0) + "%";
+    card.addEventListener("click", () => wxShowDay(index));
+    list.appendChild(card);
+  });
+}
+
+function drawUpdated() {
+  if (!wxData || !wxData.fetched_at) {
+    el("wx-updated").textContent = wxFailed ? "Can't reach the weather" : "";
+    return;
+  }
+  const age = Date.now() - wxData.fetched_at * 1000;
+  const minutes = Math.max(0, Math.round(age / 60000));
+  const line = minutes < 1 ? "Updated just now"
+             : "Last updated " + minutes + " minute" + (minutes === 1 ? "" : "s") + " ago";
+  el("wx-updated").textContent = wxFailed ? "Offline — showing cached weather" : line;
+  el("wx-updated").classList.toggle("stale", wxFailed || age > WX_STALE_MS);
+  // The reference's small pill beside the day, which only means anything when
+  // the reading really is recent.
+  el("wx-fresh").hidden = !(age < 5 * 60 * 1000 && !wxFailed);
+}
+
+// ── the overlays ────────────────────────────────────────────────────
+
+function wxOpenModal(title, node) {
+  el("wx-modal-title").textContent = title;
+  const body = el("wx-modal-body");
+  body.innerHTML = "";
+  body.appendChild(node);
+  el("wx-modal").classList.add("on");
+}
+
+function wxCloseModal() { el("wx-modal").classList.remove("on"); }
+
+function wxShowFullHourly() {
+  if (!wxData) return;
+  const list = document.createElement("div");
+  (wxData.hourly || []).forEach((hour, index) => {
+    const row = document.createElement("div");
+    row.className = "hrow";
+    row.innerHTML = '<div class="when"></div><div class="glyph"></div>' +
+                    '<div class="sky"></div><div class="deg"></div><div class="rain"></div>';
+    row.querySelector(".when").textContent = index === 0 ? "Now"
+      : new Date(hour.time).toLocaleTimeString(undefined,
+          { weekday: "short", hour: "numeric" });
+    row.querySelector(".glyph").textContent = weatherGlyph(hour.code, hour.is_day);
+    row.querySelector(".sky").textContent = titleCase(hour.conditions || "");
+    row.querySelector(".deg").textContent = wxTemp(hour.temperature) + "°" + wxUnit;
+    row.querySelector(".rain").textContent = (hour.precipitation_chance || 0) + "%";
+    list.appendChild(row);
+  });
+  if (!list.children.length) {
+    list.textContent = "No hourly forecast is available right now.";
+  }
+  wxOpenModal("Hourly forecast", list);
+}
+
+function wxShowDay(index) {
+  if (!wxData) return;
+  const day = (wxData.forecast || [])[index];
+  if (!day) return;
+  const at = new Date(day.date + "T12:00");
+  const name = isNaN(at) ? day.date
+    : at.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
+
+  const grid = document.createElement("div");
+  grid.className = "detail";
+  const boxes = [
+    ["Condition", titleCase(day.conditions || "")],
+    ["High", wxTemp(day.high) + "°" + wxUnit],
+    ["Low", wxTemp(day.low) + "°" + wxUnit],
+    ["Chance of rain", (day.precipitation_chance || 0) + "%"],
+    ["UV index", day.uv_index_max == null ? "--" : Math.round(day.uv_index_max)],
+    ["Sunrise", clockTime(day.sunrise)],
+    ["Sunset", clockTime(day.sunset)],
+  ];
+  for (const [key, value] of boxes) {
+    const box = document.createElement("div");
+    box.className = "box";
+    box.innerHTML = '<div class="k"></div><div class="v"></div>';
+    box.querySelector(".k").textContent = key;
+    box.querySelector(".v").textContent = value;
+    grid.appendChild(box);
+  }
+  wxOpenModal(name, grid);
+}
+
+el("wx-full").addEventListener("click", wxShowFullHourly);
+el("wx-modal-close").addEventListener("click", wxCloseModal);
+el("wx-modal").addEventListener("click", (event) => {
+  if (event.target === el("wx-modal")) wxCloseModal();
+});
+el("wx-refresh").addEventListener("click", () => {
+  el("wx-updated").textContent = "Refreshing…";
+  loadWeather(true);
+});
+for (const button of document.querySelectorAll("#wx-units [data-unit]")) {
+  button.addEventListener("click", () => wxSetUnit(button.dataset.unit));
+}
+try {
+  wxSetUnit(localStorage.getItem(WX_UNIT_KEY) || "F");
+} catch (e) {
+  wxSetUnit("F");
 }
 
 // ── polling ─────────────────────────────────────────────────────────

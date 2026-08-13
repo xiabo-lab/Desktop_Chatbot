@@ -30,6 +30,15 @@ PAYLOAD = {
         "temperature_2m_max": [84.0, 79.0],
         "temperature_2m_min": [58.0, 57.0],
         "precipitation_probability_max": [0, 40],
+        "sunrise": ["2026-08-07T06:18", "2026-08-08T06:19"],
+        "sunset": ["2026-08-07T20:05", "2026-08-08T20:03"],
+    },
+    "hourly": {
+        "time": ["2026-08-07T00:00", "2026-08-07T01:00", "2026-08-07T02:00"],
+        "temperature_2m": [60.0, 59.0, 58.0],
+        "weather_code": [0, 2, 3],
+        "precipitation_probability": [0, 10, 20],
+        "is_day": [0, 0, 0],
     },
 }
 
@@ -104,6 +113,102 @@ class TestParsing(unittest.TestCase):
         with self.assertLogs("aipi5.tools.weather", level="ERROR") as captured:
             self.assertIsNone(broken.current())
         self.assertIn("could not read the weather response", captured.output[0])
+
+
+class TestWhatThePageNeeds(unittest.TestCase):
+    """The fields the redesigned weather page draws, and where they are not."""
+
+    def test_the_sun_times_come_through(self):
+        today = service().current().days[0]
+        self.assertEqual(today.sunrise, "2026-08-07T06:18")
+        self.assertEqual(today.sunset, "2026-08-07T20:05")
+
+    def test_pressure_and_the_hours_chance_of_rain(self):
+        payload = dict(PAYLOAD)
+        payload["current"] = dict(PAYLOAD["current"],
+                                  pressure_msl=1013.2, precipitation_probability=45)
+        now = service(FakeSession(payload)).current().now
+        self.assertEqual(now.pressure_hpa, 1013.2)
+        self.assertEqual(now.precipitation_chance, 45)
+
+    def test_the_hourly_forecast_is_read(self):
+        hours = service().current().hours
+        self.assertEqual(len(hours), 3)
+        self.assertEqual(hours[1].temperature, 59.0)
+        self.assertEqual(hours[1].precipitation_chance, 10)
+        self.assertFalse(hours[1].is_day)
+
+    def test_the_hours_are_kept_out_of_the_state_poll(self):
+        # `as_dict` is published twice a second and handed to the model on
+        # every weather question. Thirty-six hours of readings there would be
+        # a few hundred tokens and a few kilobytes a second for one card.
+        payload = service().current().as_dict()
+        self.assertNotIn("hourly", payload)
+        self.assertIn("sunrise", payload["forecast"][0])
+        self.assertIn("pressure_hpa", payload["current"])
+
+    def test_the_page_asks_for_them_separately(self):
+        # Built around the current hour on purpose: `as_page_dict` serves what
+        # is still to come, so a fixture full of last week's hours correctly
+        # produces an empty strip and would prove nothing.
+        import time
+        base = time.localtime()
+        stamps = ["%04d-%02d-%02dT%02d:00" % (base.tm_year, base.tm_mon,
+                                              base.tm_mday, hour)
+                  for hour in range(base.tm_hour, min(base.tm_hour + 3, 24))]
+        payload = dict(PAYLOAD)
+        payload["hourly"] = {
+            "time": stamps,
+            "temperature_2m": [60.0] * len(stamps),
+            "weather_code": [2] * len(stamps),
+            "precipitation_probability": [15] * len(stamps),
+            "is_day": [1] * len(stamps),
+        }
+        page = service(FakeSession(payload)).current().as_page_dict()
+        self.assertIn("hourly", page)
+        self.assertEqual(page["hourly"][0]["temperature"], 60)
+        self.assertEqual(page["hourly"][0]["conditions"], "partly cloudy")
+
+    def test_hours_that_have_already_passed_are_not_offered(self):
+        # The provider sends the whole of today. What the strip must open with
+        # is the hour somebody is standing in.
+        page = service().current().as_page_dict()
+        self.assertEqual(page["hourly"], [])
+
+    def test_upcoming_starts_at_the_hour_we_are_in(self):
+        # The provider sends the whole day, hours already gone included. A
+        # strip that opens with six in the morning is one nobody can read the
+        # current temperature off.
+        import time
+        from aipi5.tools.weather import HourForecast, Weather, Conditions
+
+        now = time.localtime()
+        stamp = "%04d-%02d-%02dT%02d:00" % (now.tm_year, now.tm_mon,
+                                            now.tm_mday, now.tm_hour)
+        earlier = "%04d-%02d-%02dT%02d:00" % (now.tm_year, now.tm_mon,
+                                              now.tm_mday, max(0, now.tm_hour - 3))
+        weather = Weather(
+            place="here",
+            now=Conditions(60, 60, 50, 5, 0, True, "F"),
+            days=(), fetched_at=time.time(),
+            hours=(HourForecast(earlier, 55, 0, 0, True),
+                   HourForecast(stamp, 60, 0, 0, True)))
+        upcoming = weather.upcoming()
+        self.assertEqual([h.time for h in upcoming], [stamp])
+
+    def test_asking_for_four_gives_four(self):
+        import time
+        from aipi5.tools.weather import HourForecast, Weather, Conditions
+        base = time.localtime()
+        hours = tuple(
+            HourForecast("%04d-%02d-%02dT%02d:00" % (base.tm_year, base.tm_mon,
+                                                     base.tm_mday, hour),
+                         60, 0, 0, True)
+            for hour in range(base.tm_hour, 24))
+        weather = Weather(place="here",
+                          now=Conditions(60, 60, 50, 5, 0, True, "F"),
+                          days=(), fetched_at=time.time(), hours=hours)
+        self.assertLessEqual(len(weather.upcoming(4)), 4)
 
 
 class TestCache(unittest.TestCase):

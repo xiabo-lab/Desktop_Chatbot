@@ -95,6 +95,13 @@ class Conditions:
     # index — it is what night is — and a page that cannot tell "no reading"
     # from "no sun" would confidently show a sunburn risk of none at noon.
     uv_index: float | None = None
+    #: Sea-level pressure in hPa, as the provider reports it. The page shows
+    #: inHg beside a Fahrenheit temperature and hPa beside a Celsius one,
+    #: because those are the units the two audiences read pressure in.
+    pressure_hpa: float | None = None
+    #: The chance of rain in the hour we are in, which is a different question
+    #: from the day's maximum and the one somebody leaving now cares about.
+    precipitation_chance: int | None = None
 
     def describe(self, language: str = "en") -> str:
         sky = describe_code(self.code, language)
@@ -113,12 +120,45 @@ class DayForecast:
     code: int | None
     precipitation_chance: int
     uv_index_max: float | None = None
+    #: ISO local times, as the provider returns them. Strings rather than
+    #: datetimes: they are formatted for a screen and compared against a clock
+    #: in the browser, and parsing them here would only mean formatting them
+    #: back again.
+    sunrise: str = ""
+    sunset: str = ""
 
     def describe(self, language: str = "en") -> str:
         sky = describe_code(self.code, language)
         if language == "zh":
             return f"{sky}，最高{self.high:.0f}度，最低{self.low:.0f}度。"
         return f"{sky}, high {self.high:.0f}, low {self.low:.0f}."
+
+
+@dataclass(frozen=True)
+class HourForecast:
+    """One hour of the next day and a half.
+
+    Kept apart from `DayForecast` rather than generalised: a day has a high and
+    a low and an hour has neither, and a single class covering both would have
+    four fields that are always empty in one of its two uses.
+    """
+
+    time: str          # ISO local, as the API returns it
+    temperature: float
+    code: int | None
+    precipitation_chance: int
+    is_day: bool
+
+    def as_dict(self) -> dict:
+        return {
+            "time": self.time,
+            "temperature": round(self.temperature),
+            "code": self.code,
+            "conditions": describe_code(self.code, "en"),
+            "conditions_zh": describe_code(self.code, "zh"),
+            "precipitation_chance": self.precipitation_chance,
+            "is_day": self.is_day,
+        }
 
 
 @dataclass(frozen=True)
@@ -129,6 +169,8 @@ class Weather:
     now: Conditions
     days: tuple[DayForecast, ...]
     fetched_at: float
+    #: The next day and a half, hour by hour. **Not in `as_dict`** — see there.
+    hours: tuple[HourForecast, ...] = ()
 
     def summary(self, language: str = "en") -> str:
         """One or two sentences, for speech.
@@ -200,11 +242,17 @@ class Weather:
         return ""
 
     def as_dict(self) -> dict:
-        """The shape the model and the UI both receive.
+        """The shape the model and the screensaver both receive.
 
         One representation, not two. The screensaver draws from the same
         dictionary the model is handed, so the temperature on the screen and
         the temperature in the spoken answer cannot disagree.
+
+        **The hourly forecast is deliberately absent.** This dictionary is
+        published in the state the page polls twice a second and is handed to
+        the model on every weather question; thirty-six hours of readings would
+        be a few hundred tokens and a few kilobytes a second, for something
+        only one card on one page ever draws. `as_page_dict` has it.
         """
         return {
             "place": self.place,
@@ -220,6 +268,9 @@ class Weather:
                 "is_day": self.now.is_day,
                 "uv_index": (None if self.now.uv_index is None
                              else round(self.now.uv_index, 1)),
+                "pressure_hpa": (None if self.now.pressure_hpa is None
+                                 else round(self.now.pressure_hpa, 1)),
+                "precipitation_chance": self.now.precipitation_chance,
             },
             "forecast": [
                 {
@@ -231,11 +282,47 @@ class Weather:
                     "precipitation_chance": day.precipitation_chance,
                     "uv_index_max": (None if day.uv_index_max is None
                                      else round(day.uv_index_max, 1)),
+                    "sunrise": day.sunrise,
+                    "sunset": day.sunset,
+                    "code": day.code,
                 }
                 for day in self.days
             ],
             "fetched_at": self.fetched_at,
         }
+
+    def as_page_dict(self, hours: int = 24) -> dict:
+        """Everything the weather page draws, which is more than anything else
+        needs.
+
+        Served from `/api/weather` only, and asked for when that page is open
+        rather than on the state poll — which is the whole reason it is a
+        separate method.
+        """
+        payload = self.as_dict()
+        payload["hourly"] = [hour.as_dict() for hour in self.upcoming(hours)]
+        return payload
+
+    def upcoming(self, hours: int = 24) -> tuple[HourForecast, ...]:
+        """The next `hours` entries, starting from the hour we are in.
+
+        The provider returns the whole day including the hours already gone —
+        a forecast strip that opens with six in the morning is one nobody can
+        read the current temperature off.
+        """
+        import time as _time
+        now = _time.time()
+        upcoming = []
+        for hour in self.hours:
+            stamp = _parse_local(hour.time)
+            # An hour is still "now" until it ends: at 09:40 the 09:00 entry is
+            # the one somebody is standing in.
+            if stamp is None or stamp + 3600 <= now:
+                continue
+            upcoming.append(hour)
+            if len(upcoming) >= hours:
+                break
+        return tuple(upcoming)
 
 
 class WeatherService:
@@ -292,13 +379,21 @@ class WeatherService:
             "latitude": self.location.latitude,
             "longitude": self.location.longitude,
             "current": ("temperature_2m,relative_humidity_2m,apparent_temperature,"
-                        "is_day,weather_code,wind_speed_10m,uv_index"),
+                        "is_day,weather_code,wind_speed_10m,uv_index,"
+                        "pressure_msl,precipitation_probability"),
             "daily": ("weather_code,temperature_2m_max,temperature_2m_min,"
-                      "precipitation_probability_max,uv_index_max"),
+                      "precipitation_probability_max,uv_index_max,sunrise,sunset"),
+            # Two days of hours is enough for the strip on the page and for the
+            # overlay behind it, and it is where the response stops being small:
+            # a week of hourly readings is 168 of everything asked for.
+            "hourly": "temperature_2m,weather_code,precipitation_probability,is_day",
             "temperature_unit": self.location.temperature_unit,
             "wind_speed_unit": "mph",
             "timezone": self.location.timezone,
-            "forecast_days": 4,
+            # Seven, because the page shows seven. It was four when the page
+            # showed three days and a today.
+            "forecast_days": 7,
+            "forecast_hours": 36,
         }
         try:
             resp = self._session.get(ENDPOINT, params=params,
@@ -339,6 +434,20 @@ class WeatherService:
                               [0] * (index + 1))[index] or 0),
                 uv_index_max=_float_or_none(
                     daily.get("uv_index_max", [None] * (index + 1))[index]),
+                sunrise=str(_at(daily.get("sunrise"), index) or ""),
+                sunset=str(_at(daily.get("sunset"), index) or ""),
+            ))
+
+        hours = []
+        hourly = payload.get("hourly", {})
+        for index, stamp in enumerate(hourly.get("time", [])):
+            hours.append(HourForecast(
+                time=str(stamp),
+                temperature=float(_at(hourly.get("temperature_2m"), index) or 0.0),
+                code=_int_or_none(_at(hourly.get("weather_code"), index)),
+                precipitation_chance=int(
+                    _at(hourly.get("precipitation_probability"), index) or 0),
+                is_day=bool(_at(hourly.get("is_day"), index, default=1)),
             ))
 
         return Weather(
@@ -353,13 +462,45 @@ class WeatherService:
                 is_day=bool(current.get("is_day", 1)),
                 unit=unit,
                 uv_index=_float_or_none(current.get("uv_index")),
+                pressure_hpa=_float_or_none(current.get("pressure_msl")),
+                precipitation_chance=_int_or_none(
+                    current.get("precipitation_probability")),
             ),
             days=tuple(days),
             fetched_at=time.time(),
+            hours=tuple(hours),
         )
 
     def close(self) -> None:
         self._session.close()
+
+
+def _at(values, index: int, default=None):
+    """`values[index]`, or `default` when the provider left the list short.
+
+    Open-Meteo omits a series entirely rather than padding it when a field is
+    unavailable for a location, so every read of a parallel array has to
+    survive the array not being there at all.
+    """
+    if not values or index >= len(values):
+        return default
+    value = values[index]
+    return default if value is None else value
+
+
+def _parse_local(stamp: str) -> float | None:
+    """An ISO local timestamp as an epoch, or None.
+
+    The provider is asked for the location's timezone and answers in it,
+    without an offset — `2026-08-12T14:00`. Parsed as local time on the Pi,
+    which is set to the same place; anything else and "the current hour" is
+    wrong by the offset between them.
+    """
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(stamp).timestamp()
+    except (TypeError, ValueError):
+        return None
 
 
 def _float_or_none(value) -> float | None:
