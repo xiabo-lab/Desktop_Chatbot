@@ -40,6 +40,19 @@ requests
 pywebpush==1.14.1
 py-vapid==1.9.0
 
+# A QR code on the screen, so a phone can open the Google Photos picker.
+#
+# The kiosk has no keyboard and no address bar, and the picker has to be opened
+# in a browser signed in to the account — so the URL has to leave this device
+# by being photographed. segno is pure Python with no dependencies of its own,
+# which matters on a Pi whose venv sees system packages: it cannot drag in a
+# second copy of anything already installed.
+#
+# **Optional.** `aipi5/photos/qr.py` imports it inside a try, and without it
+# the settings page shows the URL as text instead — usable over ssh, not usable
+# on the panel. Nothing else in the project touches it.
+segno
+
 # ── on the Pi, and not from PyPI ──────────────────────────────────────
 #
 # Two things this project needs are Debian packages rather than wheels, and

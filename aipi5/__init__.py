@@ -16,4 +16,4 @@ __all__ = ["__version__"]
 
 # Deployment stamps a version in the way AIA does — from the tag it was
 # deployed from. Until there is one, this is what the settings page shows.
-__version__ = "0.2.0"
+__version__ = "0.3.0"

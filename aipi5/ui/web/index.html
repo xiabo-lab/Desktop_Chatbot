@@ -602,33 +602,222 @@
 
   /* ── the screensaver ─────────────────────────────────────────── */
 
-  /* Full 1280x800, over everything. Section 24: the time and the weather, and
-     nothing else — it is what a dark room looks at, so it carries no
-     conversation and no controls. */
+  /* Full 1280x800, over everything, and now two screens inside one frame: the
+     daytime photo slideshow and the night-time clock. Which of them is up is
+     decided on the Pi — see aipi5/screensaver/manager.py — and arrives as
+     `screensaver_mode` on the state poll. Nothing here chooses; a page that
+     had an opinion would be the second decider section 26 forbids.
+
+     Black rather than the old blue-grey gradient. Section 16 wants the night
+     screen to put much less light into a dark room than the slideshow does,
+     and the background is most of the screen. */
   #screensaver {
     position: fixed; inset: 0; width: 1280px; height: 800px;
-    background: radial-gradient(ellipse at 50% 35%, #16202e 0%, #080a0e 75%);
-    display: none; flex-direction: column;
-    align-items: center; justify-content: center;
-    text-align: center;
-    z-index: 10;
+    background: #000;
+    display: none; z-index: 10; overflow: hidden;
   }
-  #screensaver.on { display: flex; }
+  #screensaver.on { display: block; }
+
+  /* Both layers exist all the time and cross-fade between each other, which
+     is what makes 21:01 a fade rather than a cut — section 2's example. The
+     hidden one is `visibility: hidden` as well as transparent so it is out of
+     the compositor's way and cannot take a touch. */
+  .ss-screen {
+    position: absolute; inset: 0;
+    opacity: 0; visibility: hidden;
+    transition: opacity 900ms ease, visibility 0s linear 900ms;
+  }
+  .ss-screen.showing {
+    opacity: 1; visibility: visible;
+    transition: opacity 900ms ease, visibility 0s;
+  }
+
+  /* ── night: the clock and the weather ─────────────────────────── */
+
+  /* Section 15: the clock dominates, everything else is secondary, and it has
+     to be readable from several feet away. Section 16: black, dark grey, dim
+     white, and nothing that fills the screen with light. */
+  #ss-night {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    background: #000;
+    color: #c9d2de;
+  }
   #ss-time {
-    font-size: 210px; font-weight: 200; line-height: 1;
-    letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+    font-size: 250px; font-weight: 200; line-height: 0.95;
+    letter-spacing: -0.03em; font-variant-numeric: tabular-nums;
+    color: #dfe6ef;
   }
-  #ss-date { font-size: 34px; color: var(--ink-dim); margin-top: 18px; }
-  #ss-weather {
-    margin-top: 66px; display: flex; align-items: baseline; gap: 26px;
-    font-size: 40px; color: var(--ink-dim);
+  #ss-date { font-size: 36px; color: #7d8797; margin-top: 14px; font-weight: 300; }
+  #ss-wx {
+    margin-top: 56px; display: flex; align-items: center; gap: 28px;
   }
-  #ss-temp { font-size: 84px; font-weight: 300; color: var(--ink); }
-  #ss-place { margin-top: 22px; font-size: 24px; color: var(--ink-faint); }
+  #ss-icon { font-size: 62px; line-height: 1; filter: saturate(0.55) brightness(0.85); }
+  #ss-temp {
+    font-size: 96px; font-weight: 200; line-height: 1;
+    font-variant-numeric: tabular-nums; color: #dfe6ef;
+  }
+  #ss-conditions { margin-top: 10px; font-size: 34px; color: #8b95a6; }
+  #ss-range {
+    margin-top: 26px; display: flex; gap: 70px;
+    font-size: 28px; color: #6d7787; font-variant-numeric: tabular-nums;
+  }
+  #ss-place { margin-top: 30px; font-size: 26px; color: #5c6675; }
+  /* Section 18: cached weather is still weather, but a person should be able
+     to see that it is an hour old rather than be quietly misled. */
+  #ss-stale { margin-top: 10px; font-size: 18px; color: #3f4854; }
+
+  /* ── day: the photo slideshow ─────────────────────────────────── */
+
+  #ss-photos { background: #000; }
+
+  /* Two layers, alternating. One is on screen while the next photograph is
+     decoded into the other, then they swap by opacity — section 11's
+     crossfade, done with the one property a compositor can animate without
+     touching the CPU. No filter, no transform, no blur is animated: those all
+     force a repaint per frame, which on this Pi is exactly the "CPU-heavy
+     transition effect" section 11 rules out. */
+  .ss-photo {
+    position: absolute; inset: 0;
+    opacity: 0; transition: opacity 1000ms ease-in-out;
+    will-change: opacity;
+  }
+  .ss-photo.front { opacity: 1; }
+
+  /* Section 10's background for the unused space: the same photograph,
+     blurred and darkened. **Rendered at a quarter size and scaled up.** A
+     `filter: blur()` costs by the pixel, and blurring 1280x800 every time the
+     picture changes is visible as a stutter on this hardware; blurring
+     320x200 and letting the compositor scale it is the same image to the eye
+     and a sixteenth of the work. */
+  .ss-photo .wash {
+    position: absolute; top: 0; left: 0;
+    width: 320px; height: 200px;
+    transform: scale(4.02); transform-origin: top left;
+    background-position: center; background-size: cover;
+    filter: blur(7px) brightness(0.38) saturate(0.9);
+  }
+  /* `contain`, always. Section 10: photographs are never stretched and never
+     cropped — a portrait is centred with the wash either side, a landscape
+     fills what it can. One rule covers both, which is why there is no code
+     anywhere that asks which way up a photograph is. */
+  .ss-photo img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+  }
+  /* Section 13: small, temporary, and never covering the photograph. Off
+     unless `photos.show_info` is on. */
+  #ss-caption {
+    position: absolute; left: 34px; bottom: 30px;
+    font-size: 20px; color: rgba(255,255,255,0.72);
+    text-shadow: 0 1px 6px rgba(0,0,0,0.9);
+    opacity: 0; transition: opacity 600ms ease;
+  }
+  #ss-caption.showing { opacity: 1; }
+
+  /* The empty case. Section 18: no photographs and no way to fetch any is a
+     plain screen, not an error page — so it is the night clock, which this
+     page already knows how to draw, and `manager.py` asks for it. Nothing is
+     needed here for it. */
+
   /* Somebody may still touch the screen. Presence is what takes the
      screensaver away — section 26 — but a touch is proof of a person even
-     when the camera disagrees, so it wakes too. */
-  #ss-hint { position: absolute; bottom: 30px; font-size: 18px; color: #3b4553; }
+     when the camera disagrees, so it wakes too. Dimmer over a photograph than
+     it was over the old clock, because it sits on top of somebody's picture. */
+  #ss-hint {
+    position: absolute; bottom: 26px; left: 0; right: 0; text-align: center;
+    font-size: 17px; color: #3b4553; pointer-events: none;
+  }
+  #screensaver.photos #ss-hint { color: rgba(255,255,255,0.28);
+                                 text-shadow: 0 1px 5px rgba(0,0,0,0.8); }
+
+  /* ── settings ────────────────────────────────────────────────── */
+
+  /* Rows of label and value, at a size somebody can read standing up. Nothing
+     here is a text field: this device has no keyboard, so every control is a
+     button or a choice between things already on the screen. */
+  #settings-body { flex: 1; overflow-y: auto; padding-right: 6px; }
+  .set-section {
+    background: var(--panel); border: 1px solid var(--panel-edge);
+    border-radius: 14px; padding: 20px 24px; margin-bottom: 16px;
+  }
+  .set-title {
+    font-size: 24px; font-weight: 600; margin-bottom: 14px;
+    letter-spacing: 0.02em;
+  }
+  .set-row {
+    display: flex; align-items: baseline; gap: 20px;
+    padding: 10px 0; border-top: 1px solid rgba(255,255,255,0.05);
+  }
+  .set-row:first-of-type { border-top: 0; }
+  .set-label { flex: 0 0 240px; font-size: 20px; color: var(--ink-dim); }
+  .set-value { flex: 1; font-size: 21px; color: var(--ink); }
+  .set-value.off { color: var(--ink-faint); }
+  .set-note {
+    margin-top: 12px; font-size: 17px; color: var(--ink-faint); line-height: 1.5;
+  }
+  .set-buttons { display: flex; gap: 12px; margin-top: 18px; flex-wrap: wrap; }
+  .set-button {
+    flex: 0 0 auto; height: 62px; padding: 0 26px; font-size: 20px;
+    flex-direction: row;
+  }
+  .set-button.danger { color: #e08c8c; }
+  .set-button[disabled] { opacity: 0.4; }
+  /* Each picked set, with the one in use marked. Tapping one switches to it,
+     which is what "Change Album" means when the sets are already on the
+     device — no phone needed unless you want a different selection. */
+  .set-collection {
+    display: flex; align-items: center; gap: 16px; margin-top: 10px;
+    padding: 14px 18px; border-radius: 12px;
+    background: rgba(255,255,255,0.04); cursor: pointer;
+  }
+  .set-collection.chosen { background: rgba(120,170,255,0.14); }
+  .set-collection .tick { width: 26px; font-size: 22px; color: #8ab4ff; }
+  .set-collection .who { flex: 1; font-size: 20px; }
+  .set-collection .how-many { font-size: 18px; color: var(--ink-dim); }
+
+  /* The QR code, over the settings page. A light card whatever else is dark:
+     an inverted QR code is one many phone cameras will not read. */
+  #picker {
+    position: fixed; inset: 0; width: 1280px; height: 800px;
+    background: rgba(6, 8, 11, 0.94); display: none;
+    align-items: center; justify-content: center; z-index: 25;
+  }
+  #picker.on { display: flex; }
+  #picker-card {
+    background: #fff; color: #111; border-radius: 20px; padding: 24px 40px;
+    text-align: center; max-width: 660px;
+  }
+  #picker-title { font-size: 28px; font-weight: 600; margin-bottom: 18px; }
+  /* The box, not the SVG. `qr.py` emits a viewBox and `width:100%`, so the
+     code scales to fill this and cannot be cropped by it — which is what
+     happened when the size was set on the SVG itself.
+     480 px for a version-10 code (57 modules plus an 8-module quiet zone) is
+     about 7 px a module, which a phone reads comfortably at arm's length from
+     a glossy panel. 340 was not enough even before the cropping bug. */
+  #picker-qr {
+    width: 480px; height: 480px; margin: 0 auto;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #picker-qr svg { display: block; width: 100%; height: 100%; }
+  /* Once the code has been scanned there is nothing to show, and a 480 px
+     square of white with a sentence under it reads as a page that failed to
+     load. Collapse it. */
+  #picker-qr:empty { display: none; }
+  #picker-qr .url {
+    font-size: 13px; word-break: break-all; color: #333; max-width: 520px;
+    line-height: 1.5;
+  }
+  #picker-help {
+    margin-top: 18px; font-size: 18px; color: #444; line-height: 1.5;
+    max-width: 460px;
+  }
+  #picker-status { margin-top: 14px; font-size: 18px; color: #666; }
+  #picker .set-button {
+    margin-top: 20px; background: #f0f2f5; color: #111;
+    border-color: #d8dce2;
+  }
 
   /* ── the file viewer ─────────────────────────────────────────── */
 
@@ -721,6 +910,10 @@
          not work, there is nothing for the voice loop to do about it, and
          nothing here may be rate limited into looking broken. -->
     <button data-page="files"><span class="glyph">⇅</span><span class="label">Files</span></button>
+    <!-- Also navigation only, and for the same reason. What is on it is the
+         screensaver: the schedule, the Google account behind the slideshow,
+         and how long each photograph stays up — section 22. -->
+    <button data-page="settings"><span class="glyph">⚙</span><span class="label">Settings</span></button>
   </div>
 </div>
 
@@ -949,6 +1142,110 @@
   <div id="files-list"></div>
 </div>
 
+<!-- ── settings ────────────────────────────────────────────────── -->
+<!--
+  One section so far, and it is the screensaver — section 22. Everything else
+  this device can be configured with is in `config/aipi5.yaml`, which is the
+  right place for it: a wake word, a microphone gain and a Hailo model are not
+  things anybody edits with a finger. What is here is what has to be done from
+  the panel, because it needs a phone camera and a Google account.
+-->
+<div id="page-settings" class="page">
+  <header>
+    <button class="back" data-back><span class="glyph">‹</span> Back</button>
+    <h1>SETTINGS</h1>
+    <div class="headline-weather" data-weather-headline></div>
+  </header>
+
+  <div id="settings-body">
+    <div class="set-section">
+      <div class="set-title">Screensaver</div>
+
+      <div class="set-row">
+        <div class="set-label">Enabled</div>
+        <div class="set-value" id="set-enabled">—</div>
+      </div>
+      <div class="set-row">
+        <div class="set-label">Idle timeout</div>
+        <div class="set-value" id="set-timeout">—</div>
+      </div>
+      <div class="set-row">
+        <div class="set-label">Day slideshow</div>
+        <div class="set-value" id="set-day">—</div>
+      </div>
+      <div class="set-row">
+        <div class="set-label">Night screen</div>
+        <div class="set-value" id="set-night">—</div>
+      </div>
+      <div class="set-row">
+        <div class="set-label">Showing now</div>
+        <div class="set-value" id="set-mode">—</div>
+      </div>
+      <!-- Section 22 asks for the schedule to be visible and section 25 for
+           the timezone to be diagnosable. Both are read-only here on purpose:
+           they live in one place in the YAML so they can be changed without
+           touching the screensaver logic, and a second way to set them is a
+           second thing that can disagree. -->
+      <div class="set-note" id="set-schedule-note"></div>
+    </div>
+
+    <div class="set-section">
+      <div class="set-title">Slideshow source</div>
+
+      <div class="set-row">
+        <div class="set-label">Google Photos</div>
+        <div class="set-value" id="set-account">—</div>
+      </div>
+      <!-- **Not "Album".** The Google Photos Picker API does not hand back an
+           album — it hands back the photographs a person selected, once. A
+           label saying "Album" would promise something the API cannot do:
+           that adding a picture to that album in Google Photos would make it
+           appear here. It would not. See aipi5/photos/__init__.py. -->
+      <div class="set-row">
+        <div class="set-label">Selected photos</div>
+        <div class="set-value" id="set-album">—</div>
+      </div>
+      <div class="set-row">
+        <div class="set-label">Photo interval</div>
+        <div class="set-value" id="set-interval">—</div>
+      </div>
+      <div class="set-row">
+        <div class="set-label">Cached</div>
+        <div class="set-value" id="set-cache">—</div>
+      </div>
+
+      <div class="set-buttons">
+        <button class="set-button" id="set-pick">Change Photos</button>
+        <button class="set-button" id="set-sync">Sync Now</button>
+        <button class="set-button" id="set-reconnect">Reconnect</button>
+        <button class="set-button danger" id="set-disconnect">Disconnect</button>
+      </div>
+      <div class="set-note" id="set-photos-note"></div>
+
+      <!-- The sets the person has picked before, so switching back to one is
+           a tap rather than another trip to the phone. -->
+      <div id="set-collections"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Choosing photographs: a QR code, because there is no other way in.
+     The Google Photos picker needs a browser signed in to the account and
+     this panel is a kiosk with no keyboard and no address bar, so the URL
+     leaves the device by being photographed. See aipi5/photos/__init__.py. -->
+<div id="picker">
+  <div id="picker-card">
+    <div id="picker-title">Scan with your phone</div>
+    <div id="picker-qr"></div>
+    <div id="picker-help">
+      Open the code on a phone signed in to your Google account, choose the
+      photos you want, and they will appear here.
+    </div>
+    <div id="picker-status">Waiting…</div>
+    <button class="set-button" id="picker-close">Cancel</button>
+  </div>
+</div>
+
 <!-- Looking at one file, over the file list. A view rather than a new page,
      for the reason every other view here is one: this is a kiosk, and a window
      somebody cannot get back from is worse than no window. -->
@@ -958,14 +1255,33 @@
   <div class="caption" id="viewer-caption"></div>
 </div>
 
+<!-- One frame, two screens. Which one is up is the Pi's decision and arrives
+     as `screensaver_mode`; both are in the DOM the whole time so the change at
+     07:00 and 21:01 is a fade rather than a page build. -->
 <div id="screensaver">
-  <div id="ss-time">--:--</div>
-  <div id="ss-date"></div>
-  <div id="ss-weather">
-    <div id="ss-temp">--</div>
-    <div id="ss-conditions"></div>
+
+  <!-- Day. Two photo layers that take turns; see `showPhoto`. -->
+  <div id="ss-photos" class="ss-screen">
+    <div class="ss-photo" id="ss-photo-a"><div class="wash"></div><img alt=""></div>
+    <div class="ss-photo" id="ss-photo-b"><div class="wash"></div><img alt=""></div>
+    <div id="ss-caption"></div>
   </div>
-  <div id="ss-place"></div>
+
+  <!-- Night. Section 14's layout, in its order: time, date, sky, temperature,
+       conditions, today's range, where. -->
+  <div id="ss-night" class="ss-screen">
+    <div id="ss-time">--:--</div>
+    <div id="ss-date"></div>
+    <div id="ss-wx">
+      <div id="ss-icon">·</div>
+      <div id="ss-temp">--°</div>
+    </div>
+    <div id="ss-conditions"></div>
+    <div id="ss-range"><span id="ss-high">H: --</span><span id="ss-low">L: --</span></div>
+    <div id="ss-place"></div>
+    <div id="ss-stale"></div>
+  </div>
+
   <div id="ss-hint">Touch the screen or say 小艾同学</div>
 </div>
 
@@ -1038,10 +1354,15 @@ function show(page) {
   // handler.
   if (previous === "call") stopCall();
   if (previous === "weather") stopWeather();
+  // The settings page polls while it is open — a picking session finishing on
+  // somebody's phone has to appear here — and must stop the moment it is not,
+  // for the same reason the camera preview does.
+  if (previous === "settings") stopSettings();
   if (page === "camera") startCamera();
   if (page === "call") startCall();
   if (page === "weather") startWeather();
   if (page === "files") loadFiles();
+  if (page === "settings") startSettings();
   return true;
 }
 
@@ -1065,7 +1386,12 @@ for (const button of document.querySelectorAll("[data-page]")) {
 // assistant speak.
 function fromHash() {
   const page = (location.hash || "").replace(/^#/, "");
-  if (page && (page === "main" || page === "files" || PAGE_OF[page])) show(page);
+  // Any page that exists, checked by asking the DOM rather than against a
+  // list. The list had to be edited every time a page was added and was one
+  // page behind by the time anybody noticed — and this is the only way to
+  // reach a particular screen on a device with no keyboard: `ssh -L` a
+  // browser at it and ask for `#settings`.
+  if (page && document.getElementById("page-" + page)) show(page);
 }
 window.addEventListener("hashchange", fromHash);
 
@@ -1082,6 +1408,14 @@ function now() {
   return new Date(Date.now() + clockSkewMs);
 }
 
+// The clock, redrawn every second whether or not anybody can see it. Cheap —
+// two text nodes — and it is what makes the date roll over at midnight on a
+// screen that has been showing 11:59 PM for an hour without anything else
+// happening on the device.
+//
+// `now()` is the Pi's time, not the browser's: the state poll carries the
+// server's clock and the two can genuinely disagree, since Chromium and the
+// system get their time from different places on a Pi with no RTC.
 function drawClock() {
   const t = now();
   let hours = t.getHours() % 12;
@@ -1091,6 +1425,40 @@ function drawClock() {
   el("ss-date").textContent = t.toLocaleDateString(undefined, {
     weekday: "long", month: "long", day: "numeric",
   });
+}
+
+// Section 17: the same weather the Weather page shows, from the same service
+// and the same cache. This draws what the state poll already carries — it
+// never fetches — so the night screen has a temperature on it the instant it
+// appears and the refresh happens on the assistant's own schedule behind it.
+function drawNightWeather(weather) {
+  const current = weather.current || {};
+  const today = (weather.forecast || [])[0];
+  el("ss-icon").textContent = weatherGlyph(current.code, current.is_day);
+  el("ss-temp").textContent = `${current.temperature}°`;
+  el("ss-conditions").textContent = current.conditions || "";
+  el("ss-place").textContent = weather.place || "";
+  if (today) {
+    el("ss-high").textContent = `H: ${today.high}°`;
+    el("ss-low").textContent = `L: ${today.low}°`;
+    el("ss-range").style.visibility = "visible";
+  } else {
+    el("ss-range").style.visibility = "hidden";
+  }
+
+  // Section 18: cached weather still gets shown, and says so once it is old
+  // enough to be worth doubting. Twenty minutes rather than the ten-minute
+  // cache — a reading one refresh late is not stale, it is normal.
+  const age = weather.fetched_at ? (now().getTime() / 1000 - weather.fetched_at) : 0;
+  const stale = el("ss-stale");
+  if (age > 1200) {
+    const minutes = Math.round(age / 60);
+    stale.textContent = minutes < 90
+      ? `Last updated ${minutes} min ago`
+      : `Last updated ${Math.round(minutes / 60)} h ago`;
+  } else {
+    stale.textContent = "";
+  }
 }
 
 // ── cooldowns ───────────────────────────────────────────────────────
@@ -1170,9 +1538,7 @@ function applyState(state) {
     for (const node of document.querySelectorAll("[data-weather-headline]")) {
       node.innerHTML = html;
     }
-    el("ss-temp").textContent = `${weather.current.temperature}°`;
-    el("ss-conditions").textContent = weather.current.conditions;
-    el("ss-place").textContent = weather.place || "";
+    drawNightWeather(weather);
   }
 
   cameraAnswerFromState(state, assistant);
@@ -1186,12 +1552,27 @@ function applyState(state) {
   // woke goes straight back to sleep on the next poll, because the server has
   // not yet processed the action the touch queued.
   const recentlyDismissed = Date.now() - dismissedAt < 3000;
-  // A call outranks the clock. Presence here is the camera's opinion of the
-  // room the Pi is in, and during a call the person worth showing the screen
-  // to is on the other end of it — a caller who steps out of the Brio's view
-  // for ten seconds must not come back to a clock face drawn over the person
-  // they are talking to.
-  setScreensaver(wanted && !recentlyDismissed && !callActive);
+  // A call outranks either screensaver. Presence here is the camera's opinion
+  // of the room the Pi is in, and during a call the person worth showing the
+  // screen to is on the other end of it — a caller who steps out of the
+  // Brio's view for ten seconds must not come back to a clock face drawn over
+  // the person they are talking to.
+  //
+  // The Pi decides this too — `ScreensaverManager.hold` — and it is checked in
+  // both places on purpose: the server knows about calls the page has not
+  // heard of yet, and the page knows the moment its own call UI comes up,
+  // half a poll before the server does.
+  setScreensaver(wanted && !recentlyDismissed && !callActive,
+                 state.screensaver_mode || "night-weather");
+
+  // The playlist is re-read only when the Pi says it has changed. `photos_rev`
+  // is one string on a poll the page was making anyway; the alternative is
+  // fetching a few hundred filenames twice a second for a photograph that
+  // arrives once an hour.
+  if (state.photos_rev !== undefined && state.photos_rev !== photosRev) {
+    photosRev = state.photos_rev;
+    loadPlaylist();
+  }
 
   const problems = state.degraded || [];
   for (const node of document.querySelectorAll("[data-degraded]")) {
@@ -1199,12 +1580,619 @@ function applyState(state) {
   }
 }
 
-function setScreensaver(on) {
-  if (on === screensaverOn) return;
-  screensaverOn = on;
-  screensaver.classList.toggle("on", on);
-  if (on) drawClock();
+// ── the screensaver ─────────────────────────────────────────────────
+//
+// Two screens, one frame, and no opinion about which. `screensaver_mode` comes
+// from `aipi5/screensaver/manager.py` and is `active`, `day-photos` or
+// `night-weather`; everything below only renders it. Section 26 asks for one
+// decider and this page is deliberately not it — a page that also decided
+// would disagree with the Pi for half a poll at every boundary, which is
+// exactly the flicker at 21:01 the single-manager rule exists to prevent.
+
+function setScreensaver(on, mode) {
+  const wantPhotos = on && mode === "day-photos" && slideshow.photos.length > 0;
+  const wantNight = on && !wantPhotos;
+
+  if (on !== screensaverOn) {
+    screensaverOn = on;
+    screensaver.classList.toggle("on", on);
+  }
+  screensaver.classList.toggle("photos", wantPhotos);
+
+  // Both layers are told every time rather than only on a change: the classes
+  // are idempotent, and the alternative is tracking a second copy of the mode
+  // here that can drift from the one the Pi sent.
+  el("ss-photos").classList.toggle("showing", wantPhotos);
+  el("ss-night").classList.toggle("showing", wantNight);
+
+  if (wantPhotos) startSlideshow(); else stopSlideshow();
+  if (wantNight) drawClock();
+
+  // Nothing from the Settings page may be left stranded on top of the
+  // screensaver. Seen on the device: a finished "6 photos ready" card sat
+  // over the slideshow indefinitely because nobody pressed Close before
+  // walking away, and it is drawn above the screensaver by z-index.
+  //
+  // Safe to hide unconditionally, because a session still *waiting* holds the
+  // screensaver off entirely (`pick_waiting` on the Pi) so we cannot be
+  // hiding a code somebody is about to scan — and even if we did, pressing
+  // Choose Photos again re-shows the same session rather than starting a new
+  // one.
+  if (on) closePicker("hide");
 }
+
+// ── the daytime slideshow ───────────────────────────────────────────
+//
+// Two <img> elements for the life of the page and never a third. Section 28
+// is explicit about image object leaks and about not rebuilding large
+// components every few seconds: the layers are built once in the HTML, the
+// only thing that ever changes is a `src` and a `background-image`, and the
+// one extra `Image` in flight at any moment is the single photograph being
+// decoded ahead of time.
+//
+// One timer, too. `next` is armed by the photograph that just appeared and by
+// nothing else, so there is exactly one pending timeout whatever happens —
+// including a wake and a re-entry in the middle of a fade.
+
+let photosRev = null;
+
+const slideshow = {
+  photos: [],            // the playlist, oldest cached first
+  queue: [],             // shuffled indices not yet shown this round
+  front: "a",            // which layer is currently visible
+  timer: null,
+  preload: null,         // the one Image being decoded ahead of time
+  running: false,
+  intervalMs: 15000,
+  fadeMs: 1000,
+  shuffle: true,
+  showInfo: false,
+  last: -1,              // the index on screen, so a reshuffle cannot repeat it
+  misses: 0,             // consecutive files that would not load
+};
+
+async function loadPlaylist() {
+  try {
+    const response = await fetch("/api/photos", { cache: "no-store" });
+    if (!response.ok) { slideshow.photos = []; return; }
+    const payload = await response.json();
+    slideshow.photos = Array.isArray(payload.photos) ? payload.photos : [];
+    slideshow.intervalMs = Math.max(3000, (payload.interval_s || 15) * 1000);
+    slideshow.fadeMs = Math.max(150, payload.transition_ms || 1000);
+    slideshow.shuffle = payload.shuffle !== false;
+    slideshow.showInfo = !!payload.show_info;
+    // The transition is a CSS duration, so the setting has to reach CSS. Set
+    // on the two layers rather than in a stylesheet rule, which is the only
+    // way a value that comes from a YAML file can get there.
+    for (const id of ["ss-photo-a", "ss-photo-b"]) {
+      el(id).style.transitionDuration = slideshow.fadeMs + "ms";
+    }
+    // A playlist that changed under a running slideshow — a new pick, a sync
+    // that finished — starts a fresh round rather than continuing against
+    // indices that now mean different photographs.
+    slideshow.queue = [];
+    slideshow.last = -1;
+  } catch (err) {
+    // Offline, or the assistant restarting. Whatever is already loaded keeps
+    // playing; section 18.
+    console.warn("could not read the slideshow playlist");
+  }
+}
+
+// Section 12: shuffle by default, and never repeat until the whole set has
+// been shown. A queue that is refilled only when empty is what makes the
+// second half true — picking at random every time would show the same
+// photograph twice in five minutes on a set of thirty.
+function refillQueue() {
+  const order = slideshow.photos.map((_, index) => index);
+  if (slideshow.shuffle) {
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    // The one join nobody sees coming: the last photograph of the old round
+    // landing first in the new one, which looks like the slideshow froze.
+    if (order.length > 1 && order[0] === slideshow.last) {
+      [order[0], order[1]] = [order[1], order[0]];
+    }
+  }
+  slideshow.queue = order;
+}
+
+function startSlideshow() {
+  if (slideshow.running) return;
+  if (!slideshow.photos.length) return;
+  slideshow.running = true;
+  slideshow.misses = 0;
+  advanceSlideshow();
+}
+
+function stopSlideshow() {
+  slideshow.running = false;
+  if (slideshow.timer) { clearTimeout(slideshow.timer); slideshow.timer = null; }
+  if (slideshow.preload) {
+    // Detaching the handlers matters more than it looks: an Image whose
+    // onload still points at a closure keeps that closure — and the layer it
+    // captured — alive, and this fires every fifteen seconds for months.
+    slideshow.preload.onload = slideshow.preload.onerror = null;
+    slideshow.preload = null;
+  }
+  el("ss-caption").classList.remove("showing");
+}
+
+function advanceSlideshow() {
+  if (!slideshow.running || !slideshow.photos.length) return;
+  // A cache the assistant emptied under us — every file gone, every load
+  // failing. Without a ceiling the error path below would spin through the
+  // whole playlist as fast as the browser can fail, forever. One pass is
+  // enough to prove there is nothing to show; wait out an interval and try
+  // again, by which time a sync may have put something back.
+  if (slideshow.misses > slideshow.photos.length) {
+    slideshow.misses = 0;
+    armNext();
+    return;
+  }
+  if (!slideshow.queue.length) refillQueue();
+  const index = slideshow.queue.shift();
+  const photo = slideshow.photos[index];
+  if (!photo) { armNext(); return; }
+
+  const url = "/api/photos/file/" + encodeURIComponent(photo.name);
+
+  // Decoded before it is shown. Fading in an <img> that has not loaded yet is
+  // a fade to black followed by a jump, which is worse than no transition at
+  // all — and on a device that may be reading off a busy SD card it is not a
+  // rare case.
+  const image = new Image();
+  slideshow.preload = image;
+  image.onload = () => {
+    slideshow.preload = null;
+    if (!slideshow.running) return;
+    slideshow.misses = 0;
+    slideshow.last = index;
+    paintPhoto(url, photo);
+    armNext();
+  };
+  image.onerror = () => {
+    slideshow.preload = null;
+    if (!slideshow.running) return;
+    // A file the manifest names and the disk no longer has — an eviction that
+    // landed between the playlist being read and this photograph coming
+    // round. Skip to the next one rather than stalling for fifteen seconds on
+    // a blank screen.
+    slideshow.misses += 1;
+    console.warn("a cached photo could not be loaded; skipping it");
+    advanceSlideshow();
+  };
+  image.src = url;
+}
+
+function paintPhoto(url, photo) {
+  const back = slideshow.front === "a" ? el("ss-photo-b") : el("ss-photo-a");
+  const front = slideshow.front === "a" ? el("ss-photo-a") : el("ss-photo-b");
+
+  back.querySelector("img").src = url;
+  // The same file for the wash, so the browser draws it from its own cache
+  // rather than reading the card twice. `/api/photos/file/` is served
+  // `immutable` precisely so this is free — the name is a digest of the
+  // Google media id, so one name is always one set of bytes.
+  back.querySelector(".wash").style.backgroundImage = `url("${url}")`;
+
+  back.classList.add("front");
+  front.classList.remove("front");
+  slideshow.front = slideshow.front === "a" ? "b" : "a";
+
+  const caption = el("ss-caption");
+  if (slideshow.showInfo) {
+    const bits = [];
+    if (photo.created) {
+      const when = new Date(photo.created);
+      if (!isNaN(when)) {
+        bits.push(when.toLocaleDateString(undefined,
+          { year: "numeric", month: "long", day: "numeric" }));
+      }
+    }
+    if (photo.album) bits.push(photo.album);
+    caption.textContent = bits.join(" · ");
+    caption.classList.toggle("showing", bits.length > 0);
+    // Temporary, per section 13 — it must not sit permanently over somebody's
+    // photograph. Cleared by the next photograph anyway; this is for the case
+    // where the interval is long.
+    if (bits.length) {
+      setTimeout(() => caption.classList.remove("showing"), 6000);
+    }
+  } else {
+    caption.classList.remove("showing");
+  }
+}
+
+function armNext() {
+  if (slideshow.timer) clearTimeout(slideshow.timer);
+  slideshow.timer = setTimeout(() => {
+    slideshow.timer = null;
+    advanceSlideshow(false);
+  }, slideshow.intervalMs);
+}
+
+// ── settings ────────────────────────────────────────────────────────
+//
+// Reads `/api/system`, which is built fresh per request and already carries
+// everything this page shows. Polled slowly, and only while the page is up:
+// the one thing here that changes on its own is a picking session finishing
+// on somebody's phone, and that is a few-second event, not a live one.
+//
+// **Nothing on this page writes to the configuration file.** The schedule, the
+// timeout and the interval are shown and not edited, because section 22 asks
+// for the schedule to live in one place so it can be changed without
+// rewriting the screensaver logic — and a second writer would be a second
+// place. What the buttons here do is authorise, pick, sync and disconnect,
+// none of which a YAML file can express.
+
+let settingsTimer = null;
+let pickerTimer = null;
+let settingsBusy = false;
+
+const SETTINGS_POLL_MS = 4000;
+// While a QR code is on the screen somebody is standing in front of it with a
+// phone, and the answer should land within a second of them finishing.
+const PICKER_POLL_MS = 1500;
+
+function startSettings() {
+  drawSettings();
+  if (settingsTimer) clearInterval(settingsTimer);
+  settingsTimer = setInterval(drawSettings, SETTINGS_POLL_MS);
+}
+
+function stopSettings() {
+  if (settingsTimer) { clearInterval(settingsTimer); settingsTimer = null; }
+  // Leaving Settings only stops watching. The pick continues on the phone
+  // and the sync thread collects it regardless.
+  closePicker("hide");
+}
+
+async function drawSettings() {
+  if (settingsBusy) return;
+  let info;
+  try {
+    const response = await fetch("/api/system", { cache: "no-store" });
+    info = await response.json();
+  } catch (err) {
+    el("set-photos-note").textContent = "The assistant is not answering.";
+    return;
+  }
+  const screen = info.screensaver || {};
+  const photos = info.photos || {};
+
+  el("set-enabled").textContent = screen.enabled ? "On" : "Off";
+  el("set-enabled").classList.toggle("off", !screen.enabled);
+  el("set-timeout").textContent =
+    `${Math.round(screen.timeout_s || 0)} seconds with nobody in the room`;
+  el("set-day").textContent =
+    `${screen.day_window || "—"}  ·  ${screen.day_mode === "photos"
+      ? "Google Photos slideshow" : "Time + Weather"}`;
+  el("set-night").textContent =
+    `${screen.night_window || "—"}  ·  ${screen.night_mode === "photos"
+      ? "Google Photos slideshow" : "Time + Weather"}`;
+  el("set-mode").textContent = MODE_TEXT[screen.mode] || screen.mode || "—";
+  // Section 25 asks for the timezone to be diagnosable. It is in the boot log
+  // too, but the boot log is not something anybody standing at the device can
+  // read, and "the night screen came on an hour early" is a timezone question
+  // every time.
+  el("set-schedule-note").textContent =
+    `Timezone ${screen.timezone || "unset"}, local time ${screen.local_time || "—"}. ` +
+    `The schedule and the timeout are set in config/aipi5.yaml. ` +
+    (screen.held_by ? `Held off right now by ${screen.held_by}.` : "");
+
+  drawPhotoSettings(photos);
+  drawPickState(photos.pick || {});
+}
+
+const MODE_TEXT = {
+  "active": "Nothing — the assistant's own screen",
+  "day-photos": "Google Photos slideshow",
+  "night-weather": "Time + Weather",
+};
+
+function drawPhotoSettings(photos) {
+  const auth = photos.auth || {};
+  const cache = photos.cache || {};
+  const account = el("set-account");
+
+  if (!photos.enabled) {
+    account.textContent = "Turned off in config/aipi5.yaml";
+    account.classList.add("off");
+  } else if (auth.authorised) {
+    account.textContent = "Connected" + (auth.account ? ` · ${auth.account}` : "");
+    account.classList.remove("off");
+  } else {
+    account.textContent = "Not connected";
+    account.classList.add("off");
+  }
+
+  el("set-interval").textContent = `${Math.round(photos.interval_s || 15)} seconds` +
+    (photos.shuffle ? " · shuffled" : " · in order");
+
+  // Counted, not named. "Selected Photos · 126 photos" is the true statement;
+  // an album name would imply a live link to something in Google Photos that
+  // the Picker API does not give us.
+  const chosen = (cache.collections || []).filter(
+    (c) => (cache.selected || []).includes(c.id));
+  const album = el("set-album");
+  if (!chosen.length) {
+    album.textContent = "None chosen yet";
+    album.classList.add("off");
+  } else {
+    const photos = cache.photos || 0;
+    const when = chosen.map((c) => c.name.replace(/^Photos · /, "")).join(", ");
+    album.textContent = `${photos} photo${photos === 1 ? "" : "s"} · chosen ${when}`;
+    album.classList.remove("off");
+  }
+  el("set-pick").textContent = chosen.length ? "Change Photos" : "Choose Photos";
+
+  // One decimal below 10 MB. A cache holding four photographs read "0 MB",
+  // which looks like a cache that is not working.
+  const raw = (cache.bytes || 0) / (1024 * 1024);
+  const megabytes = raw < 10 ? raw.toFixed(1) : raw.toFixed(0);
+  const capMb = Math.round((cache.max_bytes || 0) / (1024 * 1024));
+  el("set-cache").textContent =
+    `${cache.photos || 0} photos, ${megabytes} MB ` +
+    `(limit ${cache.max_photos || 0} photos / ${capMb} MB, ` +
+    `never trimmed below ${cache.min_photos || 0})`;
+
+  // Whatever is actually wrong, said plainly. On this device nobody can open a
+  // console, so a failure that is not on the screen is a failure nobody can
+  // act on — the same lesson the video call taught three times.
+  const notes = [];
+  if (!auth.client_present) {
+    notes.push("No OAuth client on this device. Run " +
+               "./scripts/link-google-photos.sh over ssh — the comments at " +
+               "the top of it explain how to make one.");
+  } else if (!auth.authorised) {
+    notes.push("Run ./scripts/link-google-photos.sh over ssh once, then press " +
+               "Reconnect.");
+  }
+  if (auth.error && auth.error !== "not authorised") notes.push(auth.error);
+  if (cache.error) notes.push(cache.error);
+  if ((photos.sync || {}).error) notes.push("Last sync: " + photos.sync.error);
+  if (auth.authorised && !(cache.collections || []).length) {
+    notes.push("No photos chosen yet. Press Choose Photos and scan the code " +
+               "with a phone signed in to this Google account.");
+  }
+  el("set-photos-note").textContent = notes.join("  ");
+
+  drawCollections(cache);
+
+  const connected = !!auth.authorised && !!photos.enabled;
+  el("set-pick").disabled = !connected;
+  el("set-sync").disabled = !connected;
+  el("set-disconnect").disabled = !connected;
+}
+
+function drawCollections(cache) {
+  const list = el("set-collections");
+  const collections = cache.collections || [];
+  const chosen = cache.selected || [];
+  if (collections.length < 1) { list.innerHTML = ""; return; }
+
+  list.innerHTML = "";
+  for (const album of collections) {
+    const row = document.createElement("div");
+    row.className = "set-collection" + (chosen.includes(album.id) ? " chosen" : "");
+    const tick = document.createElement("div");
+    tick.className = "tick";
+    tick.textContent = chosen.includes(album.id) ? "●" : "";
+    const who = document.createElement("div");
+    who.className = "who";
+    who.textContent = album.name;
+    const many = document.createElement("div");
+    many.className = "how-many";
+    // Picked against cached, because they are not the same number when the
+    // ceiling stopped the sync short and the difference is the whole
+    // explanation for a shorter slideshow than somebody expected.
+    // Chosen against cached, because they are not the same number when a
+    // download failed or the ceiling stopped the sync short — and that
+    // difference is the whole explanation for a shorter slideshow than
+    // somebody expected. `offline copy` means the picking session has
+    // expired: what is here still plays, nothing new can arrive.
+    many.textContent = album.live ? `${album.picked} chosen`
+                                  : `${album.picked} chosen · offline copy`;
+    row.append(tick, who, many);
+    row.addEventListener("click", () => chooseCollection(album.id));
+    list.appendChild(row);
+  }
+}
+
+async function settingsPost(body) {
+  settingsBusy = true;
+  try {
+    const response = await fetch("/api/photos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return await response.json();
+  } catch (err) {
+    return { ok: false, error: "the assistant is not answering" };
+  } finally {
+    settingsBusy = false;
+  }
+}
+
+async function chooseCollection(ident) {
+  await settingsPost({ action: "select", collections: [ident] });
+  drawSettings();
+}
+
+el("set-sync").addEventListener("click", async () => {
+  el("set-photos-note").textContent = "Syncing…";
+  await settingsPost({ action: "sync" });
+  setTimeout(drawSettings, 800);
+});
+
+el("set-reconnect").addEventListener("click", async () => {
+  await settingsPost({ action: "reconnect" });
+  drawSettings();
+});
+
+// The one destructive button on this page, and it is armed by a second press
+// rather than by a dialog — the same pattern the file list's Delete uses, for
+// the same reason: a modal on a touchscreen is a thing somebody dismisses by
+// accident.
+let disconnectArmed = false;
+el("set-disconnect").addEventListener("click", async () => {
+  const button = el("set-disconnect");
+  if (!disconnectArmed) {
+    disconnectArmed = true;
+    button.textContent = "Really disconnect?";
+    setTimeout(() => {
+      disconnectArmed = false;
+      button.textContent = "Disconnect";
+    }, 5000);
+    return;
+  }
+  disconnectArmed = false;
+  button.textContent = "Disconnect";
+  await settingsPost({ action: "disconnect" });
+  drawSettings();
+});
+
+// ── choosing photos ─────────────────────────────────────────────────
+
+el("set-pick").addEventListener("click", async () => {
+  el("picker-qr").innerHTML = "";
+  el("picker-title").textContent = "Scan with your phone";
+  el("picker-close").textContent = "Cancel";
+  el("picker-help").hidden = false;
+  el("picker-status").textContent = "Opening a session with Google…";
+  el("picker").classList.add("on");
+  const answer = await settingsPost({ action: "pick" });
+  const pick = (answer && answer.pick) || {};
+  if (pick.state === "error" || !pick.uri) {
+    el("picker-status").textContent = pick.error || "Google Photos refused.";
+    return;
+  }
+  await drawQr(pick.uri, answer.qr !== false);
+  if (pickerTimer) clearInterval(pickerTimer);
+  pickerTimer = setInterval(pollPicker, PICKER_POLL_MS);
+  pollPicker();
+});
+
+async function drawQr(uri, haveSegno) {
+  const box = el("picker-qr");
+  if (!haveSegno) {
+    // No QR encoder installed. Useless on the panel and perfectly usable over
+    // ssh, so it says the URL rather than saying nothing — and says why.
+    box.innerHTML = "";
+    const note = document.createElement("div");
+    note.className = "url";
+    note.textContent = uri;
+    box.appendChild(note);
+    el("picker-status").textContent =
+      "segno is not installed, so there is no QR code — pip install segno.";
+    return;
+  }
+  try {
+    const response = await fetch("/api/photos/qr", { cache: "no-store" });
+    if (!response.ok) throw new Error("no qr");
+    // Inserted as markup because it is an SVG the assistant generated from a
+    // URL it created; there is no user-supplied text anywhere in it.
+    box.innerHTML = await response.text();
+  } catch (err) {
+    box.innerHTML = "";
+    const note = document.createElement("div");
+    note.className = "url";
+    note.textContent = uri;
+    box.appendChild(note);
+  }
+}
+
+async function pollPicker() {
+  const answer = await settingsPost({ action: "status" });
+  const photos = (answer && answer.photos) || {};
+  const pick = photos.pick || {};
+  drawPickState(pick);
+  drawPhotoSettings(photos);
+  // `done` keeps the panel up deliberately — the person is standing in front
+  // of the screen waiting to be told it worked, and a modal that vanished
+  // would answer nothing. They dismiss it.
+  if (["idle", "error", "timeout", "empty", "done"].includes(pick.state)) {
+    if (pickerTimer) { clearInterval(pickerTimer); pickerTimer = null; }
+    if (pick.state === "idle") closePicker("hide");
+  }
+}
+
+function drawPickState(pick) {
+  const status = el("picker-status");
+  const close = el("picker-close");
+  if (!el("picker").classList.contains("on")) return;
+
+  // "Open the code on a phone…" is an instruction about a code that is no
+  // longer on screen. It belongs only to the states where there is one.
+  el("picker-help").hidden = !["waiting", "syncing"].includes(pick.state);
+
+  if (pick.state === "waiting") {
+    status.textContent = "Waiting for you to choose…";
+  } else if (pick.state === "syncing") {
+    status.textContent = `${pick.picked} photos chosen — downloading them now.`;
+  } else if (pick.state === "done") {
+    // The count that matters is what reached the device, not what was
+    // selected. They differ exactly when something went wrong.
+    const bits = [`${pick.cached} photo${pick.cached === 1 ? "" : "s"} ready.`];
+    if (pick.failed) {
+      // Kept, not discarded — the successful ones are already playing.
+      bits.push(`${pick.failed} could not be downloaded and will be retried.`);
+    }
+    if (pick.no_room) {
+      bits.push(`${pick.no_room} did not fit in the cache — raise ` +
+                `photos.max_photos in config/aipi5.yaml to keep more.`);
+    }
+    status.textContent = bits.join(" ");
+    el("picker-qr").innerHTML = "";
+    el("picker-title").textContent = pick.failed ? "Mostly done" : "Done";
+    close.textContent = "Close";
+  } else if (pick.state === "timeout") {
+    status.textContent = pick.error || "Nobody finished choosing.";
+    close.textContent = "Close";
+  } else if (pick.state === "empty") {
+    status.textContent = "No photos were chosen — the previous selection is " +
+                         "still playing.";
+    close.textContent = "Close";
+  } else if (pick.state === "error") {
+    status.textContent = pick.error || "Google Photos refused.";
+    close.textContent = "Close";
+  }
+}
+
+// Three ways this panel closes and they are genuinely different:
+//
+//   "cancel"   the Cancel button. Delete the session; the person changed
+//              their mind and the QR code on screen should stop working.
+//   "dismiss"  the Close button on a finished pick. Clear the report so the
+//              panel opens fresh next time. The session is already gone.
+//   "hide"     navigating away from Settings. **Send nothing.** The pick is
+//              happening on somebody's phone and the sync thread will collect
+//              it whether or not this page is watching — walking away from
+//              the panel must not abort it.
+function closePicker(why) {
+  if (pickerTimer) { clearInterval(pickerTimer); pickerTimer = null; }
+  const wasOpen = el("picker").classList.contains("on");
+  el("picker").classList.remove("on");
+  // The QR is a one-time credential for a picking session. It comes off the
+  // screen and out of the DOM when the panel closes, rather than sitting in a
+  // hidden element until the next time somebody presses the button.
+  el("picker-qr").innerHTML = "";
+  if (wasOpen && (why === "cancel" || why === "dismiss")) {
+    settingsPost({ action: why });
+  }
+}
+
+// One button, two meanings, and the label says which: "Cancel" while a
+// code is on screen, "Close" once the download has reported.
+el("picker-close").addEventListener("click", () => {
+  const done = el("picker-close").textContent === "Close";
+  closePicker(done ? "dismiss" : "cancel");
+  drawSettings();
+});
 
 // ── file transfer ───────────────────────────────────────────────────
 //
@@ -2999,9 +3987,18 @@ el("talk-listen").addEventListener("click", () => send("wake"));
 // Touching the screensaver takes it down. Presence is the normal way out —
 // section 26 requires that no touch be necessary — but somebody speaking to
 // the device from outside the camera's view has no other way to see it react.
-screensaver.addEventListener("pointerdown", () => {
+// Section 4, and the reason it is `pointerdown` on the overlay rather than a
+// document-level listener: **the first touch must wake the screen and must not
+// press the button underneath it.** This element covers all 1280x800, so the
+// press lands here and nowhere else; by the time the finger lifts the overlay
+// is hidden, so the `click` that follows is dispatched to the nearest common
+// ancestor of the down and up targets — the body — and not to whatever button
+// happened to be under the finger. `preventDefault` stops the synthesised
+// mouse events that would otherwise arrive after a touch on some builds.
+screensaver.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
   dismissedAt = Date.now();
-  setScreensaver(false);
+  setScreensaver(false, "active");
   send("wake");
 });
 

@@ -149,7 +149,8 @@ Outcome = tuple  # (ok: bool, detail: str)
 def run(settings, *, mic=None, stt=None, speaker: Outcome = (False, ""),
         camera: Outcome = (False, ""), detector: Outcome = (False, ""),
         llm: Outcome = (False, ""), wake=None, ui_started=True,
-        call: Outcome = (False, ""), files: Outcome = (False, "")) -> Report:
+        call: Outcome = (False, ""), files: Outcome = (False, ""),
+        photos: Outcome = (False, "")) -> Report:
     """Check everything, decide what is fatal, and say so in the journal.
 
     Subsystem arguments are `(ok, detail)` pairs rather than objects, and that
@@ -257,6 +258,21 @@ def run(settings, *, mic=None, stt=None, speaker: Outcome = (False, ""),
         files_ok, files_detail = files
         report.add("file transfer", files_ok,
                    files_detail or ("ready" if files_ok else "not available"))
+
+    # The daytime slideshow, on the same terms as the two above. Never
+    # critical: no photographs means the idle screen is the clock, which is a
+    # working device. But it must not be *silent* — every other way this can
+    # be wrong (no OAuth client, nothing picked, a revoked grant) shows up only
+    # on a settings page nobody visits, and "the slideshow never came on" needs
+    # an answer in the boot log too.
+    if not settings.photos.enabled:
+        report.add("photo slideshow", True, "disabled in the configuration")
+    else:
+        photos_ok, photos_detail = photos
+        report.add("photo slideshow", True,
+                   photos_detail or ("ready" if photos_ok else
+                                     "no photos cached — the daytime "
+                                     "screensaver will show the clock"))
 
     report.log()
     for check in report.fatal:

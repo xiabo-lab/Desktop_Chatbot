@@ -29,3 +29,11 @@ venv/
 # pointed them somewhere else, and tests/test_call.py asserts the tree is clean.
 *.pem
 call-devices.json
+
+# The Google Photos slideshow's credentials, on exactly the same footing: the
+# OAuth client and the refresh token both default to ~/.config/aipi5, and
+# `_secret_path` resolves a relative setting there rather than against the
+# project root precisely so neither can land in a checkout. This is the
+# backstop; tests/test_photos.py asserts the tree is clean.
+google-photos-client.json
+google-photos-token.json

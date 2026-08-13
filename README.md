@@ -123,7 +123,7 @@ Plus:
 | "tell me a bedtime story about a dragon" | a child-safe story of a length you can ask for |
 | anything else | a conversation, in about 60 words, in the language you asked in |
 
-…and six buttons, each of which opens its own page:
+…and seven buttons, each of which opens its own page:
 
 | press | what opens | what it says |
 |---|---|---|
@@ -133,6 +133,7 @@ Plus:
 | **Weather** | the dashboard: now, hourly, seven days, sun, and whether to go out | the sky, the range, and at most one thing worth acting on |
 | **Music** | Kodama-Lite itself | whether it opened |
 | **Files** | the transfer folder, to send and fetch | nothing — it is a folder, not a turn |
+| **Settings** | the screensaver: the schedule, the Google account, which photos, how long each stays up | nothing — it configures, it does not ask |
 
 The news **page** was removed: it duplicated on a screen what the assistant
 says better out loud, and the button with it. Ask for the news instead.
@@ -199,7 +200,7 @@ python3 -m venv .venv
 sed -i 's/^include-system-site-packages = false/include-system-site-packages = true/' .venv/pyvenv.cfg
 
 .venv/bin/pip install -r ~/AI_Assit/requirements.txt   # the voice path
-.venv/bin/pip install -r requirements.txt              # PyYAML and openai
+.venv/bin/pip install -r requirements.txt              # PyYAML, openai, segno, web push
 
 ./scripts/get_person_model.sh    # finds the HEF matching the fitted accelerator
 ./scripts/check_hardware.sh      # verify before installing — read all of it
@@ -266,25 +267,103 @@ with `ssh -L 8092:127.0.0.1:8092 aipi5.local`.
 specification is explicit that the old 1920×440 geometry must not be inherited,
 and AIA's layer-shell strip is not used here.
 
-The main screen is the conversation, a status line, and six buttons. The
+The main screen is the conversation, a status line, and seven buttons. The
 buttons are why this UI is not read-only the way AIA's is: each posts a name
 from a fixed tuple into a queue and the voice loop decides what it means.
 Nothing in that tuple is destructive — shutting down, restarting and closing the
 player stay spoken commands that are confirmed out loud, because a button
 cannot hold that conversation.
 
-The screensaver is the full display: a clock that redraws every second from the
-browser's own clock, corrected against the Pi's, and the current San Jose
-weather refreshed every ten minutes. It comes up 60 seconds after the room
-empties and goes away the moment somebody returns — no touch required, which is
-section 26. Speaking to the device from outside the camera's view takes it down
-too.
+The screensaver is the full display and there are now two of them — a photo
+slideshow through the day and a clock over the weather at night. Either comes up
+60 seconds after the room empties and goes away the moment somebody returns — no
+touch required, which is section 26. Speaking to the device from outside the
+camera's view takes it down too.
 
-## The screen: six pages, six cooldowns
+## The screensaver: photographs by day, a clock at night
+
+    07:00 – 21:00     Google Photos slideshow
+    21:01 – 06:59     the time and the weather
+
+**One object decides, and it decides from the clock every time it is asked.**
+`aipi5/screensaver/manager.py` holds the existing idle policy — which is still
+the only thing that knows *when* the screen goes away — and asks
+`schedule.py` *which* screensaver that should be. Nothing else has an opinion,
+including the page: two screensavers that each decided for themselves whether it
+was their turn would both believe it at 21:01, and what reached the display
+would be whichever timer fired last.
+
+Asking rather than remembering is also the whole of the reboot requirement. A Pi
+that boots at 23:00 has never seen 21:01 go past; it still shows the night
+screen, because the mode is a function of the current local time and not of
+having been running when the boundary went by. Verified on the device: the
+schedule set two minutes ahead, and the slideshow faded to the clock on the
+minute with nothing restarted.
+
+The night screen is deliberately not the Weather page. Black, one very large
+clock, the date, one glyph, the temperature, today's range and the place — read
+from the same `WeatherService` cache the Weather page and the spoken answer use,
+so the three cannot disagree, and drawn from the state poll rather than a fetch
+of its own. When the network has been gone a while it says so ("Last updated 45
+min ago") rather than quietly showing an hour-old number as current. The clock
+never stops, because it is the Pi's own.
+
+**Photographs come from the Google Photos Picker API, not the Library API**, and
+that is not a preference. Google removed read access to a person's own library
+in March 2025; an app can now only see what the person explicitly picks, in
+Google's own picker, one session at a time. Three things follow:
+
+* There is no album to subscribe to. What the device remembers is the *set* that
+  was picked — the settings page calls it a collection and labels it with the
+  day. The promise section 7 actually cares about is kept: the choice survives a
+  reboot and is never asked for twice.
+* **The local cache is the durable copy, not an optimisation.** A picked
+  photograph is reachable from Google only while its session lives, so the sync
+  downloads promptly and the slideshow runs from disk forever after — which is
+  also why it keeps working with the internet unplugged.
+* Picking needs a browser signed in to Google, and this panel is a kiosk with no
+  keyboard and no address bar. So the URL leaves the device by being
+  photographed: Settings → Screensaver → **Choose Photos** puts a QR code on the
+  screen and the phone does the picking.
+
+The one-time account authorisation is the only part that needs a computer:
+
+    ./scripts/link-google-photos.sh          # on the Pi, over ssh
+    ./scripts/link-google-photos.sh --status
+    ./scripts/link-google-photos.sh --forget
+
+Its header explains how to make the OAuth client, which takes about five
+minutes in the Cloud console. **One step in it is not optional and is not
+obvious**: the OAuth consent screen must be set to publishing status *In
+production*. Left at *Testing*, Google expires the refresh token after seven
+days — the slideshow works for a week and then stops with `invalid_grant`,
+which reads like a bug in this project and is not one. Publishing needs no
+verification for personal use; it costs one click-through on an "unverified
+app" warning. `GoogleAuth._refusal` names this cause first when it happens,
+because the raw error code points nowhere.
+
+The client and the refresh token live in `~/.config/aipi5`, chmod 0600, outside
+the repository, and no token is ever logged at any level.
+
+Everything else is in the `screensaver:` and `photos:` blocks of
+`config/aipi5.yaml`, which is where the schedule lives so it can be moved
+without touching any of the logic. The cache is bounded twice — a photograph
+count and a byte total, whichever is reached first — and eviction only ever
+deletes local copies; nothing in this project can delete anything from a Google
+Photos account.
+
+**No brightness control, and that is a decision rather than an omission.**
+Section 16 says not to implement it without verifying the display supports it
+reliably. Checked on this device: `/sys/class/backlight/` is empty, there is no
+`ddcutil`, and `wlr-randr` does not do brightness — this is an HDMI panel with
+no software control. The night screen is dark because it is black with dim grey
+type, which is what actually reduces the light in the room.
+
+## The screen: seven pages, six cooldowns
 
 The buttons open **pages, not windows**. This is a Chromium kiosk on a
 compositor with no title bars and no taskbar, so a second window would be a
-page nobody could get back from; the six destinations are views in one
+page nobody could get back from; the seven destinations are views in one
 document, exactly one of them visible. It also makes "no duplicate instances"
 a property of the design rather than a rule to enforce — a view is either the
 current one or it is not, and navigating to the current one does nothing.
@@ -308,9 +387,17 @@ follows the conversation, and following it here meant News and Weather answered
 in Chinese for the rest of a session because somebody had said 关机 an hour
 earlier, with nothing on screen to explain it.
 
-**Files navigates without acting**, which is the shape any future button that
-opens a folder rather than asking for work should take: no action queued, no
-cooldown, nothing for the voice loop to do.
+**Files and Settings navigate without acting**, which is the shape any future
+button that opens a folder rather than asking for work should take: no action
+queued, no cooldown, nothing for the voice loop to do.
+
+Settings holds one section, and it is the screensaver: the schedule, the Google
+account behind the slideshow, which picked set is playing, and how long each
+photograph stays up. Everything else configurable is in the YAML, which is the
+right place for a wake word and a microphone gain; what is on the panel is what
+has to be done there, because it needs a phone camera and a Google account. On a
+machine with a keyboard, `#settings` in the URL reaches it directly — which is
+also how it gets tested through an `ssh -L` tunnel.
 
 ## Call: a phone rings the Pi and it picks up
 
@@ -609,22 +696,35 @@ well as today's outcome.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests -t .    # 412 tests, no hardware needed
+python -m unittest discover -s tests -t .    # 476 tests, no hardware needed
 ```
 
 No microphone, no camera, no accelerator, no network, no API key. That
 constraint is what decided which parts of this project are pure functions — the
-presence debounce, the screensaver timing, the feed parsing, the weather cache,
-the conversation trimming and the tool gate are all exactly the parts where a
-mistake is silent on the device.
+presence debounce, the screensaver timing, the schedule, the photo cache, the
+feed parsing, the weather cache, the conversation trimming and the tool gate are
+all exactly the parts where a mistake is silent on the device.
 
-Four of them have already earned their keep. `test_the_mandarin_phrases_keep_
+The screensaver schedule is the clearest case for it. Every interesting value is
+a *time* — 06:59, 21:00, 21:01, midnight — so checking them on the device is one
+attempt a day, and moving the Pi's clock to hurry it along would disturb TLS,
+Tailscale and every certificate the video call depends on. So `is_day` and
+`mode` take a `datetime` and only fall back to `now()` when nobody passes one,
+which is what section 30 asks for; one test then walks all 1,440 minutes of the
+day and asserts each belongs to exactly one window, because a minute that
+belongs to neither is a screen showing nothing for a minute a day and is
+invisible in a test that checks seven timestamps.
+
+Five of them have already earned their keep. `test_the_mandarin_phrases_keep_
 their_measured_margin` disproved a claim in a code comment that was wrong by
 0.19; `test_respects_the_limit` found that headlines carrying one
 distinguishing word are collapsed as duplicates; the multipart tests caught a
-boundary split across two reads; and the file tests caught the suite itself
+boundary split across two reads; the file tests caught the suite itself
 writing into the developer's real `~/.config/aipi5` and reading it back in the
-next test.
+next test; and `test_the_count_ceiling_stops_the_sync` found that with no
+collection selected the photo cache treated *every* photograph as evictable, so
+both of its ceilings could always be satisfied by deleting the whole cache and
+stopped being ceilings at all.
 
 ## Layout
 
@@ -638,6 +738,8 @@ aipi5/
   kodama/     the one command AIA does not have: open the player
   call/       signalling, device tokens, TLS, push, the phone's page
   files/      the transfer folder, a streaming multipart reader, download tickets
+  screensaver/ the one manager that decides which idle screen, and the schedule
+  photos/     Google OAuth, the Picker API, the bounded cache, the sync thread
   ui/         the 1280×800 page, its server, and the shared state
 config/       aipi5.yaml — the settings a person changes
 scripts/      hardware check, model fetch, service install, the kiosk browser

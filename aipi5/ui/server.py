@@ -36,6 +36,7 @@ from urllib.parse import parse_qs, urlparse
 from aipi5.call import signaling as call_signaling
 from aipi5.files import web as files_web
 from aipi5.files.store import FileError
+from aipi5.photos import qr
 from aipi5.tools.advice import should_go_outside
 
 log = logging.getLogger(__name__)
@@ -136,6 +137,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._file_list(params)
         elif route.path.startswith("/api/files/download/"):
             self._file_download(route.path, params)
+        elif route.path == "/api/photos":
+            self._photo_list()
+        elif route.path.startswith("/api/photos/file/"):
+            self._photo_file(route.path)
+        elif route.path == "/api/photos/qr":
+            self._photo_qr()
         elif route.path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         else:
@@ -158,7 +165,8 @@ class _Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/call/"):
             self._call_post(path)
             return
-        if path not in ("/api/action", "/api/shutdown", "/api/files/delete"):
+        if path not in ("/api/action", "/api/shutdown", "/api/files/delete",
+                        "/api/photos"):
             self._json({"error": "not found"}, 404)
             return
 
@@ -185,6 +193,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/api/files/delete":
             self._file_delete(payload)
+            return
+
+        if path == "/api/photos":
+            self._photo_post(payload)
             return
 
         action = str(payload.get("action", ""))
@@ -268,6 +280,149 @@ class _Handler(BaseHTTPRequestHandler):
         except (ConnectionError, TimeoutError):
             self.close_connection = True
 
+    # ── the daytime slideshow ────────────────────────────────────────
+    #
+    # Three GETs and one POST, all loopback like everything else here. The one
+    # worth pausing on is `/api/photos/file/<name>`: it serves bytes off the
+    # disk by name, which is the shape of every directory traversal ever
+    # written. What makes it safe is that the name has to match
+    # `aipi5/photos/cache.py`'s `NAME` — thirty-two hex characters and one of
+    # three extensions — and that check happens before the path is joined, so
+    # there is nothing for `../` to be part of. The same regex is what named
+    # the file in the first place.
+
+    def _photos(self):
+        """The service, or None having answered."""
+        photos = getattr(self.ui, "photos", None)
+        if photos is None or not photos.cfg.enabled:
+            self._json({"error": "the photo slideshow is turned off"}, 503)
+            return None
+        return photos
+
+    def _photo_list(self) -> None:
+        """The slideshow's playlist, and the settings that shape it.
+
+        Asked for when the slideshow starts and again only when
+        `photos_rev` on the state poll has moved — a few hundred filenames is
+        not something to send twice a second for a photograph that arrives
+        once an hour.
+        """
+        photos = self._photos()
+        if photos is None:
+            return
+        cfg = photos.cfg
+        self._json({
+            "photos": photos.cache.playlist(),
+            "interval_s": cfg.interval_seconds,
+            "transition_ms": cfg.transition_ms,
+            "shuffle": cfg.shuffle,
+            "show_info": cfg.show_info,
+            "rev": photos.cache.revision(),
+        })
+
+    def _photo_file(self, path: str) -> None:
+        """One cached photograph.
+
+        Cached hard by the browser on purpose. The name is a digest of the
+        Google media id, so the same name is always the same bytes — a
+        content-addressed URL, which is exactly the case `immutable` exists
+        for. Without it Chromium re-reads several hundred kilobytes off the SD
+        card every time the shuffle comes back round.
+        """
+        photos = self._photos()
+        if photos is None:
+            return
+        name = path[len("/api/photos/file/"):]
+        resolved = photos.cache.resolve(name)
+        if resolved is None:
+            self._json({"error": "no such photo"}, 404)
+            return
+        try:
+            body = resolved.read_bytes()
+        except OSError as exc:
+            log.warning("could not read a cached photo: %s", exc)
+            self._json({"error": "unreadable"}, 500)
+            return
+        kind = ("image/png" if name.endswith(".png")
+                else "image/webp" if name.endswith(".webp") else "image/jpeg")
+        self.send_response(200)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "public, max-age=604800, immutable")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            log.debug("the slideshow went away mid-photo")
+
+    def _photo_qr(self) -> None:
+        """The picker URL as a QR code, for a phone to photograph.
+
+        SVG, and `no-store` — this URL authorises picking into one session and
+        is not something to leave in a browser cache once the session is gone.
+        """
+        photos = self._photos()
+        if photos is None:
+            return
+        uri = str(photos.pick_status().get("uri") or "")
+        if not uri:
+            self._json({"error": "no picking session is open"}, 409)
+            return
+        drawn = qr.svg(uri)
+        if drawn is None:
+            self._json({"error": "segno is not installed on this device, so "
+                                 "the QR code cannot be drawn"}, 501)
+            return
+        self._send(200, drawn.encode("utf-8"), "image/svg+xml; charset=utf-8")
+
+    def _photo_post(self, payload: dict) -> None:
+        """The settings page's verbs.
+
+        Not entries in `ACTIONS`: everything in that tuple is a request for the
+        *assistant* to do something and is queued for the voice loop. These
+        configure a background service and are answered immediately, the same
+        reasoning `/api/shutdown` carries.
+        """
+        photos = self._photos()
+        if photos is None:
+            return
+        action = str(payload.get("action", ""))
+
+        if action == "pick":
+            self._json({"ok": True, "pick": photos.begin_pick(),
+                        "qr": qr.available()})
+        elif action == "cancel":
+            self._json({"ok": True, "pick": photos.cancel_pick()})
+        elif action == "dismiss":
+            # Closing a finished report, which must never delete a session.
+            self._json({"ok": True, "pick": photos.dismiss_pick()})
+        elif action == "status":
+            self._json({"ok": True, "photos": photos.describe(),
+                        "qr": qr.available()})
+        elif action == "select":
+            chosen = payload.get("collections")
+            if not isinstance(chosen, list):
+                self._json({"ok": False, "error": "expected a list"}, 400)
+                return
+            self._json({"ok": True,
+                        "selected": photos.select([str(c) for c in chosen])})
+        elif action == "forget":
+            removed = photos.forget_collection(str(payload.get("collection", "")))
+            self._json({"ok": True, "removed": removed})
+        elif action == "reconnect":
+            # The linking script runs in another process, so the assistant
+            # only learns it worked by looking again.
+            photos.reload_auth()
+            self._json({"ok": True, "auth": photos.auth.describe()})
+        elif action == "disconnect":
+            photos.disconnect()
+            self._json({"ok": True})
+        elif action == "sync":
+            photos.sync_soon()
+            self._json({"ok": True})
+        else:
+            self._json({"ok": False, "error": "unknown action"}, 400)
+
     def _shutdown_post(self, payload: dict) -> None:
         """The screen's two words about a countdown it did not start.
 
@@ -313,6 +468,13 @@ class _Handler(BaseHTTPRequestHandler):
         # visible and different, and this is one `stat` against a listing.
         store = getattr(self.ui, "files", None)
         payload["files_rev"] = store.revision() if store is not None else 0
+        # The same trick for the slideshow: the page re-reads its playlist only
+        # when this changes, rather than fetching a few hundred filenames twice
+        # a second for a photograph that arrives once an hour.
+        photos = getattr(self.ui, "photos", None)
+        payload["photos_rev"] = (photos.cache.revision()
+                                 if photos is not None and photos.cache.ready
+                                 else "")
         # The Pi's clock, not the browser's. The screensaver draws the time and
         # the two can disagree — a Chromium with no network time on a device
         # that has it, or the reverse.
@@ -591,9 +753,15 @@ class WebUI:
 
     def __init__(self, cfg, *, state, history, info,
                  weather=None, news=None, camera=None, call=None,
-                 on_call_change=lambda: None, countdown=None, files=None):
+                 on_call_change=lambda: None, countdown=None, files=None,
+                 photos=None, screen=None):
         self.cfg = cfg
         self.state = state
+        # The daytime slideshow's photographs and the object that decides
+        # which screensaver is due. Both optional, so a test can build a
+        # server without either.
+        self.photos = photos
+        self.screen = screen
         # The shutdown countdown, which this module only ever answers about:
         # it is started by the voice loop and drawn by the page.
         self.countdown = countdown

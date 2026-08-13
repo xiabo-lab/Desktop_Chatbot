@@ -81,6 +81,8 @@ from aipi5.llm import prompts
 from aipi5.llm.client import OpenAIClient
 from aipi5.llm.conversation import Conversation
 from aipi5.llm.tools import ToolBox
+from aipi5.photos.service import GooglePhotosService
+from aipi5.screensaver import ScheduleManager, ScreensaverManager
 from aipi5.tools.clock import Clock
 from aipi5.tools.news import NewsService
 from aipi5.tools.story import instructions as story_instructions
@@ -253,6 +255,22 @@ class Assistant:
                                        settings.person.frames_to_disappear)
         self.screensaver = ScreensaverPolicy(settings.screensaver.timeout_seconds,
                                              settings.screensaver.enabled)
+        # The daytime slideshow's photographs. Built unconditionally, started
+        # only when it is on, and never fatal — the same shape as the call
+        # server, and for the same reason: a settings page that can say "no
+        # Google account" is worth more than one that shows nothing at all.
+        self.photos = GooglePhotosService(settings.photos)
+        # The one object that decides which screensaver, layered over the idle
+        # policy above rather than replacing it. Section 26: two screensavers
+        # that each decide for themselves whether it is their turn will both
+        # believe it is, at 21:01.
+        self.screen = ScreensaverManager(
+            self.screensaver,
+            ScheduleManager.from_config(settings.screensaver),
+            photos_ready=lambda: self.photos.ready,
+            day_mode=settings.screensaver.day_mode,
+            night_mode=settings.screensaver.night_mode,
+            timezone=settings.location.timezone)
         self.watcher: PresenceWatcher | None = None
         self.web = WebUI(settings.display, state=self.ui_state,
                          history=self.history, info=self.system_info,
@@ -263,7 +281,8 @@ class Assistant:
                          weather=self.weather, news=self.news,
                          camera=self.camera if settings.camera.enabled else None,
                          call=self.call, on_call_change=self.on_call_change,
-                         countdown=self.countdown, files=self.files)
+                         countdown=self.countdown, files=self.files,
+                         photos=self.photos, screen=self.screen)
         self.report: preflight.Report | None = None
         # Filled in by `start()`; defaulted here so `verify()` and the settings
         # page are safe to call against an assistant that failed to finish
@@ -336,10 +355,24 @@ class Assistant:
         elif self.llm is not None:
             self._llm_detail = self.llm.error or "no client"
 
+        # The slideshow's cache, and the thread that fills it. Started after
+        # the UI so a first sync cannot delay the screen coming up, and never
+        # fatal: no Google account means the daytime screensaver shows the
+        # clock, which is a working device rather than a broken one.
+        if self.settings.photos.enabled:
+            self.photos.start()
+
         # The weather is fetched once at boot rather than on the first draw, so
         # the screensaver has something on it the moment it first appears
         # instead of a dash that fills in ten seconds later.
         self.refresh_weather()
+
+        # Section 25's three lines, and the reason they are three: at 23:00
+        # with the wrong screen up, the questions are which timezone the Pi
+        # believes it is in, what time it thinks it is, and what it concluded.
+        # Any two without the third leaves it open.
+        self.screen.log_startup()
+
         self.publish()
         return self.stt is not None
 
@@ -365,8 +398,37 @@ class Assistant:
             ui_started=self._ui_started,
             call=self._call_status(),
             files=self._files_status(),
+            photos=self._photos_status(),
         )
         self.publish()
+
+    def _photos_status(self) -> tuple[bool, str]:
+        """Whether the daytime slideshow has anything to show, and why not.
+
+        Four distinguishable states and they need different answers from
+        somebody standing at the device: no OAuth client is a trip to the
+        Cloud console, no authorisation is one ssh command, nothing picked is
+        a QR code on the panel, and a cache with photographs in it is fine.
+        Collapsing them into "photo slideshow: not ready" would leave the one
+        question this line exists to answer unanswered.
+        """
+        described = self.photos.describe()
+        auth = described["auth"]
+        cache = described["cache"]
+        if cache.get("error"):
+            return False, str(cache["error"])
+        if cache["photos"]:
+            return True, (f"{cache['photos']} photos cached "
+                          f"({cache['bytes'] / (1024 * 1024):.0f} MB) in "
+                          f"{cache['root']}")
+        if not auth["client_present"]:
+            return False, (f"no Google OAuth client at {auth['client_file']} — "
+                           f"see ./scripts/link-google-photos.sh")
+        if not auth["authorised"]:
+            return False, ("not authorised — run "
+                           "./scripts/link-google-photos.sh over ssh")
+        return False, ("connected, but no photos chosen yet — Settings → "
+                       "Choose Photos on the screen")
 
     def _files_status(self) -> tuple[bool, str]:
         """Whether the phone can send files here, and where they land.
@@ -473,6 +535,13 @@ class Assistant:
             # browser at the other end of `publish` opens the Brio the moment
             # it sees this.
             self.camera.lend("a video call")
+            # Section 19: a call outranks either screensaver, and it has to be
+            # decided here rather than only in the page. Presence is the
+            # camera's opinion of the room *this* device is in, and during a
+            # call the person worth showing the screen to is at the other end
+            # of it — a caller who steps out of the Brio's view must not come
+            # back to a slideshow drawn over the person they are talking to.
+            self.screen.hold("a call")
             # The floor, held for the duration. `AudioPriority` counts holders,
             # so this nests correctly with a turn that was already in progress
             # rather than fighting it for the ducker.
@@ -487,6 +556,12 @@ class Assistant:
             # how a dead camera looked like a clean shutdown in the journal.
             back = self.camera.reclaim()
             self.audio.release()
+            # The idle countdown applies again — from now, not from whenever
+            # the room last emptied, because `ScreensaverPolicy.suppress`
+            # restarts it. A call that just ended is activity.
+            self.screen.release("a call")
+            self.screensaver.suppress(
+                person_present=self.tracker.state is Presence.PERSON_PRESENT)
             log.info("the call is over: audio restored, camera %s",
                      "reclaimed" if back else "still being released")
 
@@ -498,10 +573,25 @@ class Assistant:
 
     def publish(self, **extra) -> None:
         """Push the current state to whatever the screen polls."""
+        # A QR code waiting to be scanned outranks the idle timeout. Section
+        # 19 lists an important system dialog among the things that suppress
+        # the screensaver, and this is one: somebody who put the code up and
+        # walked off to fetch their phone must not come back to a clock.
+        # Released the moment the pick finishes, times out, or is cancelled.
+        if self.photos.pick_waiting():
+            self.screen.hold("choosing photos")
+        else:
+            self.screen.release("choosing photos")
+
+        screen = self.screen.snapshot()
         self.ui_state.update(
             assistant=self.machine.state.value,
             presence=self.tracker.state.value,
-            screensaver=self.screensaver.should_show(),
+            # Two fields for one decision, and the boolean keeps its old name
+            # because that is what the page has always read. `screensaver_mode`
+            # is the new half — `active`, `day-photos` or `night-weather`.
+            screensaver=screen["showing"],
+            screensaver_mode=screen["mode"],
             kodama_running=self.player.available(),
             degraded=self.report.degraded if self.report else [],
             call=self._call_snapshot(),
@@ -528,9 +618,8 @@ class Assistant:
             "camera": self.camera.describe(),
             "presence": self.watcher.describe() if self.watcher
             else {"backend": "not running", "state": self.tracker.state.value},
-            "screensaver": {"enabled": self.settings.screensaver.enabled,
-                            "timeout_s": self.settings.screensaver.timeout_seconds,
-                            "showing": self.screensaver.showing},
+            "screensaver": self.screen.describe(),
+            "photos": self.photos.describe(),
             "conversation": self.conversation.describe(),
             "kodama": {"running": self.player.available(),
                        "service": self.settings.kodama.service},
@@ -622,6 +711,9 @@ class Assistant:
             ("llm", lambda: self.llm and self.llm.close()),
             ("weather", self.weather.close),
             ("news", self.news.close),
+            # Before the web server, so a sync in flight cannot be writing
+            # into the cache the page is still being served from.
+            ("photos", self.photos.stop),
             ("web", self.web.stop),
             ("retention", self.retention.stop),
             # Last, so anything the final turn queued is written before the

@@ -168,8 +168,86 @@ class PersonDetectionConfig:
 
 @dataclass(frozen=True)
 class ScreensaverConfig:
+    """When the screen goes away, and what is on it when it has.
+
+    The two schedule fields are strings rather than parsed times because this
+    is the file a person edits over ssh, and `"21:01"` is what they mean.
+    `aipi5/screensaver/schedule.py` turns them into minutes and is the only
+    place that knows how — section 22 asks for the schedule to live in one
+    place in the configuration so it can be changed without touching the
+    screensaver logic, and this is that place.
+    """
+
     enabled: bool = True
     timeout_seconds: float = 60.0
+    #: The specification's schedule. Inclusive start, and the night begins at
+    #: 21:01 because section 24 puts 21:00 itself in the day.
+    day_start: str = "07:00"
+    night_start: str = "21:01"
+    #: `photos` or `clock`. The day falls back to the clock on its own when
+    #: there are no photographs to show, so this is for a household that wants
+    #: the clock all day on purpose rather than for one with no Google account.
+    day_mode: str = "photos"
+    night_mode: str = "weather"
+
+
+@dataclass(frozen=True)
+class PhotosConfig:
+    """The daytime slideshow, and the Google account behind it.
+
+    **Nothing secret is in this dataclass or in the YAML that fills it.** The
+    OAuth client and the refresh token live in two files under
+    `~/.config/aipi5`, outside the repository, written 0600 — the same
+    arrangement, and for the same reasons, as the video call's tokens. What is
+    here is only where to look.
+    """
+
+    enabled: bool = True
+    #: How long each photograph is up, before the crossfade. Section 11's
+    #: 10–15 seconds; 15 is the specification's example default.
+    interval_seconds: float = 15.0
+    #: The crossfade itself. GPU-friendly opacity only — see the page.
+    transition_ms: int = 1000
+    shuffle: bool = True
+    #: Two ceilings, and whichever is reached first wins. A count is what a
+    #: person can reason about ("about three hundred pictures") and a byte
+    #: total is what actually protects the SD card, since one 12-megapixel
+    #: photograph is not the same size as another.
+    max_photos: int = 300
+    max_cache_mb: int = 512
+    #: And a floor, which is the more important of the three. Cache cleanup may
+    #: never take the running slideshow below this many photographs — a limit
+    #: lowered in the YAML must not be able to empty the set somebody chose.
+    #: Only replacing the selection or disconnecting the account does that, and
+    #: both are things a person asked for.
+    #:
+    #: Deliberately **not** clamped to `max_photos`: a floor that shrank to
+    #: match a lowered ceiling would protect nothing in exactly the case it is
+    #: for. When the two conflict the floor wins, the cache stays above its
+    #: ceiling, and both `_check` and the cache say so.
+    min_photos: int = 50
+    #: How often the sync thread looks for work. Bounded far below anything
+    #: Google would object to: this is a photo frame, not a backup client.
+    sync_minutes: float = 60.0
+    #: What the download asks Google for. `w1600-h1000` is the 1280x800 panel
+    #: with room for the blurred backdrop and for a display that is scaled —
+    #: section 29 asks for enough and not more. Aspect ratio is preserved by
+    #: the API; this is a bounding box, not a crop.
+    download_size: str = "w1600-h1000"
+    #: The cache. Under `~/.cache` rather than in the repository or in
+    #: `~/.config`: these are re-downloadable copies of somebody else's
+    #: photographs, and losing the lot costs a sync.
+    cache_dir: Path = Path.home() / ".cache" / "aipi5" / "photos"
+    #: The OAuth client — a *client id and secret for an installed app*, which
+    #: Google's own documentation describes as not confidential, but which is
+    #: still not ours to publish. Downloaded from the Cloud console and put
+    #: here by hand; see scripts/link-google-photos.sh.
+    client_file: Path = Path.home() / ".config" / "aipi5" / "google-photos-client.json"
+    #: The refresh token, written by that script and read by nothing else.
+    token_file: Path = Path.home() / ".config" / "aipi5" / "google-photos-token.json"
+    #: The small date/album caption, off by default. Section 13 is explicit
+    #: that it must not be mandatory and must not cover the photograph.
+    show_info: bool = False
 
 
 @dataclass(frozen=True)
@@ -282,6 +360,7 @@ class Settings:
     camera: CameraConfig = field(default_factory=CameraConfig)
     person: PersonDetectionConfig = field(default_factory=PersonDetectionConfig)
     screensaver: ScreensaverConfig = field(default_factory=ScreensaverConfig)
+    photos: PhotosConfig = field(default_factory=PhotosConfig)
     kodama: KodamaLaunchConfig = field(default_factory=KodamaLaunchConfig)
     call: CallConfig = field(default_factory=CallConfig)
     files: FilesConfig = field(default_factory=FilesConfig)
@@ -378,6 +457,22 @@ def _positive(value: Any, fallback: float, where: str) -> float:
     return number
 
 
+def _one_of(value: Any, allowed: tuple[str, ...], fallback: str,
+            where: str) -> str:
+    """A setting from a fixed list, lower-cased, or the default with a warning.
+
+    Not an exception, for the same reason a missing file is not one: a typo in
+    `day_mode` should leave a device showing the specification's screensaver
+    and a line saying so, rather than an assistant that will not start.
+    """
+    text = str(value or "").strip().lower()
+    if text in allowed:
+        return text
+    log.warning("%s is %r, which is not one of %s; using %s",
+                where, value, ", ".join(allowed), fallback)
+    return fallback
+
+
 def load(path: Path | str | None = None) -> Settings:
     """Read the configuration. A missing file is defaults, not an error.
 
@@ -424,6 +519,7 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
     camera = _require_mapping(raw.get("camera"), "camera")
     person = _require_mapping(raw.get("person_detection"), "person_detection")
     screensaver = _require_mapping(raw.get("screensaver"), "screensaver")
+    photos = _require_mapping(raw.get("photos"), "photos")
     kodama = _require_mapping(raw.get("kodama"), "kodama")
     call = _require_mapping(raw.get("call"), "call")
     files = _require_mapping(raw.get("files"), "files")
@@ -505,6 +601,49 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
             enabled=bool(screensaver.get("enabled", True)),
             timeout_seconds=_positive(screensaver.get("timeout_seconds", 60.0), 60.0,
                                       "screensaver.timeout_seconds"),
+            # Not validated here. `ScheduleManager` parses these and falls back
+            # to the specification's times with a warning if they are not
+            # HH:MM, which keeps one module responsible for what a time means.
+            day_start=str(screensaver.get("day_start", "07:00")),
+            night_start=str(screensaver.get("night_start", "21:01")),
+            day_mode=_one_of(screensaver.get("day_mode", "photos"),
+                             ("photos", "clock"), "photos",
+                             "screensaver.day_mode"),
+            night_mode=_one_of(screensaver.get("night_mode", "weather"),
+                               ("weather", "clock", "photos"), "weather",
+                               "screensaver.night_mode"),
+        ),
+        photos=PhotosConfig(
+            enabled=bool(photos.get("enabled", True)),
+            interval_seconds=_positive(photos.get("interval_seconds", 15.0), 15.0,
+                                       "photos.interval_seconds"),
+            transition_ms=int(_positive(photos.get("transition_ms", 1000), 1000,
+                                        "photos.transition_ms")),
+            shuffle=bool(photos.get("shuffle", True)),
+            max_photos=int(_positive(photos.get("max_photos", 300), 300,
+                                     "photos.max_photos")),
+            max_cache_mb=int(_positive(photos.get("max_cache_mb", 512), 512,
+                                       "photos.max_cache_mb")),
+            # **Taken as written, never clamped to `max_photos`.** A floor
+            # that quietly shrank to match a lowered ceiling would protect
+            # nothing in the one situation it exists for. `_check` warns when
+            # the two conflict; the floor wins and the cache stays over.
+            min_photos=int(_positive(photos.get("min_photos", 50), 50,
+                                     "photos.min_photos")),
+            sync_minutes=_positive(photos.get("sync_minutes", 60.0), 60.0,
+                                   "photos.sync_minutes"),
+            download_size=str(photos.get("download_size", "w1600-h1000")),
+            cache_dir=(Path(str(photos["cache_dir"])).expanduser()
+                       if photos.get("cache_dir")
+                       else Path.home() / ".cache" / "aipi5" / "photos"),
+            # `_secret_path`, not `_path`: a relative name here must land in
+            # ~/.config/aipi5 and never inside the checkout. These two files
+            # are an OAuth client and a refresh token.
+            client_file=_secret_path(photos.get("client_file"),
+                                     "google-photos-client.json"),
+            token_file=_secret_path(photos.get("token_file"),
+                                    "google-photos-token.json"),
+            show_info=bool(photos.get("show_info", False)),
         ),
         kodama=KodamaLaunchConfig(
             enabled=bool(kodama.get("enabled", True)),
@@ -583,6 +722,29 @@ def _check(settings: Settings) -> None:
     if settings.screensaver.enabled and not settings.person.enabled:
         log.warning("the screensaver is enabled but person detection is not, so nothing "
                     "will ever bring it up or take it away")
+
+    # The slideshow cannot run without a Google account, and the failure is
+    # otherwise invisible: the day screensaver simply shows the clock, which
+    # is also what a working device does at night. Said once at boot rather
+    # than left for somebody to notice.
+    # A floor above the ceiling is legal — the floor wins, deliberately — but
+    # it is much more likely to be somebody having edited one and forgotten
+    # the other, and the consequence is a cache that never comes down to the
+    # size they asked for.
+    if settings.photos.min_photos > settings.photos.max_photos:
+        log.warning(
+            "photos.min_photos (%d) is above photos.max_photos (%d). The floor "
+            "wins — cleanup will not take the slideshow below %d photos — so "
+            "the cache will sit above its own limit.",
+            settings.photos.min_photos, settings.photos.max_photos,
+            settings.photos.min_photos)
+
+    if settings.screensaver.day_mode == "photos" and settings.photos.enabled \
+            and not settings.photos.token_file.exists():
+        log.info("no Google Photos authorisation at %s, so the daytime "
+                 "screensaver will show the clock until ./scripts/"
+                 "link-google-photos.sh has been run",
+                 settings.photos.token_file)
 
 
 # Used when there is no configuration file at all, so that a deployment which

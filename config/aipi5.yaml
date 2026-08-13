@@ -194,6 +194,119 @@ screensaver:
   # depends on the room.
   timeout_seconds: 60
 
+  # What the idle screen shows, and when. **This is the only place the
+  # schedule is written down** — `aipi5/screensaver/schedule.py` reads it and
+  # nothing else has an opinion — so the times can be moved here without
+  # touching any screensaver logic.
+  #
+  #     07:00 – 21:00   the Google Photos slideshow
+  #     21:01 – 06:59   the clock and the weather
+  #
+  # Inclusive start, and the night begins at 21:01 because 21:00 itself is a
+  # daytime minute. The night window crosses midnight and is handled as the
+  # complement of the day one, which is the only way that comparison is safe.
+  #
+  # The Pi's local time, always: `datetime.now()` reads /etc/localtime, so
+  # daylight saving arrives through `timedatectl` and there is no offset
+  # written down anywhere to go stale. The timezone in the `location` block
+  # above is what the weather provider is told; the *system* timezone is what
+  # decides this. They should agree, and on this device they do.
+  day_start: "07:00"
+  night_start: "21:01"
+
+  # `photos` or `clock`. The day already falls back to the clock on its own
+  # when there is nothing to show — no Google account, an empty cache, a sync
+  # that has not finished — so this is for a household that wants the clock
+  # all day on purpose, not for one that has not set the slideshow up yet.
+  day_mode: photos
+  night_mode: weather
+
+# The daytime slideshow's photographs.
+#
+# **Read aipi5/photos/__init__.py before changing anything here.** Google
+# removed the Library API's read access to a person's own library in March
+# 2025; an app can now only reach photographs the person explicitly picks, in
+# Google's own picker, one session at a time. Three things follow, and none of
+# them were choices:
+#
+#   * There is no album to subscribe to. What gets remembered is the *set* the
+#     person picked — the settings page calls it a collection and shows the
+#     day it was chosen.
+#   * The cache below is not an optimisation. A picked photograph is reachable
+#     from Google only while its session lives, so these files are the durable
+#     copy and the slideshow runs from them forever after.
+#   * Picking needs a phone. The panel shows a QR code; Settings → Screensaver
+#     → Choose Photos.
+#
+# The one-time account authorisation is `./scripts/link-google-photos.sh`, run
+# over ssh. Nothing secret is in this file: the OAuth client and the refresh
+# token are two files under ~/.config/aipi5, chmod 0600, and no token is ever
+# logged.
+photos:
+  enabled: true
+
+  # Section 11's 10–15 seconds. The crossfade is CSS opacity on two layers —
+  # the one transition a compositor animates without waking the CPU — so a
+  # second of it costs nothing measurable on this Pi.
+  interval_seconds: 15
+  transition_ms: 1000
+
+  # Shuffled, and the page keeps a queue so nothing repeats until the whole
+  # set has been shown. Random-every-time would show the same photograph twice
+  # in five minutes on a set of thirty.
+  shuffle: true
+
+  # Two ceilings; whichever is reached first wins. The count is what a person
+  # can reason about, the megabytes are what actually protects the card — one
+  # photograph is not the size of another. About 300 at this download size is
+  # a little over 100 MB in practice.
+  #
+  # Eviction only ever deletes local copies. Nothing in this project can
+  # delete anything from a Google Photos account, and `aipi5/photos/cache.py`
+  # makes no network calls at all.
+  max_photos: 300
+  max_cache_mb: 512
+
+  # And a floor, which outranks both ceilings.
+  #
+  # Cleanup may never take the running slideshow below this many photographs.
+  # The reason is that these copies become unrecoverable: the picking session
+  # behind them expires — measured against the live API on 2026-08-13, a
+  # session's `expireTime` came back **seven days** out — after which a
+  # photograph deleted here is gone until somebody picks again with their
+  # phone. A number edited in this file must not be able to do that.
+  #
+  # So the order is: leftovers from sets nobody is playing go first and go
+  # entirely; the chosen set is touched only after that, and only down to
+  # here. If the floor and the ceilings genuinely conflict — a `max_photos`
+  # lowered below this — the floor wins, the cache sits above its limit, and
+  # the journal says so. Only replacing the selection or disconnecting the
+  # account empties it, and both are things a person asked for.
+  min_photos: 50
+
+  # How often the sync thread looks for work. It has nothing to do once every
+  # picked photograph is on disk and the session behind it has expired, so a
+  # device that has been running since spring makes no Google API calls at
+  # all — which is the answer to "excessive API calls" being that there are
+  # none rather than that they are rationed.
+  sync_minutes: 60
+
+  # What to ask Google for. A bounding box, not a crop: the API preserves the
+  # aspect ratio, which is why nothing in this project has to know whether a
+  # photograph is portrait or landscape. 1600x1000 is the 1280x800 panel with
+  # room to spare and about a quarter of the bytes of an original.
+  download_size: w1600-h1000
+
+  # Under ~/.cache rather than in the repository or in ~/.config: these are
+  # re-downloadable copies of somebody else's photographs, and losing the lot
+  # costs a sync rather than anything irreplaceable.
+  cache_dir: ~/.cache/aipi5/photos
+
+  # A small date and album caption, bottom left, fading after six seconds.
+  # Off by default — section 13 asks for it to be optional and never to cover
+  # the photograph.
+  show_info: false
+
 kodama:
   enabled: true
   # How Kodama-Lite is started. Its own README is explicit that the systemd
