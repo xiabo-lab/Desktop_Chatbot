@@ -73,6 +73,7 @@ from aipi5.call.tokens import TrustedDevices
 from aipi5.core import config as config_mod
 from aipi5.core import preflight
 from aipi5.core.audio_priority import AudioPriority
+from aipi5.core.housekeeping import Housekeeping
 from aipi5.core.presence import Presence, PresenceTracker, ScreensaverPolicy
 from aipi5.core.shutdown import ShutdownCountdown, countdown_and_run
 from aipi5.files import FileStore, human_size
@@ -272,6 +273,10 @@ class Assistant:
             night_mode=settings.screensaver.night_mode,
             timezone=settings.location.timezone)
         self.watcher: PresenceWatcher | None = None
+        # The periodic maintenance, on its own clock rather than the voice
+        # loop's. See `core/housekeeping.py` for the failure that caused it to
+        # be moved out of there.
+        self.housekeeping = Housekeeping(self, settings.weather.cache_seconds)
         self.web = WebUI(settings.display, state=self.ui_state,
                          history=self.history, info=self.system_info,
                          # The dedicated pages read these directly rather than
@@ -374,6 +379,8 @@ class Assistant:
         self.screen.log_startup()
 
         self.publish()
+        # Last, so it never runs against a half-built assistant.
+        self.housekeeping.start()
         return self.stt is not None
 
     def verify(self, mic) -> "preflight.Report":
@@ -567,9 +574,48 @@ class Assistant:
 
         self.publish()
 
-    def refresh_weather(self) -> None:
+    def refresh_weather(self) -> bool:
+        """Republish the weather. False when there is none to publish.
+
+        The return value is what lets housekeeping retry on a short interval
+        after a failure instead of the long cache one — see `WEATHER_RETRY_S`.
+        """
         weather = self.weather.current()
         self.ui_state.update(weather=weather.as_dict() if weather else None)
+        return weather is not None
+
+    def recheck_degraded(self) -> None:
+        """Clear a startup warning that has stopped being true.
+
+        `self.report` is built once, by `verify()`, at boot. Everything on the
+        degraded banner across the top of the screen therefore describes the
+        moment the assistant started and never changes — so a Pi that booted
+        before its network came up says "OpenAI unavailable" until it is
+        restarted, hours after the model started answering again. Measured:
+        the API blocked at startup, unblocked a minute later, and the banner
+        still there with the model reachable.
+
+        Only OpenAI is re-probed, deliberately. It is the check whose failure
+        is purely a network condition and whose probe is one cheap request.
+        A camera or a microphone that was missing at boot is a physical change
+        with its own recovery path, and re-running the whole preflight from a
+        background thread would mean opening capture devices underneath the
+        code already using them.
+        """
+        if self.report is None:
+            return
+        for check in self.report.checks:
+            if check.ok or check.critical or check.name != "OpenAI":
+                continue
+            if self.llm is None or not self.llm.available:
+                return
+            ok, detail = self.llm.probe()
+            if ok:
+                check.ok, check.detail = True, detail
+                self._llm_ok, self._llm_detail = True, detail
+                log.info("OpenAI is answering again (%s); clearing the "
+                         "degraded banner", detail)
+            return
 
     def publish(self, **extra) -> None:
         """Push the current state to whatever the screen polls."""
@@ -620,6 +666,10 @@ class Assistant:
             else {"backend": "not running", "state": self.tracker.state.value},
             "screensaver": self.screen.describe(),
             "photos": self.photos.describe(),
+            # Visible because a stalled housekeeping thread is exactly the
+            # kind of failure that otherwise shows up only as "the camera
+            # never came back" days later.
+            "housekeeping": self.housekeeping.describe(),
             "conversation": self.conversation.describe(),
             "kodama": {"running": self.player.available(),
                        "service": self.settings.kodama.service},
@@ -703,6 +753,9 @@ class Assistant:
             # the phone show "call ended" instead of timing out — and it is the
             # only thing here somebody on the other end of is waiting on.
             ("call", self.call.stop),
+            # Before the hardware it touches, so a tick cannot land on a
+            # camera or a weather session that is being closed underneath it.
+            ("housekeeping", self.housekeeping.stop),
             ("presence", lambda: self.watcher and self.watcher.stop()),
             ("camera", self.camera.close),
             ("wake", lambda: self.detector_wake and self.detector_wake.close()),
@@ -837,7 +890,6 @@ def main() -> int:
             assistant.verify(mic)
             log.info("AIPI5 ready — say %s", cfg.wake.phrase)
             last_empty_turn = 0.0
-            last_weather = time.monotonic()
             in_call = False
 
             while not stopping:
@@ -887,26 +939,16 @@ def main() -> int:
                 woke = assistant.detector_wake.detect(frame)
 
                 if not woke and requested is None:
-                    # A call that got stuck — ringing with nobody answering,
-                    # or connecting to a phone that vanished — is expired here,
-                    # on the one path that is idle. See `SignalingHub.sweep`.
-                    assistant.call_hub.sweep()
-                    # And the camera a finished call has not let go of yet.
-                    # Cheap when there is nothing to do, which is almost
-                    # always; see `Camera.retry_reclaim`.
-                    assistant.camera.retry_reclaim()
-                    # The housekeeping that has to happen while nothing is
-                    # being said, done here because this is the only place the
-                    # loop is idle. The weather refresh is bounded by its own
-                    # cache anyway; this is what stops the screensaver from
-                    # showing a reading from two hours ago.
-                    if time.monotonic() - last_weather > settings.weather.cache_seconds:
-                        last_weather = time.monotonic()
-                        assistant.refresh_weather()
-                    # Same reconciler as the in-call path, for the same reason:
-                    # a call that expired must give the hardware back without
-                    # anybody having called `bye`. Idempotent, and it publishes.
-                    assistant.on_call_change()
+                    # **The idle housekeeping is not here any more.** Sweeping
+                    # expired calls, retrying a lost camera, refreshing the
+                    # weather and publishing the UI state all used to run on
+                    # this line, and all four therefore stopped whenever the
+                    # microphone did — `next(frame)` above yields nothing, so
+                    # the loop body never runs. Measured on the device: a
+                    # camera unplugged while the microphone was already dead
+                    # never came back, because the only thing that retries it
+                    # is reached through audio. See `core/housekeeping.py`,
+                    # which now runs the same four calls on its own clock.
                     continue
 
                 if woke and time.monotonic() - last_empty_turn < EMPTY_TURN_REFRACTORY_S:
