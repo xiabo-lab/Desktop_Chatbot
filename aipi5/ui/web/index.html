@@ -206,6 +206,145 @@
     background: var(--accent); opacity: 0.6; width: 0;
   }
 
+  /* ── the games library ───────────────────────────────────────
+     Section 19's four tiles. Deliberately built from the same panel, edge and
+     radius tokens as everything else rather than given a "game" look: this is
+     a page of the assistant, reached from the same row of buttons, and a
+     library that announced itself with a different visual language would read
+     as a different application bolted on. */
+
+  .game-grid {
+    flex: 1; margin-top: 20px;
+    display: grid; grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: repeat(2, 1fr); gap: 22px;
+    align-content: center;
+  }
+  .game-tile {
+    border: 1px solid var(--panel-edge); border-radius: 18px;
+    background: var(--panel); color: var(--ink);
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 10px;
+    font-family: inherit; cursor: pointer; position: relative;
+    /* Overrides the shared `button` height, which is sized for the row of
+       six on the main page and is a quarter of what a tile wants. */
+    height: auto; flex: 1 1 auto;
+  }
+  .game-tile .glyph {
+    font-size: 76px; line-height: 1;
+    font-family: "Noto Color Emoji", "Noto Emoji", "Segoe UI Emoji", sans-serif;
+  }
+  .game-tile .name { font-size: 28px; font-weight: 600; }
+  .game-tile .blurb { font-size: 17px; color: var(--ink-dim); }
+  .game-tile .cta {
+    margin-top: 6px; padding: 8px 26px; border-radius: 10px;
+    font-size: 20px; letter-spacing: 0.06em;
+    background: var(--accent); color: #06121f; font-weight: 600;
+  }
+  .game-tile .best {
+    position: absolute; top: 14px; right: 18px;
+    font-size: 16px; color: var(--ink-faint);
+  }
+  /* Coming Soon. Dimmed and inert, but still drawn in full so the page shows
+     what the device will be able to do — section 19 wants them visible. */
+  .game-tile.soon { opacity: 0.45; cursor: default; }
+  .game-tile.soon .cta {
+    background: transparent; color: var(--ink-dim);
+    border: 1px solid var(--panel-edge); font-weight: 400;
+  }
+  .game-tile:not(.soon):active { background: #202836; border-color: var(--accent); }
+
+  /* ── a game in progress ──────────────────────────────────────
+     Full bleed, like the call page: section 22 wants nearly the whole
+     1280x800 for play, and a header would be 70 px of the arc every fruit
+     travels through. */
+
+  #page-game { padding: 0; }
+
+  #game-stage {
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at 50% 120%, #1b2740 0%, #0b0f16 62%);
+    overflow: hidden;
+  }
+  /* The canvas is the game. Everything else on this page is drawn over it in
+     HTML, because score and lives do not move and re-rasterising text sixty
+     times a second to draw them would be work for nothing. */
+  #game-canvas { position: absolute; inset: 0; width: 1280px; height: 800px; }
+
+  .game-hud {
+    position: absolute; inset: 0; pointer-events: none;
+    padding: 22px 28px; display: flex; flex-direction: column;
+  }
+  .game-hud-top {
+    display: flex; align-items: flex-start; justify-content: space-between;
+  }
+  #game-score {
+    font-size: 40px; font-weight: 600; font-variant-numeric: tabular-nums;
+  }
+  #game-streak { font-size: 19px; color: var(--accent-warm); min-height: 24px; }
+  #game-lives {
+    font-size: 34px; letter-spacing: 6px;
+    font-family: "Noto Color Emoji", "Noto Emoji", "Segoe UI Emoji", sans-serif;
+  }
+  /* Pause is the one thing on the HUD that is touched, so it is the one thing
+     that takes pointer events back. Bottom left, away from where hands swing. */
+  #game-pause {
+    position: absolute; left: 26px; bottom: 24px;
+    pointer-events: auto; width: auto; height: 60px; min-width: 140px;
+    flex-direction: row; gap: 10px; font-size: 21px;
+  }
+
+  /* Overlays: start, paused, game over, and the two error screens. One rule
+     for all of them, because they are the same object — a dimmed sheet over a
+     stopped game with a column of large touch targets. */
+  .game-sheet {
+    position: absolute; inset: 0; display: none;
+    flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px; background: rgba(8, 11, 16, 0.86); text-align: center;
+    padding: 40px;
+  }
+  .game-sheet.on { display: flex; }
+  .game-sheet h2 {
+    margin: 0; font-size: 46px; font-weight: 600; letter-spacing: 0.06em;
+  }
+  .game-sheet p { margin: 0; font-size: 22px; color: var(--ink-dim); max-width: 720px; }
+  .game-sheet .big-score {
+    font-size: 76px; font-weight: 300; font-variant-numeric: tabular-nums;
+    line-height: 1.05;
+  }
+  .game-sheet .label { font-size: 18px; color: var(--ink-faint); letter-spacing: 0.14em; }
+  .game-sheet button {
+    flex: 0 0 auto; width: 340px; height: 74px; font-size: 24px;
+    flex-direction: row; gap: 12px;
+  }
+  .game-sheet .primary { background: var(--accent); color: #06121f; border-color: var(--accent); }
+  .game-sheet .primary[disabled] { background: var(--panel); color: var(--ink-dim); border-color: var(--panel-edge); }
+  .sheet-rows { display: flex; gap: 60px; align-items: flex-end; margin: 6px 0 10px; }
+  .sheet-rows div { display: flex; flex-direction: column; gap: 4px; }
+
+  /* The start screen's live preview. Section 20 asks for one, and it is the
+     only place in a game the camera image is ever shown — during play,
+     section 22 is explicit that the player's room must not dominate the UI. */
+  #game-preview {
+    width: 420px; height: 236px; border-radius: 14px;
+    border: 1px solid var(--panel-edge); background: #05070a;
+    object-fit: cover; transform: scaleX(-1);
+  }
+  #game-detected { font-size: 22px; min-height: 30px; }
+  #game-detected.yes { color: #6ee7a0; }
+  #game-detected.no { color: var(--ink-dim); }
+
+  /* Section 45's debug overlay. Off unless asked for, and drawn in a corner
+     where it cannot be mistaken for part of the game. */
+  #game-debug {
+    position: absolute; right: 22px; bottom: 22px; display: none;
+    padding: 12px 16px; border-radius: 10px;
+    background: rgba(6, 9, 14, 0.82); border: 1px solid var(--panel-edge);
+    font-size: 14px; line-height: 1.55; color: var(--ink-dim);
+    font-variant-numeric: tabular-nums; text-align: left; pointer-events: none;
+  }
+  #game-debug.on { display: block; }
+  #game-debug b { color: var(--ink); font-weight: 600; }
+
   /* ── the camera page ─────────────────────────────────────────── */
 
   #camera-stage {
@@ -904,6 +1043,11 @@
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
     <button data-action="kodama"><span class="glyph">🎵</span><span class="label">Music</span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
+    <!-- Navigation only, like Files and Settings below. Opening the library
+         asks the assistant for nothing — the camera and the accelerator are
+         taken when a *game* is opened, not when the shelf is looked at — so
+         there is no work to rate limit and nothing to cool down. -->
+    <button data-page="games"><span class="glyph">🎮</span><span class="label">Game</span></button>
     <!-- Navigation only. Every other button here posts an action into the
          assistant's queue because it asks for work — a capture, a fetch, a
          launch — and gets a ten-second cooldown for it. Opening a folder is
@@ -997,6 +1141,82 @@
         </svg>
       </button>
     </div>
+  </div>
+</div>
+
+<!-- ── games library ───────────────────────────────────────────── -->
+<div id="page-games" class="page">
+  <header>
+    <button class="back" data-back><span class="glyph">‹</span> Back</button>
+    <h1>GAMES</h1>
+    <div class="headline-weather" data-weather-headline></div>
+  </header>
+  <!-- Filled from `/api/games` rather than written out here, so that the
+       catalogue in `aipi5/games/manager.py` is the only place that decides
+       which games exist and which are playable. A hard-coded tile here would
+       be a fifth game the API has never heard of. -->
+  <div class="game-grid" id="game-grid"></div>
+</div>
+
+<!-- ── a game ──────────────────────────────────────────────────── -->
+<div id="page-game" class="page full">
+  <div id="game-stage">
+    <canvas id="game-canvas" width="1280" height="800"></canvas>
+
+    <div class="game-hud">
+      <div class="game-hud-top">
+        <div>
+          <div id="game-score">0</div>
+          <div id="game-streak"></div>
+        </div>
+        <div id="game-lives"></div>
+      </div>
+    </div>
+
+    <button id="game-pause"><span class="glyph">⏸</span><span>Pause</span></button>
+
+    <!-- Start. Section 20: a preview, a detection state, and a START that
+         stays disabled until somebody is really there. -->
+    <div class="game-sheet on" id="sheet-start">
+      <h2 id="start-title">Fruit Ninja</h2>
+      <p>Stand where the camera can see your full upper body.</p>
+      <img id="game-preview" alt="">
+      <div id="game-detected" class="no">Looking for a player…</div>
+      <button class="primary" id="start-play" disabled>START</button>
+      <button id="start-back">Back to Games</button>
+    </div>
+
+    <!-- Pause. Section 29. -->
+    <div class="game-sheet" id="sheet-paused">
+      <h2>PAUSED</h2>
+      <button class="primary" id="paused-resume">Resume</button>
+      <button id="paused-restart">Restart</button>
+      <button id="paused-exit">Exit Game</button>
+    </div>
+
+    <!-- Game over. Section 28. -->
+    <div class="game-sheet" id="sheet-over">
+      <h2>GAME OVER</h2>
+      <div class="sheet-rows">
+        <div><span class="label">SCORE</span><span class="big-score" id="over-score">0</span></div>
+        <div><span class="label">BEST</span><span class="big-score" id="over-best">0</span></div>
+      </div>
+      <p id="over-detail"></p>
+      <button class="primary" id="over-again">Play Again</button>
+      <button id="over-back">Back to Games</button>
+    </div>
+
+    <!-- Section 41's two failures, and section 43's third. One sheet: they
+         differ only in what they say and they all offer the same two ways
+         out, so three sheets would be three things to keep in step. -->
+    <div class="game-sheet" id="sheet-error">
+      <h2 id="error-title">Camera unavailable</h2>
+      <p id="error-detail"></p>
+      <button class="primary" id="error-retry">Retry</button>
+      <button id="error-back">Back to Games</button>
+    </div>
+
+    <div id="game-debug"></div>
   </div>
 </div>
 
@@ -1358,11 +1578,18 @@ function show(page) {
   // somebody's phone has to appear here — and must stop the moment it is not,
   // for the same reason the camera preview does.
   if (previous === "settings") stopSettings();
+  // Leaving a game must give the Brio and the accelerator back, and it is the
+  // same teardown whether the person pressed Exit, pressed Back, or something
+  // navigated away — so it hangs off `show()` rather than off any one button,
+  // exactly as the call page does. Section 30.
+  if (previous === "game") stopGame();
+  if (previous === "games") stopLibrary();
   if (page === "camera") startCamera();
   if (page === "call") startCall();
   if (page === "weather") startWeather();
   if (page === "files") loadFiles();
   if (page === "settings") startSettings();
+  if (page === "games") startLibrary();
   return true;
 }
 
@@ -4017,6 +4244,435 @@ screensaver.addEventListener("pointerdown", (event) => {
 // lifts, and the last thing this should require of somebody stopping their
 // device from powering off is that they let go in time.
 el("shutdown").addEventListener("pointerdown", cancelShutdown);
+
+// ── AI Motion games ─────────────────────────────────────────────────
+//
+// Two pages: the library, which is a fetch and four tiles, and the game, which
+// is a canvas.
+//
+// **The simulation is the Pi's, not this page's.** Score, lives, collision and
+// physics all happen in `aipi5/games/fruit_ninja/`, and what arrives here over
+// `/api/game/stream` is the result. That is the opposite of the usual division
+// and it is deliberate: collision is tested against the pose the instant it
+// leaves the accelerator rather than after a round trip through a browser, and
+// every rule in the game is then testable without one.
+//
+// What this page does own is drawing at 60 Hz. Snapshots arrive at the pose
+// rate — about 30 a second — so each fruit is *extrapolated* from the position
+// and velocity in the last one, which is section 24's "interpolation may be
+// used between pose frames". Without it the fruit visibly step.
+
+const GAME_GRAVITY = 1000;          // must match fruit.py's GRAVITY
+const GAME_W = 1280, GAME_H = 800;
+
+let gameStream = null;              // the EventSource
+let gameState = null;               // last snapshot from the Pi
+let gameStateAt = 0;                // performance.now() when it arrived
+let gameFrame = null;               // requestAnimationFrame handle
+let gameId = "";                    // which game is open
+let gameSounds = null;              // lazily built AudioContext
+let gameFps = 0;
+
+function gameEl(id) { return document.getElementById(id); }
+
+// ── the library ─────────────────────────────────────────────────────
+
+async function startLibrary() {
+  const grid = gameEl("game-grid");
+  try {
+    const response = await fetch("/api/games");
+    const data = await response.json();
+    grid.innerHTML = "";
+    for (const game of data.games || []) {
+      const tile = document.createElement("button");
+      tile.className = "game-tile" + (game.playable ? "" : " soon");
+      const best = game.playable && game.best
+        ? `<span class="best">Best ${game.best}</span>` : "";
+      tile.innerHTML = best +
+        `<span class="glyph">${game.glyph}</span>` +
+        `<span class="name">${game.name}</span>` +
+        `<span class="blurb">${game.blurb}</span>` +
+        `<span class="cta">${game.playable ? "PLAY" : "Coming Soon"}</span>`;
+      if (game.playable) {
+        tile.addEventListener("click", () => openGame(game.id, game.name));
+      }
+      grid.appendChild(tile);
+    }
+  } catch (err) {
+    grid.innerHTML = '<div class="blurb">The games list could not be read.</div>';
+  }
+}
+
+function stopLibrary() { /* nothing held open */ }
+
+// ── opening and closing a game ──────────────────────────────────────
+
+async function openGame(id, name) {
+  gameId = id;
+  gameEl("start-title").textContent = name;
+  showSheet("start");
+  gameEl("game-preview").src = "";
+  gameEl("game-detected").textContent = "Starting the camera…";
+  gameEl("game-detected").className = "no";
+  show("game");
+
+  const answer = await gamePost("/api/game/open", { game: id });
+  if (!answer.ok) {
+    // Section 41. The two failures want different words, and the only honest
+    // way to tell them apart is what the Pi said — the camera message names
+    // the feature holding it, which is the thing a person can act on.
+    const camera = /camera|brio/i.test(answer.error || "");
+    gameEl("error-title").textContent =
+      camera ? "Camera unavailable" : "AI accelerator unavailable";
+    gameEl("error-detail").textContent = answer.error ||
+      "Fruit Ninja requires the AI HAT+ 2.";
+    showSheet("error");
+    return;
+  }
+  // The game's own preview, not `/api/camera/stream`. That one reads the
+  // assistant's `Camera`, which is *lent* for as long as a game is open and
+  // correctly answers 503 while it is — pointing the start screen at it gave a
+  // broken image on the one screen whose whole job is to show somebody that
+  // the camera can see them.
+  gameEl("game-preview").src = "/api/game/preview?t=" + Date.now();
+  openGameStream();
+  startGameRender();
+}
+
+function stopGame() {
+  closeGameStream();
+  if (gameFrame !== null) { cancelAnimationFrame(gameFrame); gameFrame = null; }
+  // The preview is an <img> on a multipart stream: it keeps reading the camera
+  // for as long as the element has that src, whether or not anybody can see
+  // it. Same trap as the camera page's.
+  gameEl("game-preview").src = "";
+  gameState = null;
+  gameId = "";
+  // Fire and forget. The manager's watchdog would give the hardware back
+  // anyway, but not for twenty-five seconds, and the camera page may be the
+  // very next thing somebody opens.
+  fetch("/api/game/close", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: "{}", keepalive: true,
+  }).catch(() => {});
+}
+
+async function gamePost(url, body) {
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    const data = await response.json().catch(() => ({}));
+    return { ok: response.ok, error: data.error || "", data };
+  } catch (err) {
+    return { ok: false, error: "the assistant did not answer" };
+  }
+}
+
+// ── the state stream ────────────────────────────────────────────────
+
+function openGameStream() {
+  closeGameStream();
+  gameStream = new EventSource("/api/game/stream");
+  gameStream.onmessage = (event) => {
+    try { applyGameState(JSON.parse(event.data)); } catch (err) { /* ignore */ }
+  };
+  gameStream.onerror = () => {
+    // The stream ends when the game does, and EventSource reconnects by
+    // itself otherwise. Nothing to do but let it.
+  };
+}
+
+function closeGameStream() {
+  if (gameStream) { gameStream.close(); gameStream = null; }
+}
+
+function applyGameState(state) {
+  gameState = state;
+  gameStateAt = performance.now();
+
+  const game = state.game;
+  const pose = state.pose;
+
+  // The start screen's live readiness. Section 20: START stays disabled until
+  // the Pi says a player is really there — the page never decides this
+  // itself, for the same reason the screensaver mode is not decided here.
+  if (game && game.state === "ready") {
+    const detected = gameEl("game-detected");
+    const ready = pose && pose.ready;
+    detected.textContent = ready ? "Player detected ✓"
+      : (pose && pose.advice) || "Looking for a player…";
+    detected.className = ready ? "yes" : "no";
+    gameEl("start-play").disabled = !ready;
+  }
+
+  if (game) {
+    gameEl("game-score").textContent = game.score;
+    gameEl("game-lives").textContent = "❤".repeat(Math.max(0, game.lives));
+    gameEl("game-streak").textContent =
+      game.streak >= 3 ? `${game.streak} in a row` : "";
+    showSheet({ ready: "start", paused: "paused", over: "over",
+                playing: "" }[game.state]);
+    if (game.state === "over") {
+      gameEl("over-score").textContent = game.score;
+      gameEl("over-best").textContent = game.best;
+      const s = game.stats || {};
+      gameEl("over-detail").textContent =
+        `${s.sliced || 0} sliced · ${s.missed || 0} missed · best run ${s.best_streak || 0}`;
+    }
+  }
+
+  // Section 43: the camera went away mid-game. The Pi has already paused it.
+  const motion = state.motion;
+  if (motion && motion.error) {
+    gameEl("error-title").textContent = "Camera disconnected";
+    gameEl("error-detail").textContent = motion.error;
+    showSheet("error");
+  }
+
+  for (const sound of state.sounds || []) playGameSound(sound);
+  drawGameDebug(state);
+}
+
+function showSheet(which) {
+  for (const name of ["start", "paused", "over", "error"]) {
+    gameEl("sheet-" + name).classList.toggle("on", name === which);
+  }
+}
+
+// ── drawing ─────────────────────────────────────────────────────────
+
+function startGameRender() {
+  if (gameFrame !== null) return;
+  let last = performance.now();
+  let smoothed = 60;
+
+  const draw = (now) => {
+    gameFrame = requestAnimationFrame(draw);
+    const dt = (now - last) / 1000;
+    last = now;
+    if (dt > 0) smoothed += 0.05 * (1 / dt - smoothed);
+    gameFps = smoothed;
+    renderGame(now);
+  };
+  gameFrame = requestAnimationFrame(draw);
+}
+
+function renderGame(now) {
+  const canvas = gameEl("game-canvas");
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, GAME_W, GAME_H);
+  if (!gameState || !gameState.game) return;
+
+  const game = gameState.game;
+  // How far ahead of the last snapshot we are. Only while actually playing —
+  // extrapolating a paused game would have the fruit drift away under the
+  // pause sheet and then snap back on resume.
+  const ahead = game.state === "playing"
+    ? Math.min(0.2, (now - gameStateAt) / 1000) : 0;
+
+  for (const item of game.fruit || []) drawFruit(ctx, item, ahead);
+  for (const slash of game.slashes || []) drawSlash(ctx, slash);
+  drawHands(ctx);
+}
+
+function drawFruit(ctx, item, ahead) {
+  // Extrapolated with the same closed form the Pi integrates, so the drawn
+  // position and the authoritative one agree rather than drifting apart.
+  const x = item.sliced ? item.x : item.x + item.vx * ahead;
+  const y = item.sliced ? item.y
+    : item.y + item.vy * ahead + 0.5 * GAME_GRAVITY * ahead * ahead;
+  const angle = (item.angle || 0) * Math.PI / 180;
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  if (item.sliced) {
+    // Two halves falling apart along the cut. Cosmetic, and cheap: the same
+    // circle drawn twice with a growing offset perpendicular to the slash.
+    const spread = 26;
+    ctx.rotate(item.cut || 0);
+    for (const side of [-1, 1]) {
+      ctx.save();
+      ctx.translate(0, side * spread);
+      ctx.globalAlpha = 0.75;
+      ctx.beginPath();
+      ctx.arc(0, 0, item.r * 0.92, side > 0 ? 0 : Math.PI,
+              side > 0 ? Math.PI : Math.PI * 2);
+      ctx.fillStyle = item.flesh;
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+    return;
+  }
+
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.arc(0, 0, item.r, 0, Math.PI * 2);
+  ctx.fillStyle = item.colour;
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(255,255,255,0.16)";
+  ctx.stroke();
+
+  // The emoji rides on top of the disc. If the colour-emoji font is missing
+  // this draws nothing and the fruit is still a correctly coloured, correctly
+  // sized target — the same trade the main page's buttons make.
+  ctx.font = `${Math.round(item.r * 1.5)}px "Noto Color Emoji", "Segoe UI Emoji", sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(item.glyph, 0, 2);
+  ctx.restore();
+}
+
+function drawSlash(ctx, slash) {
+  // Not faded by age. The obvious thing — fade over the slash's lifetime —
+  // needs the slash's `at` and the current time on *the same clock*, and they
+  // are not: `at` is the Pi's `time.monotonic()` and this page has only
+  // `performance.now()`. Subtracting one from the other gives nonsense. The
+  // server already keeps only the last few, so they age out by being dropped.
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.lineWidth = 5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(slash.x1, slash.y1);
+  ctx.lineTo(slash.x2, slash.y2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawHands(ctx) {
+  const pose = gameState && gameState.pose;
+  if (!pose || !pose.player || !pose.player.present) return;
+
+  // Section 23: a subtle indicator per hand, never the whole skeleton. The
+  // skeleton is debug-only and is drawn by `drawGameDebug`.
+  for (const [key, colour] of [["left_wrist", "#4da3ff"],
+                               ["right_wrist", "#ffb454"]]) {
+    const hand = pose.player[key];
+    if (!hand || !hand.live) continue;
+    const x = hand.x * GAME_W, y = hand.y * GAME_H;
+
+    ctx.save();
+    const glow = ctx.createRadialGradient(x, y, 0, x, y, 34);
+    glow.addColorStop(0, colour + "cc");
+    glow.addColorStop(1, colour + "00");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(x, y, 34, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(x, y, 9, 0, Math.PI * 2);
+    ctx.fillStyle = colour;
+    ctx.fill();
+
+    // The trail is the same segment the Pi tested for collisions, so what the
+    // player sees is literally what was used to decide the hit.
+    ctx.beginPath();
+    ctx.moveTo(hand.px * GAME_W, hand.py * GAME_H);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = colour + "88";
+    ctx.lineWidth = 6;
+    ctx.lineCap = "round";
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ── section 45's debug overlay ──────────────────────────────────────
+
+function drawGameDebug(state) {
+  const panel = gameEl("game-debug");
+  panel.classList.toggle("on", !!state.debug);
+  if (!state.debug) return;
+
+  const m = (state.motion && state.motion.stats) || {};
+  const pose = state.pose && state.pose.player;
+  const left = pose && pose.left_wrist, right = pose && pose.right_wrist;
+  panel.innerHTML =
+    `<b>AI Accelerator</b> Hailo-10H<br>` +
+    `camera ${m.camera_fps || 0} fps · dropped ${m.dropped || 0}<br>` +
+    `inference ${m.inference_fps || 0} fps · ${m.inference_ms || 0} ms<br>` +
+    `capture→pose ${m.pipeline_ms || 0} ms · render ${gameFps.toFixed(0)} fps<br>` +
+    (left ? `L ${left.x.toFixed(3)},${left.y.toFixed(3)} @${left.confidence}` +
+            `${left.live ? "" : " (lost)"}<br>` : "") +
+    (right ? `R ${right.x.toFixed(3)},${right.y.toFixed(3)} @${right.confidence}` +
+             `${right.live ? "" : " (lost)"}` : "");
+}
+
+// ── sound ───────────────────────────────────────────────────────────
+//
+// Section 37, synthesised rather than shipped. Five short tones from an
+// oscillator is a few lines here against five audio files with a licence to
+// check (section 10), and it goes out through the page's own audio — which is
+// Chromium's, which is PipeWire's, which is the same graph and the same
+// master volume as everything else. Nothing here touches a device directly,
+// so nothing here can break TTS, Kodama or a call.
+
+function playGameSound(name) {
+  try {
+    if (!gameSounds) gameSounds = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = gameSounds;
+    if (ctx.state === "suspended") ctx.resume();
+
+    const spec = {
+      slice: { freq: 880, to: 1600, ms: 90, type: "triangle", gain: 0.16 },
+      miss: { freq: 300, to: 160, ms: 200, type: "sine", gain: 0.12 },
+      bomb: { freq: 140, to: 40, ms: 420, type: "sawtooth", gain: 0.2 },
+      "game-over": { freq: 420, to: 120, ms: 700, type: "sine", gain: 0.18 },
+      button: { freq: 660, to: 660, ms: 60, type: "square", gain: 0.1 },
+    }[name];
+    if (!spec) return;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const now = ctx.currentTime;
+    osc.type = spec.type;
+    osc.frequency.setValueAtTime(spec.freq, now);
+    osc.frequency.exponentialRampToValueAtTime(spec.to, now + spec.ms / 1000);
+    gain.gain.setValueAtTime(spec.gain, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + spec.ms / 1000);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + spec.ms / 1000 + 0.02);
+  } catch (err) {
+    // A device with no audio output is a quiet game, not a broken one.
+  }
+}
+
+// ── the game's own buttons ──────────────────────────────────────────
+
+function gameCommand(action) {
+  playGameSound("button");
+  return gamePost("/api/game/command", { action });
+}
+
+gameEl("start-play").addEventListener("click", () => gameCommand("start"));
+gameEl("start-back").addEventListener("click", () => show("games"));
+gameEl("game-pause").addEventListener("click", () => gameCommand("pause"));
+gameEl("paused-resume").addEventListener("click", () => gameCommand("resume"));
+gameEl("paused-restart").addEventListener("click", () => gameCommand("restart"));
+gameEl("paused-exit").addEventListener("click", () => show("games"));
+gameEl("over-again").addEventListener("click", () => gameCommand("restart"));
+gameEl("over-back").addEventListener("click", () => show("games"));
+gameEl("error-back").addEventListener("click", () => show("games"));
+gameEl("error-retry").addEventListener("click", () => {
+  // A full reopen rather than a resume: whatever failed took the camera or
+  // the accelerator with it, and both have to be asked for again.
+  //
+  // Both of these are read *before* `stopGame`, which clears `gameId`.
+  // Reading it afterwards silently retried "" — a game the catalogue has
+  // never heard of — so Retry answered "there is no game called ''".
+  const id = gameId || "fruit-ninja";
+  const name = gameEl("start-title").textContent;
+  stopGame();
+  openGame(id, name);
+});
 
 setInterval(drawClock, 1000);
 // The countdown is redrawn on its own timer rather than only on the state

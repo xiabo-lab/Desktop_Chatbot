@@ -77,6 +77,7 @@ from aipi5.core.housekeeping import Housekeeping
 from aipi5.core.presence import Presence, PresenceTracker, ScreensaverPolicy
 from aipi5.core.shutdown import ShutdownCountdown, countdown_and_run
 from aipi5.files import FileStore, human_size
+from aipi5.games.manager import GameManager
 from aipi5.kodama.launcher import KodamaLauncher
 from aipi5.llm import prompts
 from aipi5.llm.client import OpenAIClient
@@ -273,6 +274,22 @@ class Assistant:
             night_mode=settings.screensaver.night_mode,
             timezone=settings.location.timezone)
         self.watcher: PresenceWatcher | None = None
+
+        # ── AI Motion games ──────────────────────────────────────────
+        #
+        # Built unconditionally so the Games page can say why a game will not
+        # start, and holding nothing until somebody opens one: no camera, no
+        # accelerator, no thread. That is section 32's Option B and section
+        # 31's "request camera / release camera" — a device nobody is playing
+        # on must not be keeping the Brio from the camera page.
+        #
+        # It is handed the three things a game borrows and must give back —
+        # the camera, the ducker and the screensaver — rather than reaching for
+        # them, so that everything a game takes is visible in one line here.
+        self.games = GameManager(
+            settings.games, motion_cfg=settings.motion,
+            camera=self.camera, audio=self.audio, screen=self.screen,
+            on_change=self.publish) if settings.games.enabled else None
         # The periodic maintenance, on its own clock rather than the voice
         # loop's. See `core/housekeeping.py` for the failure that caused it to
         # be moved out of there.
@@ -287,7 +304,8 @@ class Assistant:
                          camera=self.camera if settings.camera.enabled else None,
                          call=self.call, on_call_change=self.on_call_change,
                          countdown=self.countdown, files=self.files,
-                         photos=self.photos, screen=self.screen)
+                         photos=self.photos, screen=self.screen,
+                         games=self.games)
         self.report: preflight.Report | None = None
         # Filled in by `start()`; defaulted here so `verify()` and the settings
         # page are safe to call against an assistant that failed to finish
@@ -756,6 +774,13 @@ class Assistant:
             # Before the hardware it touches, so a tick cannot land on a
             # camera or a weather session that is being closed underneath it.
             ("housekeeping", self.housekeeping.stop),
+            # Before the camera and before presence, because a game holds both
+            # the Brio and a configured model on the accelerator and gives them
+            # back through here. Closing the camera first would leave the pose
+            # thread reading a released handle, and leaving the game until
+            # after `presence` would have the detector reopening a camera the
+            # game is about to hand back.
+            ("games", lambda: self.games and self.games.close()),
             ("presence", lambda: self.watcher and self.watcher.stop()),
             ("camera", self.camera.close),
             ("wake", lambda: self.detector_wake and self.detector_wake.close()),

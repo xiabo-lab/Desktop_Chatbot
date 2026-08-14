@@ -187,6 +187,45 @@ person_detection:
   frames_to_appear: 2
   frames_to_disappear: 8
 
+# The AI Motion pose service, shared by every body-motion game.
+#
+# Separate from person_detection although both run YOLO on the same
+# accelerator: presence asks "is anybody there" twice a second forever, and
+# this asks "where are their wrists" thirty times a second while somebody is
+# playing. One section for both would need a confidence that means two things.
+#
+# Nothing here is held until a game is opened — no camera, no model, no thread.
+motion:
+  enabled: true
+  # Ships with the `hailo-models` package and is compiled for HAILO10H, so
+  # there is nothing to download. Its outputs are raw, unlike the detection
+  # model next door, and `aipi5/motion/yolov8_pose.py` decodes them.
+  pose_model: /usr/share/hailo-models/yolov8s_pose_h10.hef
+  # Below this a detection is not a person.
+  person_confidence: 0.5
+  # Below this one joint is not trusted enough to steer a blade. Higher than
+  # the person threshold on purpose: a confident person can still have an
+  # uncertain wrist behind their back.
+  keypoint_confidence: 0.45
+  iou: 0.7
+  # Weight on each new sample in the smoothing average. Measured: 0.55 settles
+  # a step change in about four frames while removing the shiver at rest.
+  # Lower adds lag you can feel by 0.3; higher stops smoothing much above 0.8.
+  smoothing: 0.55
+  # How long a wrist coasts on its last position once confidence drops, before
+  # the hand is declared gone.
+  stale_ms: 250
+  target_fps: 30
+
+games:
+  enabled: true
+  # Local, because game over must not need the network.
+  scores: ~/.config/aipi5/game-scores.json
+  # The skeleton, the raw wrist coordinates and the frame timings, drawn over
+  # the game. Off by default; the Settings page turns it on.
+  debug: false
+  sound: true
+
 screensaver:
   enabled: true
   # From the moment presence is lost, not from the last frame seen. 60 s is

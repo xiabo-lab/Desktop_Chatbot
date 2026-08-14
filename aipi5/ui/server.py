@@ -72,6 +72,28 @@ CALL_MAX_BODY = 64 * 1024
 # 6 fps looks live, and the alternative costs the thing the screen is for.
 PREVIEW_FPS = 6
 
+# How fast the game page is sent state.
+#
+# Matched to the pose rate rather than to the display: the simulation only
+# moves when a pose frame arrives, so sending faster would be the same
+# snapshot twice and sending slower would throw away hand positions that were
+# paid for. The page draws at 60 by extrapolating between these — section 24.
+GAME_STREAM_FPS = 30
+
+# A game stream is bounded like the camera preview is, and for the same reason:
+# an <img> or an EventSource left open by a page nobody is looking at is still
+# a thread and still a reader. Long, because the bound that actually matters is
+# the manager's own idle watchdog, and a stream that dropped mid-game would be
+# far more annoying than one that outlives its usefulness by a few minutes.
+GAME_STREAM_MAX_S = 1800.0
+
+# The start screen's preview. Much slower than the camera page's 6 fps: this is
+# a "yes, that is you" check while somebody positions themselves in front of
+# the camera, not something being watched for motion, and every frame is a JPEG
+# encode competing with pose inference for a core.
+GAME_PREVIEW_FPS = 5
+GAME_PREVIEW_MAX_S = 600.0
+
 # A preview that nobody is watching is still a reader of the camera. Chromium
 # keeps an <img> stream open as long as the element exists, so this is what
 # stops a page left on the camera view overnight from reading the camera
@@ -143,6 +165,16 @@ class _Handler(BaseHTTPRequestHandler):
             self._photo_file(route.path)
         elif route.path == "/api/photos/qr":
             self._photo_qr()
+        elif route.path == "/api/games":
+            self._games()
+        elif route.path == "/api/game/status":
+            self._game_status()
+        elif route.path == "/api/game/stream":
+            self._game_stream()
+        elif route.path == "/api/game/hardware":
+            self._game_hardware()
+        elif route.path == "/api/game/preview":
+            self._game_preview()
         elif route.path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         else:
@@ -166,7 +198,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._call_post(path)
             return
         if path not in ("/api/action", "/api/shutdown", "/api/files/delete",
-                        "/api/photos"):
+                        "/api/photos", "/api/game/open", "/api/game/close",
+                        "/api/game/command", "/api/game/debug"):
             self._json({"error": "not found"}, 404)
             return
 
@@ -197,6 +230,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/api/photos":
             self._photo_post(payload)
+            return
+
+        if path.startswith("/api/game/"):
+            self._game_post(path, payload)
             return
 
         action = str(payload.get("action", ""))
@@ -279,6 +316,167 @@ class _Handler(BaseHTTPRequestHandler):
             files_web.refuse_upload(self, exc.status, str(exc))
         except (ConnectionError, TimeoutError):
             self.close_connection = True
+
+    # ── AI Motion games ──────────────────────────────────────────────
+    #
+    # Section 35's endpoints, in this server's shape rather than the shape the
+    # requirement sketched: `POST /api/game/command {"action": "pause"}` rather
+    # than `POST /api/game/fruit-ninja/pause`, because a path segment per verb
+    # per game multiplies, and because everything else that this screen asks
+    # the assistant to *do* already posts a name from a list into one route.
+    #
+    # The interesting one is `/api/game/stream`. Everything else on this server
+    # is polled twice a second and could stay that way; a game cannot. Sending
+    # thirty snapshots a second down this server's HTTP/1.0 connections would
+    # be thirty TCP handshakes a second, so the game state goes out over
+    # server-sent events instead — one connection, held open, the same shape as
+    # the camera preview above and for the same reason.
+
+    def _game(self):
+        """The manager, or None having answered."""
+        games = getattr(self.ui, "games", None)
+        if games is None:
+            self._json({"error": "games are turned off in the configuration"},
+                       503)
+            return None
+        return games
+
+    def _games(self) -> None:
+        games = self._game()
+        if games is None:
+            return
+        self._json({"games": games.catalogue()})
+
+    def _game_status(self) -> None:
+        games = self._game()
+        if games is None:
+            return
+        self._json(games.status())
+
+    def _game_hardware(self) -> None:
+        """Section 44: proof that the AI HAT+ 2 is the thing doing the work."""
+        games = self._game()
+        if games is None:
+            return
+        self._json(games.hardware())
+
+    def _game_post(self, path: str, payload: dict) -> None:
+        games = self._game()
+        if games is None:
+            return
+
+        from aipi5.games.manager import GameError
+
+        try:
+            if path == "/api/game/open":
+                self._json(games.open(str(payload.get("game", ""))))
+            elif path == "/api/game/close":
+                self._json(games.close())
+            elif path == "/api/game/command":
+                self._json(games.command(str(payload.get("action", ""))))
+            elif path == "/api/game/debug":
+                games.set_debug(bool(payload.get("on")))
+                self._json({"ok": True, "debug": games.debug})
+            else:
+                self._json({"error": "not found"}, 404)
+        except GameError as exc:
+            # 409 rather than 500: every one of these is a thing the player can
+            # do something about — the camera is busy, the HAT is missing,
+            # nobody is standing in front of it — and the page turns the
+            # message into the screens section 41 asks for.
+            self._json({"error": str(exc), "ok": False}, 409)
+
+    def _game_preview(self) -> None:
+        """The start screen's camera preview, from the game's own capture.
+
+        A separate route from `/api/camera/stream` because that one reads
+        `Camera`, which is *lent* for as long as a game is open and correctly
+        answers 503 while it is. Pointing the start screen at it produced a
+        broken image on the one screen whose whole job is to show somebody
+        that the camera can see them — section 20.
+
+        Slower than the camera page's preview on purpose. Nothing here is
+        being watched for motion; it is a "yes, that is you" check while
+        somebody positions themselves, and every frame is an encode competing
+        with inference for a core.
+        """
+        games = self._game()
+        if games is None:
+            return
+        if games.preview_jpeg() is None:
+            self._json({"error": "no game is running"}, 503)
+            return
+
+        boundary = "aipi5motion"
+        self.send_response(200)
+        self.send_header("Content-Type",
+                         f"multipart/x-mixed-replace; boundary={boundary}")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+        interval = 1.0 / GAME_PREVIEW_FPS
+        deadline = time.monotonic() + GAME_PREVIEW_MAX_S
+        try:
+            while time.monotonic() < deadline:
+                started = time.monotonic()
+                frame = games.preview_jpeg()
+                if frame is None:
+                    # The game closed, or the camera went away. End the
+                    # response rather than spinning; the page reconnects if it
+                    # is still showing the start screen.
+                    break
+                self.wfile.write(
+                    f"--{boundary}\r\nContent-Type: image/jpeg\r\n"
+                    f"Content-Length: {len(frame)}\r\n\r\n".encode("ascii"))
+                self.wfile.write(frame)
+                self.wfile.write(b"\r\n")
+                time.sleep(max(0.0, interval - (time.monotonic() - started)))
+        except (BrokenPipeError, ConnectionResetError):
+            log.debug("game preview client went away")
+        except OSError as exc:
+            log.debug("game preview ended: %s", exc)
+
+    def _game_stream(self) -> None:
+        """Game and pose state as server-sent events, at the pose rate.
+
+        Holds one thread for as long as the game page is open, which is what
+        `ThreadingHTTPServer` is for and is the same trade the camera preview
+        makes. Ends itself when the game does, so a page left on a finished
+        game is not still holding a connection an hour later.
+        """
+        games = self._game()
+        if games is None:
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+        interval = 1.0 / GAME_STREAM_FPS
+        deadline = time.monotonic() + GAME_STREAM_MAX_S
+        try:
+            while time.monotonic() < deadline:
+                started = time.monotonic()
+                # `seen=True` is the liveness signal the manager's watchdog
+                # reads: a page holding this stream open is a page that still
+                # has somebody in front of it, so the camera is not taken back.
+                payload = games.status(seen=True)
+                body = json.dumps(payload, ensure_ascii=False)
+                self.wfile.write(f"data: {body}\n\n".encode("utf-8"))
+                self.wfile.flush()
+                if not payload.get("active"):
+                    # The game was closed by something else. Ending the stream
+                    # rather than sending "nothing is running" thirty times a
+                    # second until the page notices.
+                    break
+                time.sleep(max(0.0, interval - (time.monotonic() - started)))
+        except (BrokenPipeError, ConnectionResetError):
+            # Navigating away from the game page. The normal ending.
+            log.debug("game stream client went away")
+        except OSError as exc:
+            log.debug("game stream ended: %s", exc)
 
     # ── the daytime slideshow ────────────────────────────────────────
     #
@@ -754,9 +952,15 @@ class WebUI:
     def __init__(self, cfg, *, state, history, info,
                  weather=None, news=None, camera=None, call=None,
                  on_call_change=lambda: None, countdown=None, files=None,
-                 photos=None, screen=None):
+                 photos=None, screen=None, games=None):
         self.cfg = cfg
         self.state = state
+        # The AI Motion game manager, or None when games are off. This module
+        # knows only that it can be asked to open, close and describe a game;
+        # everything about cameras, accelerators and screensavers is the
+        # manager's, which is what keeps the four hardware handoffs in one
+        # place rather than spread across HTTP handlers.
+        self.games = games
         # The daytime slideshow's photographs and the object that decides
         # which screensaver is due. Both optional, so a test can build a
         # server without either.

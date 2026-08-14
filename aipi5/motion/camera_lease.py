@@ -269,6 +269,47 @@ class CameraLease:
             self._new_frame.clear()
         return frame, at
 
+    def preview_jpeg(self, max_width: int = 480, quality: int = 65) -> bytes | None:
+        """The newest frame as JPEG, for the start screen's preview.
+
+        This exists because the assistant's own `/api/camera/stream` cannot
+        serve it: that reads `Camera`, and `Camera` is *lent* for the whole
+        time a game is open, so it answers 503. The first version of the start
+        screen pointed an `<img>` at it and got a broken image on the one
+        screen whose entire job is to show somebody that the camera can see
+        them — section 20.
+
+        Encoded from the frame the pose loop is already being handed rather
+        than by reading the camera again, so a page watching the preview costs
+        one JPEG encode and takes nothing away from inference.
+        """
+        with self._lock:
+            frame = self._frame
+        if frame is None:
+            return None
+        try:
+            import cv2
+
+            # Back to BGR, because `_run` flipped it to RGB for the model and
+            # `imencode` writes whatever order it is given as if it were BGR.
+            # Without this the preview is blue people in an orange room, which
+            # looks like a broken camera rather than a swapped channel.
+            #
+            # `cvtColor` rather than `frame[:, :, ::-1]`: the slice is a view
+            # with a negative stride, and OpenCV wants a contiguous buffer.
+            image = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            height, width = image.shape[:2]
+            if width > max_width:
+                scale = max_width / width
+                image = cv2.resize(image, (max_width, int(height * scale)),
+                                   interpolation=cv2.INTER_AREA)
+            ok, buffer = cv2.imencode(".jpg", image,
+                                      [cv2.IMWRITE_JPEG_QUALITY, quality])
+        except Exception as exc:
+            log.debug("game preview frame failed: %s", exc)
+            return None
+        return buffer.tobytes() if ok else None
+
     @property
     def size(self) -> tuple[int, int]:
         return (self._width, self._height)
