@@ -40,6 +40,33 @@ requests
 pywebpush==1.14.1
 py-vapid==1.9.0
 
+# The ceiling the paragraph above only *describes*. Until this line existed it
+# was held by accident: nothing in this file constrained cryptography, and the
+# only reason a working version was installed is that pywebpush's own pin
+# happened to resolve to one. `pip install -U cryptography`, or any change in
+# how pip resolves, would silently produce the exact breakage documented above.
+#
+# The bound is measured, not guessed — `dpkg -s python3-openssl` on this device
+# reports `Depends: python3-cryptography (<< 45), python3-cryptography
+# (>= 41.0.5)`, and 43.0.0 is what is installed. `aipi5/call/push.py` imports
+# cryptography directly, so it is this project's dependency and not only
+# pywebpush's.
+cryptography>=41.0.5,<45
+
+# Imported directly by this project and supplied by AIA's requirements, which
+# `scripts/deploy.sh` installs first. Named here for exactly the reason
+# `requests` is named above: listing a transitive dependency you import is what
+# stops an unrelated change in AIA from breaking this one silently.
+#
+#   numpy        aipi5/vision/person_detection.py — decoding detector output
+#   sounddevice  aipi5/main.py — enumerating capture devices at startup
+#
+# Both are pip packages inside the venv, unlike cv2, which is the system build
+# (see the apt note below). Neither is pinned: AIA chooses the versions and
+# this file should not fight it.
+numpy
+sounddevice
+
 # A QR code on the screen, so a phone can open the Google Photos picker.
 #
 # The kiosk has no keyboard and no address bar, and the picker has to be opened
