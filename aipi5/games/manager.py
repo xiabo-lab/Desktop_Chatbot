@@ -346,17 +346,23 @@ class GameManager:
         """Section 44's panel. Proof the AI HAT+ 2 is what is being used."""
         with self._lock:
             pose = self._pose
+            debug = self.debug
         if pose is not None:
-            return pose.describe()
-
-        # Nothing is running, so answer from the device itself rather than
-        # from a service that does not exist. This is what the settings page
-        # shows when nobody is playing.
-        from aipi5.core import accelerator
-        return {"running": False, "error": self._error,
-                "accelerator": accelerator.identify(),
-                "pose": {"model": self.motion_cfg.pose_model.name},
-                "camera": {}, "stats": {}}
+            detail = pose.describe()
+        else:
+            # Nothing is running, so answer from the device itself rather than
+            # from a service that does not exist. This is what the settings
+            # page shows when nobody is playing.
+            from aipi5.core import accelerator
+            detail = {"running": False, "error": self._error,
+                      "accelerator": accelerator.identify(),
+                      "pose": {"model": self.motion_cfg.pose_model.name},
+                      "camera": {}, "stats": {}}
+        # So the Settings page's toggle can show what the *game* will do rather
+        # than what that page last asked for — different things if the
+        # assistant restarted in between.
+        detail["debug"] = debug
+        return detail
 
     def set_debug(self, on: bool) -> None:
         with self._lock:

@@ -1446,6 +1446,45 @@
            a tap rather than another trip to the phone. -->
       <div id="set-collections"></div>
     </div>
+
+    <!-- Section 44. This exists to answer one question — is the AI HAT+ 2
+         actually doing the work — and it answers it from the device rather
+         than from the configuration, so a HAT that has fallen out of its
+         connector says so here instead of being reported by a setting that
+         still claims it is enabled. Section 42 is the same requirement seen
+         from the other side: there is no CPU pose fallback, so if this says
+         the accelerator is missing then the games do not run at all. -->
+    <div class="set-section">
+      <div class="set-title">AI Motion</div>
+
+      <div class="set-row">
+        <div class="set-label">AI accelerator</div>
+        <div class="set-value" id="set-hailo">—</div>
+      </div>
+      <div class="set-row">
+        <div class="set-label">Firmware</div>
+        <div class="set-value" id="set-hailo-fw">—</div>
+      </div>
+      <div class="set-row">
+        <div class="set-label">Pose model</div>
+        <div class="set-value" id="set-pose-model">—</div>
+      </div>
+      <div class="set-row">
+        <div class="set-label">Camera</div>
+        <div class="set-value" id="set-motion-camera">—</div>
+      </div>
+      <div class="set-row">
+        <div class="set-label">Performance</div>
+        <div class="set-value" id="set-motion-fps">—</div>
+      </div>
+
+      <div class="set-buttons">
+        <!-- Section 45's developer mode, off by default and reachable without
+             a keyboard, which on this device means it has to be a button. -->
+        <button class="set-button" id="set-debug-pose">Debug Pose: Off</button>
+      </div>
+      <div class="set-note" id="set-motion-note"></div>
+    </div>
   </div>
 </div>
 
@@ -2122,6 +2161,55 @@ async function drawSettings() {
 
   drawPhotoSettings(photos);
   drawPickState(photos.pick || {});
+  drawMotionSettings();
+}
+
+// Section 44. Asked of the device rather than read out of the configuration,
+// because the question this answers is "is the AI HAT+ 2 really doing the
+// work" and a setting that says `backend: hailo` answers a different one.
+async function drawMotionSettings() {
+  let info;
+  try {
+    const response = await fetch("/api/game/hardware", { cache: "no-store" });
+    info = await response.json();
+  } catch (err) {
+    el("set-motion-note").textContent = "The assistant is not answering.";
+    return;
+  }
+
+  const hat = info.accelerator || {};
+  const pose = info.pose || {};
+  const camera = info.camera || {};
+  const stats = info.stats || {};
+
+  const hailo = el("set-hailo");
+  hailo.textContent = hat.available
+    ? `${hat.architecture || "Hailo"} · connected`
+    : `Not detected — ${hat.error || "no device"}`;
+  hailo.classList.toggle("off", !hat.available);
+
+  el("set-hailo-fw").textContent = hat.available
+    ? `${hat.firmware || "—"}  ·  ${hat.device_id || ""}` : "—";
+  el("set-pose-model").textContent = pose.model
+    ? `${pose.model}${pose.loaded ? ` · loaded, input ${pose.input}` : " · not loaded"}`
+    : "—";
+  el("set-motion-camera").textContent = camera.name
+    ? `${camera.name} · ${camera.size} @ ${camera.fps} fps`
+    : "Logitech Brio (not in use)";
+
+  // Only meaningful while a game is actually running; the rest of the time it
+  // would be a row of stale zeroes that look like a broken accelerator.
+  el("set-motion-fps").textContent = info.running
+    ? `inference ${stats.inference_fps} fps · ${stats.inference_ms} ms · ` +
+      `capture→pose ${stats.pipeline_ms} ms · ${stats.dropped} frames dropped`
+    : "No game is running";
+
+  el("set-debug-pose").textContent = `Debug Pose: ${info.debug ? "On" : "Off"}`;
+
+  el("set-motion-note").textContent = info.error
+    ? info.error
+    : "Pose estimation runs on the AI HAT+ 2. There is no CPU fallback: if the "
+      + "accelerator is missing, the motion games say so rather than running slowly.";
 }
 
 const MODE_TEXT = {
@@ -2269,6 +2357,26 @@ el("set-sync").addEventListener("click", async () => {
 el("set-reconnect").addEventListener("click", async () => {
   await settingsPost({ action: "reconnect" });
   drawSettings();
+});
+
+// Section 45. The state lives on the Pi rather than in this page, so a game
+// already running picks the change up on its next snapshot — and so the label
+// here reflects what the *game* will do rather than what this page last asked
+// for, which are different things if the assistant restarted in between.
+el("set-debug-pose").addEventListener("click", async () => {
+  const button = el("set-debug-pose");
+  const turningOn = button.textContent.endsWith("Off");
+  try {
+    const response = await fetch("/api/game/debug", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ on: turningOn }),
+    });
+    const data = await response.json();
+    button.textContent = `Debug Pose: ${data.debug ? "On" : "Off"}`;
+  } catch (err) {
+    el("set-motion-note").textContent = "The assistant did not answer.";
+  }
 });
 
 // The one destructive button on this page, and it is armed by a second press
