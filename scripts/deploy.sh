@@ -13,6 +13,10 @@
 # `git archive` is what AIA uses and needs this to be a git repository, which
 # it is not yet. A tar stream needs nothing on either end that is not already
 # there.
+#
+# **This script does not touch a `config/aipi5.yaml` the device already has.**
+# The repository's copy lands beside it as `aipi5.yaml.new` and the settings
+# that differ are printed. See `PROTECTED` below for the outage that taught us.
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -43,6 +47,27 @@ run()  { if (( DRY )); then echo "  would run: $*"; else "$@"; fi; }
 # to put it on.
 INCLUDE=(aipi5 config scripts systemd tests requirements.txt README.md REPORT.md .gitignore)
 
+# **`config/aipi5.yaml` is never overwritten once the device has one**, and
+# that is not caution — it is a bug this script actually caused.
+#
+# The copy in this repository is a *default*, and one of those defaults is
+# `call.enabled: false`, deliberately. The copy on the Pi is a *deployment*:
+# it has calling switched on, `host: 127.0.0.1` and `tls: false` because
+# `tailscale serve` terminates TLS in front of it, and whatever else somebody
+# tuned for that room. Shipping the repository's version over the top turned
+# video calling off and left the call server answering TLS on an address the
+# tailnet proxy talks plain HTTP to — so the phone got a blank white page, and
+# nothing in any log connected that to a deploy.
+#
+# A configuration file is state, not code. So the repository's copy arrives
+# beside the device's as `aipi5.yaml.new`, the differences are printed, and a
+# person decides. A device with no configuration at all still gets the
+# defaults, which is what a first deploy needs.
+#
+# The other two files in `config/` are templates that setup scripts read and
+# install elsewhere, not state anybody edits in place, so they still travel.
+PROTECTED=config/aipi5.yaml
+
 log "Target: $HOST:~/$REMOTE"
 
 # Fail here rather than halfway through a tar stream. A deploy that dies with
@@ -69,20 +94,63 @@ else
 fi
 REMOTE_CHECK
 
+# Ask before copying, not after: the answer decides what the tar may contain.
+KEEP_CONFIG=0
+if ssh -o BatchMode=yes "$HOST" "test -f ~/$REMOTE/$PROTECTED" 2>/dev/null; then
+  KEEP_CONFIG=1
+fi
+
 log "Copying"
 if (( DRY )); then
   echo "  would copy: ${INCLUDE[*]}"
+  if (( KEEP_CONFIG )); then
+    echo "  would KEEP the device's $PROTECTED and land ours as $PROTECTED.new"
+  else
+    echo "  would install $PROTECTED (the device has none)"
+  fi
 else
   ssh "$HOST" "mkdir -p ~/$REMOTE"
   # --exclude on the *sending* side, so nothing large crosses the network and
   # nothing stale is written. The Pi's own venv and models must survive a
   # deploy: they are hundreds of megabytes and they are device-specific.
-  tar -C "$ROOT" \
-      --exclude='__pycache__' --exclude='*.pyc' --exclude='.venv' \
-      --exclude='models' --exclude='.bench' --exclude='*.db*' \
-      -czf - "${INCLUDE[@]}" \
+  EXCLUDES=(--exclude='__pycache__' --exclude='*.pyc' --exclude='.venv'
+            --exclude='models' --exclude='.bench' --exclude='*.db*')
+  (( KEEP_CONFIG )) && EXCLUDES+=("--exclude=$PROTECTED")
+
+  tar -C "$ROOT" "${EXCLUDES[@]}" -czf - "${INCLUDE[@]}" \
     | ssh "$HOST" "tar -C ~/$REMOTE -xzf -"
   echo "  copied ${#INCLUDE[@]} paths"
+
+  if (( KEEP_CONFIG )); then
+    # Beside it, never over it. `scp` rather than adding it to the tar under a
+    # different name, because tar cannot rename a member on the way out.
+    scp -q "$ROOT/$PROTECTED" "$HOST:~/$REMOTE/$PROTECTED.new"
+    echo "  kept the device's $PROTECTED"
+    ssh "$HOST" "bash -s" <<REMOTE_CONFIG
+set -e
+cd ~/$REMOTE/config
+if diff -q aipi5.yaml aipi5.yaml.new >/dev/null 2>&1; then
+  # Identical, so there is nothing to merge and nothing to leave lying about.
+  rm -f aipi5.yaml.new
+  echo "  config is identical to the repository's — nothing to merge"
+else
+  echo "  config differs. Yours is untouched; the repository's is aipi5.yaml.new"
+  echo "  ---- settings only in the new one (likely new features) ----"
+  # Compared key-first with comments and blank lines stripped, because the
+  # repository's copy carries pages of explanatory prose that is not a change
+  # anybody needs to act on.
+  keys() { grep -vE '^\s*#' "\$1" | grep -vE '^\s*\$' | sed 's/\s*#.*//'; }
+  if ! diff <(keys aipi5.yaml) <(keys aipi5.yaml.new) | grep '^>' | sed 's/^>/   +/' | head -20; then
+    echo "   (none — only comments differ)"
+  fi
+  echo "  ---- settings only in yours (your deployment) ----"
+  diff <(keys aipi5.yaml) <(keys aipi5.yaml.new) | grep '^<' | sed 's/^</   -/' | head -20 || true
+  echo "  Merge what you want:  diff -u ~/$REMOTE/config/aipi5.yaml{,.new}"
+fi
+REMOTE_CONFIG
+  else
+    echo "  installed $PROTECTED (the device had none)"
+  fi
 fi
 
 if (( CODE_ONLY )); then
