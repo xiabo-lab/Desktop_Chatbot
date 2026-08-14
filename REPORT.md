@@ -1755,3 +1755,225 @@ this work has not reached.
   the parts that were made testable off it.
 * Do not add automatic fallbacks between detection backends. A silent
   degradation is worse than a reported failure.
+
+---
+
+## 29. AI Motion games — Fruit Ninja on the AI HAT+ 2
+
+Built 2026-08-14 on branch `feature/ai-motion-games`. Three commits: the pose
+service, the game, the tests.
+
+The goal was never one game. It was a camera-and-accelerator layer that Yoga,
+Boxing, Workout and Dance can reuse, with Fruit Ninja as its first consumer —
+so `aipi5/motion/` knows nothing about fruit and `aipi5/games/` knows nothing
+about accelerators.
+
+```
+Brio -> CameraLease -> HailoPose -> PoseFrame -> PlayerSelector -> HandFilter
+                                        |                             |
+                                   (17 joints)                   (two wrists)
+                                        |                             |
+                              future Yoga / Boxing              Fruit Ninja
+```
+
+### 29.1 Environment
+
+| | |
+|---|---|
+| OS | Debian GNU/Linux 13 (trixie) |
+| Kernel | 6.18.39+rpt-rpi-v8 aarch64 |
+| Accelerator | **HAILO10H** at PCIe `0001:01:00.0` |
+| HailoRT | 5.1.1 (`h10-hailort`, `python3-h10-hailort`) |
+| Firmware | 5.1.1 (release, app) |
+| Pose model | `/usr/share/hailo-models/yolov8s_pose_h10.hef` (ships with `hailo-models`; no download) |
+| Camera | Logitech Brio 101, `usb-046d_Brio_101_2501APQAUK08-video-index0` |
+| Capture | 640x360 MJPG @ 30 fps, 2 V4L2 buffers |
+
+### 29.2 The three things that shaped the design
+
+**A Hailo-10H permits exactly one `VDevice` — not one per process, one.**
+Measured both ways:
+
+| | |
+|---|---|
+| second `VDevice`, second process | `HAILO_OUT_OF_PHYSICAL_DEVICES` (74) |
+| second `VDevice`, **same** process | the same error |
+| one `VDevice`, two `InferModel`s | person 28 ms, pose 32 ms, both fine |
+
+`HailoSchedulingAlgorithm.ROUND_ROBIN` reads like it makes the accelerator
+shareable and does not: it timeshares *models configured on one virtual
+device*. So `aipi5/core/accelerator.py` owns the single device and refcounts
+it, and `vision/person_detection.py` was changed to take it from there instead
+of creating its own. That is the only change to existing behaviour in this
+work, and it is what lets a pose model load at all while presence detection is
+running.
+
+**The pose HEF does not post-process on chip**, unlike the detection HEF next
+door which returns a finished NMS buffer. It returns nine raw tensors — three
+scales, each with 64 channels of DFL box distribution, 1 of person score, 51 of
+keypoints. `aipi5/motion/yolov8_pose.py` decodes them. Two things in that
+decode are easy to get subtly wrong: anchor centres carry a **half-cell
+offset** (`(index + 0.5) * stride`), and **the class score is already a
+probability** because the sigmoid is folded into the compiled graph — applying
+another one does not look like a bug (every detection survives and ranks the
+same) but silently voids the threshold. The keypoint *visibility* column does
+still need one. Hailo's own reference (`/usr/include/hailo/tappas/
+pose_estimation/yolov8pose_postprocess.cpp`) is LGPL, so it was read for
+constants and reimplemented in numpy rather than copied.
+
+**`CAP_PROP_BUFFERSIZE=1` halves the frame rate of a continuous reader.**
+
+| buffers | per read | rate |
+|---|---|---|
+| 1 | 66.9 ms | 15.0 fps |
+| 2 | 33.4 ms | 29.9 fps |
+| 3 | 33.4 ms | 30.0 fps |
+| 4 | 33.4 ms | 29.9 fps |
+
+With one buffer the driver has nowhere to put the next frame while userspace
+holds the only one, so it idles until the buffer is requeued and then waits for
+the *following* frame start — one wasted frame period, every frame. Two fixes
+it completely and is the shallowest queue that does, which matters because each
+extra buffer is another frame of hand-to-screen latency.
+
+This does **not** make `vision/camera.py` wrong. Its single buffer plus
+drain-then-block is correct for the person detector, which arrives twice a
+second and wants the freshest possible frame. The two readers want opposite
+things, which is why `motion/camera_lease.py` opens its own handle after
+`Camera.lend()` rather than sharing the assistant's.
+
+It looks exactly like the dim-room auto-exposure halving in section 14, and it
+is not: `exposure_dynamic_framerate`, manual exposure at 10 and 20 ms,
+resolution and pixel format all made no difference, and **every mode measured
+exactly 15.0 fps** — a light-starved sensor gives a ragged number, a buffering
+artefact gives exactly half. `v4l2-ctl --stream-mmap` (4 buffers) reached
+25.8 fps on the same camera at the same moment, which is what proved the camera
+was not the limit.
+
+### 29.3 Performance, measured on the device
+
+| | |
+|---|---|
+| Camera | **30.0 fps** at 640x360 |
+| Hailo inference | **29.1 ms** mean (median 29.9, p95 30.2) |
+| Pose rate | **29-30 fps** sustained |
+| Capture to decoded pose | **44 ms** mean (median 51, p95 60 over a longer run) |
+| Game render | browser `requestAnimationFrame`, 60 fps target |
+| Assistant CPU during a game | **~45% of one core** of 400% available; system 89% idle |
+| Assistant RSS during a game | 866 MB |
+| Frames dropped | ~8% (16 of 204), by design — newest frame wins |
+
+640x360 is not a compromise: it is exactly what a 16:9 frame is scaled to when
+letterboxed into the model's 640x640 square, so capturing at it removes the
+downscale entirely rather than merely making it cheaper.
+
+The pose loop, the camera thread and the browser's render loop all run at
+independent rates. Fruit are extrapolated on the page from the position and
+velocity in the last snapshot using the same closed form the Pi integrates, so
+the drawn position and the authoritative one agree rather than drifting.
+
+### 29.4 What was verified on the device
+
+* `hailortcli fw-control identify` gives HAILO10H, firmware 5.1.1 — **pass**
+* Pose decode against a known image (`bus.jpg`): 4 people, keypoints at the
+  right places, letterbox and mirror both correct against ground truth — **pass**
+* Full chain with real inference — player selected from 4 people, readiness
+  `ready: True`, both wrists live at 0.97/0.99 confidence, mapped to screen
+  pixels, slash through a fruit scoring 10 — **pass**
+* A live round: fruit spawn, arc, fall, lives 3-2-0, GAME OVER, simulation
+  stops — **pass**
+* Ten open/close cycles: camera returned every time, accelerator refcount
+  2 to 1 every time, threads stable at 22, no fd growth — **pass**
+* **Camera unplugged mid-game** (USB unbind): game **paused** with "the camera
+  stopped delivering frames", assistant stayed alive; on replug the node moved
+  `/dev/video0` to `/dev/video1` and was found by name; Retry reopened the game
+  on the new node at 30.2 fps — **pass**. This is the strongest evidence that
+  nothing hard-codes `/dev/video0`.
+* Audio floor balance across three cycles from a clean restart: 0, 1, 0 — **pass**
+* Kodama already paused before a game stayed paused after it — **pass** (this
+  is section 38's actual requirement)
+* AI Assistant camera function after all the game cycles: captured, described
+  aloud, returned to idle — **pass**
+* 664 automated tests, on Windows and on the Pi — **pass**
+
+### 29.5 Integration
+
+| | |
+|---|---|
+| Home | PASS — Game button added, native to the existing row |
+| Games page | PASS |
+| Fruit Ninja | PASS (mechanically; see 29.6) |
+| Camera page | PASS — preview streams after game exit |
+| AI Assistant camera | PASS |
+| Person detection | PASS — recovered on the `hailo` backend after every game |
+| Kodama | PASS |
+| Weather | PASS |
+| News | PASS |
+| Files | PASS |
+| Photos / slideshow | PASS |
+| Screensaver | PASS — held off during a game, released after |
+| Night mode | PASS (schedule intact; not re-tested at 21:01) |
+| Video calling | PASS — still listening on Tailscale, iPhone still paired |
+
+### 29.6 Not verified
+
+Stated plainly, because these are the parts that matter most and the parts a
+green tick would be worth least on:
+
+1. **Nobody has played it.** The Brio is pointed at a laundry room — the vision
+   tool describes "a large wall-mounted Speed Queen commercial laundry
+   machine" — so no human has ever been in front of it during this work. The
+   pose path is proven with a real photograph through the real accelerator, and
+   the slash path is proven against real decoded wrists, but *a person moving
+   their hands and seeing a blade follow* has not happened.
+2. **Touch has not been tested on the panel.** The UI was driven through an
+   `ssh -L` tunnel. Every control was exercised, but with a mouse, not a finger.
+3. **Music playing, ducked, restored** is only half tested. The "already
+   paused stays paused" half is verified live; the other half rides on
+   `AudioPriority`, which is the same path every spoken turn already uses.
+4. **Hand-to-screen latency is measured to the pose, not to the glass.** 44 ms
+   capture to decoded pose is real. The rest — SSE hop over loopback, one
+   `requestAnimationFrame` — is perhaps 20-30 ms more by construction, but it
+   has not been instrumented end to end.
+
+### 29.7 Gotchas worth keeping
+
+* **`systemctl --user stop aipi5` also stops the kiosk, and `start` does not
+  bring it back.** `aipi5-ui.service` is `PartOf=aipi5.service`, which
+  propagates stop and restart but not start. Stopping the assistant to run
+  `scripts/probe_pose.py` left the display dark for 80 minutes during this
+  work before it was noticed. Use `restart`, or remember to
+  `systemctl --user start aipi5-ui` afterwards.
+* **`Device.scan()`, not `VDevice.scan()`.** `VDevice` has no `scan` in
+  HailoRT 5.x, and reaching for it gives an `AttributeError` that reads exactly
+  like a missing accelerator.
+* **The start screen cannot use `/api/camera/stream`.** That reads `Camera`,
+  which is *lent* for as long as a game is open and correctly answers 503 while
+  it is. `/api/game/preview` streams from the game's own capture instead. The
+  first version got this wrong and showed a broken image on the one screen
+  whose entire job is proving the camera can see you.
+* **`_last_tick = 0.0` is a real time.** Truth-testing it made the first tick of
+  a session whose clock starts at zero silently do nothing — invisible against
+  `time.monotonic()`, immediately fatal in a test.
+
+### 29.8 Licensing
+
+The gameplay owes its shape to the MIT-licensed community project in
+`hailo-ai/hailo-rpi5-examples` — the five fruit, ten points each, the launch
+speeds as a starting point. The implementation is not taken from it: that one
+ties physics to the frame rate and slices by proximity to a single wrist
+sample, and both are things this needed to do better.
+
+**No artwork or audio is shipped.** Fruit are a colour and an emoji drawn on a
+canvas; the five sound effects are an oscillator. Nothing from the commercial
+game of a similar name is used or imitated. The UI says "Fruit Ninja"; the code
+calls it Fruit Slice.
+
+### 29.9 What the next game needs
+
+Nothing in `aipi5/motion/`. `PoseFrame` already carries all seventeen COCO
+joints with confidences, normalised to the camera and already mirrored, and
+`PoseService` already calls a consumer once per frame. A Yoga coach is a new
+directory beside `fruit_ninja/`, a `readiness`-style check, and joint-angle
+maths over keypoints that are already there — plus one entry in `CATALOGUE`
+with `playable: True`.
