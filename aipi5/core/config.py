@@ -167,6 +167,60 @@ class PersonDetectionConfig:
 
 
 @dataclass(frozen=True)
+class MotionConfig:
+    """The AI Motion pose service, shared by every body-motion game.
+
+    Separate from `person_detection` although both run YOLO on the same
+    accelerator, because they are answering different questions on different
+    schedules: presence asks "is anybody there" twice a second forever, and
+    this asks "where are their wrists" thirty times a second for as long as
+    somebody is playing. One configuration section for both would mean a
+    confidence threshold that has to mean two things.
+
+    **The default model is the one the AI HAT+ packages already ship.**
+    `/usr/share/hailo-models/yolov8s_pose_h10.hef` is present on this device
+    from `hailo-models`, is compiled for HAILO10H, and needs no download —
+    which is why there is no `get_pose_model.sh` beside
+    `scripts/get_person_model.sh`.
+    """
+
+    enabled: bool = True
+    pose_model: Path = Path("/usr/share/hailo-models/yolov8s_pose_h10.hef")
+    #: Below this, a detection is not a person at all.
+    person_confidence: float = 0.5
+    #: Below this, one joint is not trusted enough to steer a sword — see
+    #: `pose_filter`. Higher than the person threshold on purpose: a confident
+    #: person can still have an uncertain wrist behind their back.
+    keypoint_confidence: float = 0.45
+    #: Boxes overlapping by more than this are the same person.
+    iou: float = 0.7
+    #: Smoothing weight on new samples. Measured on the device — see
+    #: `pose_filter.SMOOTHING` for what moving it costs in either direction.
+    smoothing: float = 0.55
+    #: How long a wrist may coast on its last known position once confidence
+    #: drops, before the hand is declared gone. Section 15.
+    stale_ms: int = 250
+    #: Frames per second the pose loop aims for. The camera gives 30; asking
+    #: for more only spins.
+    target_fps: int = 30
+
+
+@dataclass(frozen=True)
+class GamesConfig:
+    """The game library and where its scores live."""
+
+    enabled: bool = True
+    #: High scores, one small JSON file. Local by design — section 28 says
+    #: game over must not need the network.
+    scores: Path = Path.home() / ".config" / "aipi5" / "game-scores.json"
+    #: Draw the skeleton, the raw wrist coordinates and the frame timings over
+    #: the game. Section 45: off by default.
+    debug: bool = False
+    #: Sound effects, through the same PipeWire graph as everything else.
+    sound: bool = True
+
+
+@dataclass(frozen=True)
 class ScreensaverConfig:
     """When the screen goes away, and what is on it when it has.
 
@@ -359,6 +413,8 @@ class Settings:
     story: StoryConfig = field(default_factory=StoryConfig)
     camera: CameraConfig = field(default_factory=CameraConfig)
     person: PersonDetectionConfig = field(default_factory=PersonDetectionConfig)
+    motion: MotionConfig = field(default_factory=MotionConfig)
+    games: GamesConfig = field(default_factory=GamesConfig)
     screensaver: ScreensaverConfig = field(default_factory=ScreensaverConfig)
     photos: PhotosConfig = field(default_factory=PhotosConfig)
     kodama: KodamaLaunchConfig = field(default_factory=KodamaLaunchConfig)
@@ -457,6 +513,28 @@ def _positive(value: Any, fallback: float, where: str) -> float:
     return number
 
 
+def _unit(value: Any, fallback: float, where: str) -> float:
+    """A confidence or an overlap: a number in 0.0-1.0, or the default.
+
+    Refused rather than clamped, and the reason is what these settings do. A
+    `keypoint_confidence: 45` — somebody thinking in percent, which is the
+    likely mistake — clamps to 1.0, and 1.0 is a threshold no keypoint ever
+    meets, so the game detects a player and then never sees their hands. That
+    is a failure nobody would connect back to this line. The default with a
+    warning at least leaves a working game and a sentence in the journal.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        log.warning("%s is not a number (%r); using %s", where, value, fallback)
+        return fallback
+    if not 0.0 <= number <= 1.0:
+        log.warning("%s must be between 0 and 1 (got %s); using %s — if you "
+                    "meant a percentage, divide by 100", where, number, fallback)
+        return fallback
+    return number
+
+
 def _one_of(value: Any, allowed: tuple[str, ...], fallback: str,
             where: str) -> str:
     """A setting from a fixed list, lower-cased, or the default with a warning.
@@ -518,6 +596,8 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
     story = _require_mapping(raw.get("story"), "story")
     camera = _require_mapping(raw.get("camera"), "camera")
     person = _require_mapping(raw.get("person_detection"), "person_detection")
+    motion = _require_mapping(raw.get("motion"), "motion")
+    games = _require_mapping(raw.get("games"), "games")
     screensaver = _require_mapping(raw.get("screensaver"), "screensaver")
     photos = _require_mapping(raw.get("photos"), "photos")
     kodama = _require_mapping(raw.get("kodama"), "kodama")
@@ -596,6 +676,32 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
             # all", which is exactly the flapping the debounce exists to stop.
             frames_to_appear=max(1, int(person.get("frames_to_appear", 2))),
             frames_to_disappear=max(1, int(person.get("frames_to_disappear", 8))),
+        ),
+        motion=MotionConfig(
+            enabled=bool(motion.get("enabled", True)),
+            pose_model=_path(motion.get("pose_model"),
+                             Path("/usr/share/hailo-models/yolov8s_pose_h10.hef")),
+            person_confidence=_unit(motion.get("person_confidence", 0.5), 0.5,
+                                    "motion.person_confidence"),
+            keypoint_confidence=_unit(motion.get("keypoint_confidence", 0.45), 0.45,
+                                      "motion.keypoint_confidence"),
+            iou=_unit(motion.get("iou", 0.7), 0.7, "motion.iou"),
+            # Clamped away from both ends rather than merely to 0-1. At 0 the
+            # filter never accepts a new sample and the hands freeze where they
+            # first appeared; at 1 there is no filtering at all and the sword
+            # shakes. Neither is a setting anybody means to choose, and both
+            # look like broken tracking rather than a bad number in a file.
+            smoothing=min(0.95, max(0.05, float(motion.get("smoothing", 0.55)))),
+            stale_ms=max(0, int(motion.get("stale_ms", 250))),
+            target_fps=int(_positive(motion.get("target_fps", 30), 30,
+                                     "motion.target_fps")),
+        ),
+        games=GamesConfig(
+            enabled=bool(games.get("enabled", True)),
+            scores=_path(games.get("scores"),
+                         Path.home() / ".config" / "aipi5" / "game-scores.json"),
+            debug=bool(games.get("debug", False)),
+            sound=bool(games.get("sound", True)),
         ),
         screensaver=ScreensaverConfig(
             enabled=bool(screensaver.get("enabled", True)),

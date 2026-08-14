@@ -33,6 +33,8 @@ import threading
 import time
 from abc import ABC, abstractmethod
 
+from aipi5.core import accelerator
+
 log = logging.getLogger(__name__)
 
 # COCO's class index for "person". Both model families here are COCO-trained,
@@ -151,9 +153,18 @@ class HailoDetector(Detector):
     recommends generally — so this is not a 10H special case, it is the current
     way. Measured here at **28 ms** an inference.
 
-    The device, the model and the configured model are all built once and held.
-    Configuring per frame would put the multi-context load of a 5-context HEF
-    on every one of two frames a second.
+    The model and the configured model are built once and held. Configuring
+    per frame would put the multi-context load of a 5-context HEF on every one
+    of two frames a second.
+
+    **The device itself is not this class's.** It comes from
+    `aipi5/core/accelerator.py`, which owns the single `VDevice` a Hailo-10H
+    allows and hands it to everything that wants one. This used to create its
+    own, which worked for exactly as long as it was the only thing on the
+    accelerator: the moment AI Motion tried to load a pose model the second
+    `VDevice` failed with `HAILO_OUT_OF_PHYSICAL_DEVICES`, in the same process,
+    with round-robin scheduling set on both. Two *models* on one device
+    timeshare; two devices do not exist.
     """
 
     name = "hailo"
@@ -161,7 +172,7 @@ class HailoDetector(Detector):
     def __init__(self, model_path, confidence: float):
         self.confidence = confidence
         self._ok = False
-        self._vdevice = None
+        self._held = False
         self._configured_ctx = None
         self._configured = None
         self._input_hw = None
@@ -173,24 +184,17 @@ class HailoDetector(Detector):
             return
 
         try:
-            from hailo_platform import HailoSchedulingAlgorithm, VDevice
-        except ImportError as exc:
-            log.warning("HailoRT's Python bindings are not installed (%s). "
-                        "Install hailo-all on the Pi, or set "
-                        "person_detection.backend to 'cpu'.", exc)
+            vdevice = accelerator.acquire("person detection")
+            self._held = True
+        except accelerator.AcceleratorUnavailable as exc:
+            log.warning("%s Set person_detection.backend to 'cpu' to run "
+                        "without one.", exc)
             return
 
         try:
             import numpy as np
 
-            params = VDevice.create_params()
-            # Round-robin because this process may not be the only thing on the
-            # accelerator — this Pi also runs an LLM stack against it — and the
-            # scheduler is what stops two users of one device from deadlocking.
-            params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
-
-            self._vdevice = VDevice(params)
-            model = self._vdevice.create_infer_model(str(model_path))
+            model = vdevice.create_infer_model(str(model_path))
             model.set_batch_size(1)
 
             shape = tuple(model.input().shape)          # (height, width, 3)
@@ -240,6 +244,12 @@ class HailoDetector(Detector):
             return False, 0.0
 
     def close(self) -> None:
+        """Release the model, then the device reference. Idempotent.
+
+        Order matters: the configured model has to be exited before the device
+        it was configured on is let go, or the runtime reports a use-after-free
+        at interpreter exit that looks like a crash in whatever ran last.
+        """
         self._ok = False
         ctx, self._configured_ctx = self._configured_ctx, None
         self._configured = None
@@ -248,13 +258,9 @@ class HailoDetector(Detector):
                 ctx.__exit__(None, None, None)
             except Exception:
                 log.debug("releasing the configured model failed", exc_info=True)
-        vdevice, self._vdevice = self._vdevice, None
-        if vdevice is None:
-            return
-        try:
-            vdevice.release()
-        except Exception:
-            log.debug("releasing the Hailo device failed", exc_info=True)
+        if self._held:
+            self._held = False
+            accelerator.release("person detection")
 
 
 class CpuDetector(Detector):
