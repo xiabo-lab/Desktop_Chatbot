@@ -1618,7 +1618,17 @@ function setScreensaver(on, mode) {
   // hiding a code somebody is about to scan — and even if we did, pressing
   // Choose Photos again re-shows the same session rather than starting a new
   // one.
-  if (on) closePicker("hide");
+  //
+  // The file viewer goes the same way and for the same reason: it is
+  // `z-index: 20` against the screensaver's 10, so a photograph left open in
+  // Files sits on top of the slideshow all night. Closing it also empties the
+  // element, which is what releases a decoded 12 MP image or an open video
+  // file — so an overlay nobody dismissed does not quietly hold memory for
+  // hours either.
+  if (on) {
+    closePicker("hide");
+    closeViewer();
+  }
 }
 
 // ── the daytime slideshow ───────────────────────────────────────────
