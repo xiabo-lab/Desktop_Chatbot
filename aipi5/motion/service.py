@@ -55,10 +55,11 @@ class PoseSnapshot:
     """
 
     __slots__ = ("timestamp", "person", "hands", "ready", "advice",
-                 "player_present", "persons", "inference_s")
+                 "player_present", "persons", "inference_s", "silhouette")
 
     def __init__(self, *, timestamp: float, person, hands, ready: bool,
-                 advice: str, persons: int, inference_s: float):
+                 advice: str, persons: int, inference_s: float,
+                 silhouette: dict | None = None):
         self.timestamp = timestamp
         self.person = person
         self.hands = hands
@@ -67,6 +68,11 @@ class PoseSnapshot:
         self.player_present = person is not None
         self.persons = persons
         self.inference_s = inference_s
+        #: The joints a body outline is drawn from. Built once here, on the
+        #: pose thread, rather than by each reader from `person` — `status()`
+        #: is called from an SSE loop and a poll and could easily build it
+        #: twice for the same frame.
+        self.silhouette = silhouette or {}
 
     def as_dict(self) -> dict:
         """Section 34's shape. Keypoints only — never a frame of video."""
@@ -77,6 +83,14 @@ class PoseSnapshot:
                 "confidence": round(self.person.confidence, 3) if self.person else 0.0,
                 "left_wrist": self.hands["left_wrist"].as_dict(),
                 "right_wrist": self.hands["right_wrist"].as_dict(),
+                # The player's shadow. Raw and unsmoothed on purpose: the
+                # wrists above are filtered because they steer a blade and
+                # latency there is the one thing this game cannot afford, but a
+                # shadow is decoration and is smoothed by the page, which
+                # redraws at 60 Hz and can do it for nothing. Filtering it here
+                # would spend pose-thread time to make the shadow *and* delay
+                # it.
+                "body": self.silhouette,
             },
             "ready": self.ready,
             "advice": self.advice,
@@ -279,6 +293,8 @@ class PoseService:
             advice=str(state["advice"]),
             persons=len(result.persons),
             inference_s=result.inference_s,
+            silhouette=(person.silhouette(self.cfg.keypoint_confidence)
+                        if person is not None else {}),
         )
         with self._lock:
             self._snapshot = snapshot

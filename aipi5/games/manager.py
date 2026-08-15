@@ -470,7 +470,11 @@ class GameManager:
             }
             if session is not None:
                 payload["game"] = session.snapshot(now)
-                payload["sounds"] = session.take_events()
+                # `events` rather than the `sounds` this used to be called.
+                # They were only ever sounds when they were bare strings; each
+                # one now carries where it happened and what colour it was,
+                # and the page draws far more from them than it plays.
+                payload["events"] = session.take_events()
             if pose is not None:
                 snapshot = pose.snapshot()
                 payload["pose"] = snapshot.as_dict() if snapshot else None

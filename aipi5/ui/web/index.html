@@ -260,9 +260,13 @@
 
   #page-game { padding: 0; }
 
+  /* Behind the canvas rather than on it. The wood is painted by the renderer
+     into an offscreen bitmap once per session — see `woodBackground` — and
+     this is only what shows for the frame before that exists, and around the
+     canvas if a display is ever not exactly 1280x800. */
   #game-stage {
     position: absolute; inset: 0;
-    background: radial-gradient(circle at 50% 120%, #1b2740 0%, #0b0f16 62%);
+    background: #2a1710;
     overflow: hidden;
   }
   /* The canvas is the game. Everything else on this page is drawn over it in
@@ -277,14 +281,26 @@
   .game-hud-top {
     display: flex; align-items: flex-start; justify-content: space-between;
   }
+  /* Everything on the HUD now sits over warm wood rather than near-black, so
+     each piece of text carries its own dark shadow. Without it the score is
+     white-on-amber in the bright part of the panel gradient and genuinely hard
+     to read at a glance — which is the only way anybody reads it mid-round. */
+  .game-hud-top, #game-pause { text-shadow: 0 2px 6px rgba(0, 0, 0, 0.75); }
+
   #game-score {
-    font-size: 40px; font-weight: 600; font-variant-numeric: tabular-nums;
+    font-size: 42px; font-weight: 600; font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  #game-best {
+    font-size: 17px; color: #f0c98a; letter-spacing: 0.08em; margin-top: 3px;
   }
   #game-streak { font-size: 19px; color: var(--accent-warm); min-height: 24px; }
 
   /* The clock, where the hearts used to be. Tabular figures so the seconds
      column does not shuffle the whole number sideways as it counts down —
-     which is distracting in the corner of an eye that is watching fruit. */
+     which is distracting in the corner of an eye that is watching fruit.
+     Minutes and seconds now that a round is two of them: `1:42` is a length a
+     person has a feel for and `102` is a number they have to convert. */
   #game-clock {
     font-size: 52px; font-weight: 300; font-variant-numeric: tabular-nums;
     line-height: 1; text-align: right;
@@ -317,6 +333,75 @@
     position: absolute; left: 26px; bottom: 24px;
     pointer-events: auto; width: auto; height: 60px; min-width: 140px;
     flex-direction: row; gap: 10px; font-size: 21px;
+  }
+
+  /* ── the Ultimate ────────────────────────────────────────────
+     The banner across the top: the warning, then the hit counter, then the
+     completion. HTML rather than canvas text for the same reason the score is
+     — it changes a few times a round, not sixty times a second — and it
+     animates in CSS so the render loop never touches it.
+
+     Deliberately at the *top* and only 110 px tall. The dragon fruit floats at
+     0.44 of the screen with an 86 px radius, and the player's hands are
+     swinging through everything between; a banner in the middle would be
+     covered by the thing it is describing. */
+  #game-banner {
+    position: absolute; top: 96px; left: 0; right: 0;
+    display: none; flex-direction: column; align-items: center; gap: 4px;
+    pointer-events: none; text-align: center;
+  }
+  #game-banner.on { display: flex; }
+  #game-banner .headline {
+    font-size: 40px; font-weight: 700; letter-spacing: 0.16em;
+    text-shadow: 0 0 26px rgba(255, 47, 160, 0.85), 0 3px 8px rgba(0,0,0,0.8);
+  }
+  #game-banner .detail {
+    font-size: 22px; letter-spacing: 0.1em; color: #ffd9ee;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+  }
+  /* Three states, three colours. The warning is amber because it is a "get
+     ready"; the event itself is the dragon fruit's own magenta; completion is
+     near-white, which is the only time anything in this game goes brighter
+     than the fruit. */
+  #game-banner.warning .headline { color: #ffc857; animation: banner-in 0.45s ease-out, banner-throb 0.7s ease-in-out infinite 0.45s; }
+  #game-banner.active .headline { color: #ff53b5; animation: banner-in 0.35s ease-out; }
+  #game-banner.done .headline { color: #fff2fb; animation: banner-pop 0.5s ease-out; }
+  @keyframes banner-in {
+    from { opacity: 0; transform: translateY(-26px) scale(0.86); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes banner-throb {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.06); }
+  }
+  @keyframes banner-pop {
+    0% { transform: scale(0.6); opacity: 0; }
+    55% { transform: scale(1.22); opacity: 1; }
+    100% { transform: scale(1); }
+  }
+
+  /* The combo readout, under the score. Section 12 wants it brief and
+     arcade-style, so it is two words and it re-animates on every change by
+     having the class removed and re-added. */
+  #game-combo {
+    font-size: 27px; font-weight: 700; letter-spacing: 0.12em;
+    color: #ffd166; min-height: 34px; margin-top: 2px;
+    text-shadow: 0 0 18px rgba(255, 180, 60, 0.75), 0 2px 6px rgba(0,0,0,0.8);
+  }
+  #game-combo.pop { animation: banner-pop 0.42s ease-out; }
+
+  /* Section 27's screen shake, kept subtle and — importantly — applied to
+     `#game-stage` rather than to the canvas. The canvas is where wrist
+     coordinates are mapped to pixels; translating it would move the fruit out
+     from under the hand that is aiming at it, which is the one thing this
+     effect must not do. Moving the whole stage moves the HUD with it and
+     leaves the coordinate space alone. */
+  #game-stage.shake { animation: stage-shake 0.34s ease-out; }
+  @keyframes stage-shake {
+    0%, 100% { transform: translate(0, 0); }
+    20% { transform: translate(-5px, 3px); }
+    45% { transform: translate(4px, -4px); }
+    70% { transform: translate(-3px, -2px); }
   }
 
   /* Overlays: start, paused, game over, and the two error screens. One rule
@@ -1193,13 +1278,24 @@
       <div class="game-hud-top">
         <div>
           <div id="game-score">0</div>
+          <div id="game-best">BEST 0</div>
+          <div id="game-combo"></div>
           <div id="game-streak"></div>
         </div>
         <div>
-          <div id="game-clock">60<span class="unit">s</span></div>
+          <!-- `2:00` at the start of a round. The unit span the seconds-only
+               clock had is gone: "2:00 s" is wrong and the colon already says
+               what the number is. -->
+          <div id="game-clock">2:00</div>
           <div id="game-clock-bar"><div></div></div>
         </div>
       </div>
+    </div>
+
+    <!-- Sections 17, 19 and 27. Empty and hidden except during the Ultimate. -->
+    <div id="game-banner">
+      <div class="headline" id="banner-headline"></div>
+      <div class="detail" id="banner-detail"></div>
     </div>
 
     <button id="game-pause"><span class="glyph">⏸</span><span>Pause</span></button>
@@ -4542,6 +4638,12 @@ function stopGame() {
   gameEl("game-preview").src = "";
   gameState = null;
   resetHandTrails();
+  // Everything the page was drawing goes with the game. Particles and a
+  // shadow left behind would be the first thing painted on the next round's
+  // very first frame, before any pose has arrived.
+  resetEffects();
+  resetShadow();
+  resetBanner();
   gameId = "";
   // Fire and forget. The manager's watchdog would give the hardware back
   // anyway, but not for twenty-five seconds, and the camera page may be the
@@ -4603,19 +4705,33 @@ function applyGameState(state) {
     gameEl("start-play").disabled = !ready;
   }
 
+  // The player's shadow. Fed from every snapshot rather than every render
+  // frame, because a new pose is the only thing that can change it — the
+  // render loop smooths towards whatever landed here.
+  if (pose && pose.player) updateShadow(pose.player.body, performance.now());
+
   if (game) {
     gameEl("game-score").textContent = game.score;
+    gameEl("game-best").textContent = "BEST " + (game.best || 0);
     gameEl("game-streak").textContent =
       game.streak >= 3 ? `${game.streak} in a row` : "";
+    updateCombo(game.combo || 0);
+    updateBanner(game);
     showSheet({ ready: "start", paused: "paused", over: "over",
                 playing: "" }[game.state]);
     if (game.state === "over") {
       gameEl("over-score").textContent = game.score;
       gameEl("over-best").textContent = game.best;
       const s = game.stats || {};
+      // The Ultimate gets its own clause on the summary, and only when there
+      // was one: it is the part of the round the player will remember, and
+      // burying "30 hits" in a list of four other numbers would waste it.
+      const ult = s.ultimate_hits
+        ? ` · ultimate ${s.ultimate_done ? "COMPLETE " : ""}${s.ultimate_hits} hits`
+        : "";
       gameEl("over-detail").textContent =
         `${s.sliced || 0} sliced · ${s.missed || 0} missed · ` +
-        `${s.bombs || 0} bombs · best run ${s.best_streak || 0}`;
+        `${s.bombs || 0} bombs · best run ${s.best_streak || 0}` + ult;
     }
   }
 
@@ -4627,13 +4743,218 @@ function applyGameState(state) {
     showSheet("error");
   }
 
-  // The streak rides along so a slice can climb in pitch through a run. Read
-  // from the same snapshot the events came in, so the note matches the number
-  // on screen rather than trailing it.
-  for (const sound of state.sounds || []) {
-    playGameSound(sound, game ? game.streak : 0);
-  }
+  for (const event of state.events || []) handleGameEvent(event);
   drawGameDebug(state);
+}
+
+// One event from the Pi: what it sounded like and what it looked like. Both
+// live here rather than in the render loop, because an event happens once and
+// the render loop runs sixty times a second — anything driven from a snapshot
+// field instead of from an event ends up firing every frame it is true for.
+function handleGameEvent(e) {
+  switch (e.name) {
+    case "slice":
+      playSliceSound(e.sound, e.streak || 0);
+      splash(e.x, e.y, e.juice, e.wet || 1, e.r || 40, e.cut || 0);
+      // The flash along the blade, at the point of contact. Section 12's
+      // "slash flash" — small, white, and over in a third of a second.
+      sparks(e.x, e.y, "#ffffff", 8, 420);
+      spawnHalves(e);
+      popup(e.x, e.y - 18, "+" + e.points, e.juice, 30);
+      break;
+
+    case "combo":
+      // Section 12's arcade text. Placed above the fruit that completed it,
+      // and clamped inside the screen so a combo finished at the very edge is
+      // still readable.
+      popup(Math.min(GAME_W - 150, Math.max(150, e.x)), e.y - 74,
+            e.count + " FRUIT COMBO", "#ffd166", 34);
+      playGameSound("combo", e.count);
+      break;
+
+    case "bomb":
+      playGameSound("bomb");
+      // Section 30's stronger explosion: a black-red splat, a wide spark
+      // burst, and a shake. Three times the particles of a fruit, because it
+      // is the one thing on screen the player is being punished for.
+      splash(e.x, e.y, "#3a1206", 1.6, 70, Math.random() * Math.PI);
+      sparks(e.x, e.y, "#ff9b3d", 34, 620);
+      sparks(e.x, e.y, "#ffffff", 12, 380);
+      popup(e.x, e.y - 20, "-5s", "#ff7043", 38);
+      shakeScreen();
+      break;
+
+    case "miss":
+      playGameSound("miss");
+      break;
+
+    case "ultimate-warning":
+      playGameSound("ultimate-warning");
+      break;
+
+    case "ultimate-spawn":
+      playGameSound("ultimate-spawn");
+      // Reset per-Ultimate render state here rather than on the first draw:
+      // the recoil counter is compared against `hits`, and a second Ultimate
+      // in a later round starting at 0 against a stale 30 would shake on its
+      // very first frame.
+      lastDragonHits = -1;
+      break;
+
+    case "ultimate-hit":
+      playUltimateHit(e.hits || 1);
+      // Section 26. Deliberately lighter than a fruit slice: this fires up to
+      // fifteen times a second and a full splash each time would bury the
+      // screen in magenta within three seconds. The stain is left out
+      // entirely — the fruit is not going anywhere, so a stain behind it would
+      // just accumulate — and only droplets and highlights are thrown.
+      sparksFromDragon(e);
+      // A number on every hit would be a wall of them at this rate. One in
+      // three, plus every tenth, which keeps the score visibly climbing and
+      // marks the band changes where the value goes up.
+      if (e.hits % 3 === 0 || e.hits % 10 === 0) {
+        popup(e.x + (Math.random() - 0.5) * 90, e.y - 40,
+              "+" + e.points, "#ffd9f2", 30);
+      }
+      break;
+
+    case "ultimate-complete":
+      playGameSound("ultimate-complete");
+      popup(e.x, e.y - 120, "+" + e.bonus, "#ffffff", 62);
+      sparks(e.x, e.y, "#ffffff", 60, 900);
+      sparks(e.x, e.y, "#ff53b5", 50, 760);
+      shakeScreen();
+      break;
+
+    case "ultimate-end":
+      // Section 27's removal, and section 28's failure — the same explosion
+      // either way, because the fruit bursting is what happened in both cases
+      // and only the banner says whether it was finished.
+      playGameSound(e.completed ? "ultimate-burst" : "ultimate-fade");
+      if (e.hits) {
+        splash(e.x, e.y, "#ff2fa0", 1.8, 110, Math.random() * Math.PI);
+        sparks(e.x, e.y, "#ffffff", e.completed ? 70 : 30, 820);
+        sparks(e.x, e.y, "#ff6fc4", e.completed ? 60 : 26, 640);
+        if (e.completed) shakeScreen();
+      }
+      break;
+
+    case "game-over":
+      playGameSound("game-over");
+      break;
+  }
+}
+
+// The magenta spray off an Ultimate hit. Scaled down as the hits come faster,
+// so a player managing fifteen a second does not get fifteen times the
+// particles of one managing one.
+function sparksFromDragon(e) {
+  const a = Math.random() * Math.PI * 2;
+  const x = e.x + Math.cos(a) * 40, y = e.y + Math.sin(a) * 40;
+  sparks(x, y, "#ffffff", 4, 340);
+  for (let i = 0; i < Math.round(7 * fxBudget()); i++) {
+    const dir = Math.random() * Math.PI * 2;
+    const speed = 140 + Math.random() * 340;
+    fxPush(gameFx.drops, {
+      x, y, vx: Math.cos(dir) * speed, vy: Math.sin(dir) * speed - 90,
+      r: 2.5 + Math.random() * 4, colour: "#ff2fa0",
+      life: 1, decay: 1 / (0.4 + Math.random() * 0.4), glow: false,
+    });
+  }
+}
+
+// Section 27's screen shake. On `#game-stage`, never on the canvas — see the
+// CSS. Retriggered by removing and re-adding the class, with a forced reflow
+// between, which is the only reliable way to restart a CSS animation.
+function shakeScreen() {
+  const stage = gameEl("game-stage");
+  stage.classList.remove("shake");
+  void stage.offsetWidth;
+  stage.classList.add("shake");
+}
+
+// ── the HUD's two announcements ─────────────────────────────────────
+
+let lastComboShown = 0;
+function updateCombo(count) {
+  const el = gameEl("game-combo");
+  const text = count >= 2 ? count + "x COMBO" : "";
+  if (text === el.textContent) return;
+  el.textContent = text;
+  // Re-animate only when the number goes *up*. Without this the pop fires
+  // again as the combo lapses back to nothing, which draws the eye to the
+  // moment the player stopped doing well.
+  el.classList.remove("pop");
+  if (count > lastComboShown) { void el.offsetWidth; el.classList.add("pop"); }
+  lastComboShown = count;
+}
+
+// Sections 17, 19 and 27's banner. Driven off the phase and the dragon fruit
+// in the snapshot rather than off events, because it is a *state* — it has to
+// stay on screen for as long as the phase lasts, and an event fires once.
+function updateBanner(game) {
+  const banner = gameEl("game-banner");
+  const headline = gameEl("banner-headline");
+  const detail = gameEl("banner-detail");
+  const d = game.dragon;
+
+  let cls = "", head = "", sub = "";
+  if (game.state !== "playing") {
+    cls = "";
+  } else if (game.phase === "warning") {
+    cls = "warning";
+    head = "ULTIMATE FRUIT INCOMING";
+    sub = "GET READY";
+  } else if (d) {
+    if (d.completed) {
+      cls = "done";
+      head = "ULTIMATE COMPLETE!";
+      sub = `${d.hits} HITS · KEEP CUTTING`;
+    } else {
+      cls = "active";
+      head = "ULTIMATE DRAGON FRUIT";
+      // The seconds left of the Ultimate, not the hit count — that is already
+      // written across the fruit itself in 42 px, and having the banner repeat
+      // it wastes the one line of screen that could be telling the player the
+      // other thing they need: how long they have.
+      sub = `${Math.ceil(d.time_left)}s · KEEP CUTTING`;
+    }
+  } else if (game.phase === "final" && lastBannerPhase !== "final-shown") {
+    // Section 28's brief report, whether it was finished or not. Held for two
+    // seconds and then cleared by the timer below rather than by a phase
+    // change, because `final` lasts ten seconds and the player wants the
+    // screen back for the fruit that resumes in it.
+    const s = game.stats || {};
+    if (s.ultimate_hits) {
+      cls = s.ultimate_done ? "done" : "warning";
+      head = s.ultimate_done ? "ULTIMATE COMPLETE" : "ULTIMATE ENDED";
+      sub = `${s.ultimate_hits} HITS`;
+      lastBannerPhase = "final-shown";
+      clearTimeout(bannerTimer);
+      bannerTimer = setTimeout(() => {
+        gameEl("game-banner").classList.remove("on");
+      }, 2200);
+    }
+  }
+
+  if (game.phase !== "final") lastBannerPhase = game.phase;
+  if (!head) {
+    if (lastBannerPhase !== "final-shown") banner.classList.remove("on");
+    return;
+  }
+  if (headline.textContent !== head) headline.textContent = head;
+  if (detail.textContent !== sub) detail.textContent = sub;
+  banner.className = "on " + cls;
+}
+let lastBannerPhase = "";
+let bannerTimer = 0;
+
+function resetBanner() {
+  clearTimeout(bannerTimer);
+  lastBannerPhase = "";
+  lastComboShown = 0;
+  gameEl("game-banner").classList.remove("on");
+  gameEl("game-combo").textContent = "";
 }
 
 function showSheet(which) {
@@ -4663,8 +4984,7 @@ function startGameRender() {
 function renderGame(now) {
   const canvas = gameEl("game-canvas");
   const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, GAME_W, GAME_H);
-  if (!gameState || !gameState.game) return;
+  if (!gameState || !gameState.game) { ctx.clearRect(0, 0, GAME_W, GAME_H); return; }
 
   const game = gameState.game;
   // How far ahead of the last snapshot we are. Only while actually playing —
@@ -4672,9 +4992,34 @@ function renderGame(now) {
   // pause sheet and then snap back on resume.
   const ahead = game.state === "playing"
     ? Math.min(0.2, (now - gameStateAt) / 1000) : 0;
+  // Frame time for the client-side effects, which are simulated here rather
+  // than on the Pi. Clamped for the same reason `Session.tick` clamps: a
+  // backgrounded tab returning after ten seconds must not fling every
+  // particle across the screen in one step.
+  const dt = Math.min(0.05, (now - (lastFxAt || now)) / 1000);
+  lastFxAt = now;
+  if (game.state === "playing") stepEffects(dt, now);
 
-  drawClockHud(game, ahead);
-  for (const item of game.fruit || []) drawFruit(ctx, item, ahead);
+  // Section 31's layer order, top to bottom of this function. The one
+  // deliberate departure is the juice: it exists in two halves. The *stains*
+  // are painted onto the wood at layer 3, because a splash lands on the back
+  // wall and things thrown afterwards pass in front of it — a stain drawn over
+  // the fruit reads as a smear on the camera lens. The *droplets* thrown off
+  // by the same cut fly at layer 8, in front of everything, where section 31
+  // puts them.
+  drawWood(ctx);                                   // 1
+  drawPlayerShadow(ctx, now);                      // 2
+  drawSplats(ctx);                                 // 3
+  for (const item of game.fruit || []) {
+    // Sliced fruit are skipped: the halves are simulated here, with their own
+    // velocities and spins, from the moment the slice event arrived. Drawing
+    // the server's copy as well would put a whole fruit behind the two halves
+    // that just came off it.
+    if (!item.sliced) drawFruit(ctx, item, ahead); // 4
+  }
+  if (game.dragon) drawDragon(ctx, game.dragon, now); // 5
+  drawHalves(ctx);                                 // 6
+  drawDrops(ctx);                                  // 8
   // The blade the *Pi* tested for collisions. Redundant with the comet tail
   // during normal play — and worse than redundant, because these have no age
   // and so cannot fade — so they are debug-only now, where seeing exactly what
@@ -4682,7 +5027,664 @@ function renderGame(now) {
   if (gameState.debug) {
     for (const slash of game.slashes || []) drawSlash(ctx, slash);
   }
-  drawHands(ctx, now);
+  drawHands(ctx, now);                             // 9
+  drawPopups(ctx);                                 // 10
+  drawClockHud(game, ahead);                       // 11, in the DOM
+}
+let lastFxAt = 0;
+
+// ── the wood ────────────────────────────────────────────────────────
+//
+// Section 3 wants a warm wooden dojo rather than the black the game had, and
+// it is painted procedurally into an offscreen bitmap once — then blitted with
+// a single `drawImage` every frame. Both halves of that matter: procedural
+// because `aipi5/ui/server.py` serves exactly one file and has no static
+// directory to put a texture in (see `ASSET_LICENSES.md`), and cached because
+// the grain below is a few thousand strokes and painting it sixty times a
+// second would cost more than the rest of the game put together.
+//
+// The palette is dark on purpose. Everything the player actually looks at —
+// fruit, juice, the blade — is drawn at full brightness on top, and section 3
+// asks for the background to stay well underneath that. A handsome bright wood
+// competes with the fruit, which is a real failure and not a matter of taste.
+
+let woodCanvas = null;
+
+function buildWood() {
+  const wood = document.createElement("canvas");
+  wood.width = GAME_W; wood.height = GAME_H;
+  const c = wood.getContext("2d");
+
+  // The base: warm brown, lit from above and behind the player, so the middle
+  // of the screen — where the fruit and the shadow are — is the lightest part
+  // and the corners fall away.
+  const base = c.createRadialGradient(GAME_W / 2, GAME_H * 0.42, 60,
+                                      GAME_W / 2, GAME_H * 0.5, GAME_W * 0.78);
+  base.addColorStop(0, "#63301c");
+  base.addColorStop(0.45, "#4a2415");
+  base.addColorStop(1, "#24120b");
+  c.fillStyle = base;
+  c.fillRect(0, 0, GAME_W, GAME_H);
+
+  // Grain. Long horizontal strokes at low alpha, with the occasional darker
+  // one — real timber is mostly uniform with a few strong lines, and evenly
+  // random grain reads as noise rather than as wood.
+  for (let i = 0; i < 2600; i++) {
+    const y = Math.random() * GAME_H;
+    const x = Math.random() * GAME_W;
+    const len = 40 + Math.random() * 320;
+    const strong = Math.random() < 0.06;
+    c.strokeStyle = strong ? "rgba(20,9,5,0.22)"
+      : (Math.random() < 0.5 ? "rgba(255,190,130,0.030)" : "rgba(30,14,8,0.055)");
+    c.lineWidth = strong ? 1.6 : 0.9;
+    c.beginPath();
+    c.moveTo(x, y);
+    // A shallow bow rather than a straight line. Straight grain looks printed.
+    c.quadraticCurveTo(x + len / 2, y + (Math.random() - 0.5) * 5, x + len, y);
+    c.stroke();
+  }
+
+  // The panels: four tall boards with a dark seam between them, which is what
+  // makes it read as a *wall* rather than a tabletop.
+  const boards = 4, boardW = GAME_W / boards;
+  c.lineWidth = 2;
+  for (let i = 1; i < boards; i++) {
+    const x = i * boardW;
+    c.strokeStyle = "rgba(14,6,3,0.55)";
+    c.beginPath(); c.moveTo(x, 0); c.lineTo(x, GAME_H); c.stroke();
+    c.strokeStyle = "rgba(255,200,150,0.055)";
+    c.beginPath(); c.moveTo(x + 2, 0); c.lineTo(x + 2, GAME_H); c.stroke();
+  }
+
+  // Section 3's "subtle black grid/panel lines". A wide lattice at very low
+  // alpha — visible enough to give the eye something to judge depth against
+  // when the player's shadow moves over it, faint enough not to be noise
+  // behind a fruit.
+  c.strokeStyle = "rgba(0,0,0,0.16)";
+  c.lineWidth = 1;
+  for (let x = 0; x <= GAME_W; x += 64) {
+    c.beginPath(); c.moveTo(x + 0.5, 0); c.lineTo(x + 0.5, GAME_H); c.stroke();
+  }
+  for (let y = 0; y <= GAME_H; y += 64) {
+    c.beginPath(); c.moveTo(0, y + 0.5); c.lineTo(GAME_W, y + 0.5); c.stroke();
+  }
+
+  // A vignette last, over everything, so the HUD in the corners has something
+  // consistently dark to sit on regardless of what the grain did there.
+  const vignette = c.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.34,
+                                          GAME_W / 2, GAME_H / 2, GAME_W * 0.72);
+  vignette.addColorStop(0, "rgba(0,0,0,0)");
+  vignette.addColorStop(1, "rgba(0,0,0,0.62)");
+  c.fillStyle = vignette;
+  c.fillRect(0, 0, GAME_W, GAME_H);
+
+  return wood;
+}
+
+function drawWood(ctx) {
+  if (!woodCanvas) woodCanvas = buildWood();
+  ctx.drawImage(woodCanvas, 0, 0);
+}
+
+// ── the player's shadow ─────────────────────────────────────────────
+//
+// Sections 4 and 5. The player's own silhouette, behind the fruit, so that
+// they can see how their body maps into the game — which is the single thing
+// that was hardest about the black-background version, where a hand that left
+// the frame simply stopped existing with no clue as to which way to move.
+//
+// **Built from pose keypoints, not from the camera image.** Two reasons, and
+// the second is the one that decided it. Section 4 forbids showing the room —
+// it is a shared living space and this screen is on all day. But even if it
+// did not, person segmentation is a second model, and the Hailo-10H allows one
+// VDevice for the whole machine: the mask would have to timeshare with the
+// pose model that the blade depends on. A silhouette assembled from joints the
+// accelerator has already produced costs nothing extra.
+//
+// **Drawn small and scaled up, rather than blurred.** The shadow wants soft
+// edges (section 5), and `ctx.filter = "blur(…)"` on a 1280x800 canvas is tens
+// of milliseconds on this hardware — it would halve the frame rate on its own.
+// Painting into a quarter-size buffer and letting `drawImage` scale it back up
+// gives bilinear softening for free, and the cost is a 320x200 fill.
+
+//: The offscreen buffer, upscaled 2x on the way out. Bigger than the 320x200
+//: it started at, because the figure now has a sash and two ribbons on it and
+//: a 4x upscale turned both into a smear — the softening that flattered a
+//: plain silhouette destroys anything with a feature in it.
+const SHADOW_W = 640, SHADOW_H = 400;
+//: Section 5 asked for 30-50% and a plain shadow. The ninja is a *figure*
+//: rather than a shadow, and a figure at 42% reads as a smudge, so it sits a
+//: little higher. Not higher still, for a reason that was measured rather than
+//: guessed: a bomb is a dark sphere, and the first real round was lost to
+//: bombs hiding inside the player's own silhouette.
+const SHADOW_ALPHA = 0.62;
+//: How large the figure is drawn against life size. See the blit at the foot
+//: of `drawPlayerShadow` for why this is not 1.0.
+const SHADOW_SCALE = 0.72;
+//: The ninja's colours. Black rather than grey — at 55% over warm wood a true
+//: black reads as a dark figure, while a grey reads as fog.
+const NINJA_CLOTH = "#0a0a0f";
+const NINJA_SASH = "#b3231f";
+//: The eye slit. Warm rather than white, so it reads as a face in shadow.
+const NINJA_EYES = "#e8cba4";
+//: EMA weight on each new pose for the shadow only. Much heavier smoothing
+//: than the wrists get (0.55), and it costs nothing that matters: the blade
+//: must not lag the hand, but a shadow that lags by 60 ms is simply a calm
+//: shadow. Anything less and the silhouette shivers, which draws the eye to
+//: exactly the layer that is supposed to stay in the background.
+const SHADOW_SMOOTH = 0.3;
+
+let shadowCanvas = null;
+let shadowJoints = {};     // smoothed, normalised
+let shadowSeenAt = 0;
+
+function resetShadow() { shadowJoints = {}; shadowSeenAt = 0; }
+
+// Fold this frame's joints into the smoothed set. Joints the Pi left out — it
+// omits anything it is not confident about, see `PersonPose.silhouette` — are
+// *dropped* rather than held at their last position, so an arm that goes
+// behind the player's back disappears instead of freezing mid-air.
+function updateShadow(body, now) {
+  if (!body) return;
+  const next = {};
+  for (const name in body) {
+    const [x, y] = body[name];
+    const was = shadowJoints[name];
+    next[name] = was
+      ? [was[0] + SHADOW_SMOOTH * (x - was[0]), was[1] + SHADOW_SMOOTH * (y - was[1])]
+      : [x, y];
+  }
+  shadowJoints = next;
+  shadowSeenAt = now;
+}
+
+function drawPlayerShadow(ctx, now) {
+  const joints = shadowJoints;
+  const ls = joints.left_shoulder, rs = joints.right_shoulder;
+  // Both shoulders are the minimum for a body worth drawing. With one, the
+  // torso polygon degenerates into a sliver that reads as a glitch rather than
+  // as a person standing side-on.
+  if (!ls || !rs) return;
+  // A player who has just been lost keeps their shadow for a moment and fades
+  // it, rather than blinking out on a single dropped detection.
+  const age = now - shadowSeenAt;
+  const fade = age < 200 ? 1 : Math.max(0, 1 - (age - 200) / 500);
+  if (fade <= 0) return;
+
+  if (!shadowCanvas) {
+    shadowCanvas = document.createElement("canvas");
+    shadowCanvas.width = SHADOW_W; shadowCanvas.height = SHADOW_H;
+  }
+  const s = shadowCanvas.getContext("2d");
+  s.clearRect(0, 0, SHADOW_W, SHADOW_H);
+  s.fillStyle = NINJA_CLOTH;
+  s.strokeStyle = NINJA_CLOTH;
+  s.lineCap = "round";
+  s.lineJoin = "round";
+
+  const P = (j) => [j[0] * SHADOW_W, j[1] * SHADOW_H];
+  // Limb thickness scales with the player's own shoulder width, so somebody
+  // standing further back gets a proportionally slimmer figure instead of a
+  // small body with the arms of a much closer one.
+  const span = Math.abs(ls[0] - rs[0]) * SHADOW_W;
+  const thick = Math.max(4, span * 0.30);
+
+  const [lsx, lsy] = P(ls), [rsx, rsy] = P(rs);
+  const lh = joints.left_hip, rh = joints.right_hip;
+
+  // Torso. Where the hips are unknown — which is most of the time at the
+  // distance this game is played from — it is dropped straight down from the
+  // shoulders to below the bottom edge, so the body reads as continuing out of
+  // frame rather than as ending in a floating pair of shoulders.
+  const [lhx, lhy] = lh ? P(lh) : [lsx + span * 0.10, SHADOW_H + 40];
+  const [rhx, rhy] = rh ? P(rh) : [rsx - span * 0.10, SHADOW_H + 40];
+  s.beginPath();
+  s.moveTo(lsx, lsy); s.lineTo(rsx, rsy); s.lineTo(rhx, rhy); s.lineTo(lhx, lhy);
+  s.closePath();
+  s.fill();
+  // Stroked as well as filled, with a fat round pen: it rounds the square
+  // corners of the polygon off into shoulders and hips, which is most of what
+  // makes four points read as a body.
+  s.lineWidth = thick * 0.85;
+  s.stroke();
+  if (!lh && !rh) {
+    // No hips: fill the gap the drop-down leaves between the two legs of the
+    // polygon, so the torso is solid rather than a wide V.
+    s.fillRect(Math.min(lhx, rhx), Math.min(lsy, rsy),
+               Math.abs(rhx - lhx), SHADOW_H);
+  }
+
+  // Arms. Each segment is drawn only if both of its ends are known, so a lost
+  // elbow costs the upper arm and not the whole limb — and a wrist that is
+  // still tracked keeps its hand, which is the part the player is watching.
+  const bone = (a, b, width) => {
+    if (!a || !b) return;
+    const [ax, ay] = P(a), [bx, by] = P(b);
+    s.lineWidth = width;
+    s.beginPath(); s.moveTo(ax, ay); s.lineTo(bx, by); s.stroke();
+  };
+  bone(ls, joints.left_elbow, thick * 0.62);
+  bone(joints.left_elbow, joints.left_wrist, thick * 0.50);
+  bone(rs, joints.right_elbow, thick * 0.62);
+  bone(joints.right_elbow, joints.right_wrist, thick * 0.50);
+
+  // ── the ninja, section 5 as the player asked for it ──────────────
+  //
+  // The figure behind the fruit is a hooded ninja rather than a plain grey
+  // silhouette: black cloth, a red sash at the waist, a headband whose two
+  // tails stream behind the head, and an eye slit. All of it is drawn from
+  // the same eleven pose joints and none of it is imported — the reference
+  // the player supplied is a stock illustration, so the *idea* is taken and
+  // the artwork is not. See `ASSET_LICENSES.md`.
+
+  const now8 = now / 1000;
+
+  // Hands, wrapped: a fist plus a cuff across the forearm, which is what
+  // separates a ninja's arm from a plain stroke at this size.
+  for (const [wrist, elbow] of [[joints.left_wrist, joints.left_elbow],
+                                [joints.right_wrist, joints.right_elbow]]) {
+    if (!wrist) continue;
+    const [wx, wy] = P(wrist);
+    s.fillStyle = NINJA_CLOTH;
+    s.beginPath(); s.arc(wx, wy, thick * 0.36, 0, Math.PI * 2); s.fill();
+    if (!elbow) continue;
+    // The cuff sits a little up the forearm, square to it.
+    const [ex, ey] = P(elbow);
+    const angle = Math.atan2(wy - ey, wx - ex);
+    s.save();
+    s.translate(wx - Math.cos(angle) * thick * 0.5,
+                wy - Math.sin(angle) * thick * 0.5);
+    s.rotate(angle);
+    s.fillStyle = NINJA_SASH;
+    s.fillRect(-thick * 0.10, -thick * 0.30, thick * 0.20, thick * 0.60);
+    s.restore();
+  }
+
+  // The sash, across the waist and square to the torso, with a tail hanging
+  // off the player's left. Drawn from the hip line where it is known and from
+  // a point below the shoulders where it is not.
+  const waistX = (lhx + rhx) / 2, waistY = lh || rh
+    ? (lhy + rhy) / 2
+    : (lsy + rsy) / 2 + span * 0.62;
+  const hipAngle = Math.atan2(rhy - lhy, rhx - lhx);
+  const waistW = (lh || rh) ? Math.hypot(rhx - lhx, rhy - lhy) : span * 0.8;
+  s.save();
+  s.translate(waistX, Math.min(waistY, SHADOW_H + thick));
+  s.rotate(lh && rh ? hipAngle : 0);
+  s.fillStyle = NINJA_SASH;
+  s.fillRect(-waistW * 0.62, -thick * 0.20, waistW * 1.24, thick * 0.44);
+  // The knot and its two short tails, offset to one side so the figure is not
+  // perfectly symmetrical — symmetry is what makes a drawn body look like a
+  // diagram.
+  s.beginPath();
+  s.ellipse(-waistW * 0.3, 0, thick * 0.17, thick * 0.26, 0, 0, Math.PI * 2);
+  s.fill();
+  for (const drop of [0.9, 1.35]) {
+    s.beginPath();
+    s.moveTo(-waistW * 0.3, 0);
+    s.quadraticCurveTo(-waistW * 0.42, thick * drop * 0.6,
+                       -waistW * 0.3 + Math.sin(now8 * 2.2 + drop) * thick * 0.2,
+                       thick * drop);
+    s.lineWidth = thick * 0.16;
+    s.strokeStyle = NINJA_SASH;
+    s.stroke();
+  }
+  s.restore();
+
+  // Neck, hood and headband. The head is sized from the shoulder span rather
+  // than from the ear positions, which are the two least reliable joints in
+  // the set — a hood that changes size every time an ear is lost is worse than
+  // one that is occasionally slightly wrong.
+  const nose = joints.nose;
+  if (nose) {
+    const [nx, ny] = P(nose);
+    const midX = (lsx + rsx) / 2, midY = (lsy + rsy) / 2;
+    s.strokeStyle = NINJA_CLOTH;
+    s.lineWidth = thick * 0.72;
+    s.beginPath(); s.moveTo(midX, midY); s.lineTo(nx, ny); s.stroke();
+
+    const headR = span * 0.26;
+    const cx = nx, cy = ny - span * 0.05;
+    // Which way the head is turned, from the ears when both are visible.
+    // Used only to lean the hood and the eye slit; a wrong guess is a head
+    // slightly askew, not a broken figure.
+    const le = joints.left_ear, re = joints.right_ear;
+    const tilt = (le && re) ? Math.atan2((re[1] - le[1]) * SHADOW_H,
+                                         (re[0] - le[0]) * SHADOW_W) : 0;
+
+    s.save();
+    s.translate(cx, cy);
+    s.rotate(tilt);
+
+    // The hood: a head, with a peak at the crown and a short cowl over the
+    // shoulders, so the outline is not simply a ball.
+    s.fillStyle = NINJA_CLOTH;
+    s.beginPath();
+    s.ellipse(0, 0, headR * 0.92, headR * 1.12, 0, 0, Math.PI * 2);
+    s.fill();
+    s.beginPath();
+    s.moveTo(-headR * 0.8, headR * 0.5);
+    s.quadraticCurveTo(0, headR * 1.7, headR * 0.8, headR * 0.5);
+    s.quadraticCurveTo(0, headR * 1.05, -headR * 0.8, headR * 0.5);
+    s.fill();
+
+    // The headband, and the two tails that are the whole signature of the
+    // thing. They stream from the back of the head and wave on their own
+    // clock — a ninja standing still with two ribbons hanging limp looks
+    // wrong, and the player's head is mostly still while their arms do the
+    // work.
+    s.fillStyle = NINJA_SASH;
+    s.fillRect(-headR * 0.95, -headR * 0.52, headR * 1.9, headR * 0.34);
+    s.strokeStyle = NINJA_SASH;
+    s.lineCap = "round";
+    for (const [index, len] of [[0, 1.9], [1, 1.45]]) {
+      const wave = Math.sin(now8 * 3.1 + index * 1.7);
+      const wave2 = Math.sin(now8 * 2.3 + index * 2.4);
+      s.lineWidth = headR * (0.26 - index * 0.06);
+      s.beginPath();
+      s.moveTo(-headR * 0.85, -headR * 0.36);
+      s.quadraticCurveTo(-headR * (1.1 + len * 0.4), -headR * (0.5 + wave * 0.5),
+                         -headR * (0.8 + len), -headR * (0.1 + wave2 * 0.75));
+      s.stroke();
+    }
+
+    // The eye slit. One warm band across the mask, split by a bridge, which
+    // at this size is the difference between a face and a smudge.
+    s.fillStyle = NINJA_EYES;
+    s.fillRect(-headR * 0.62, -headR * 0.06, headR * 0.5, headR * 0.26);
+    s.fillRect(headR * 0.12, -headR * 0.06, headR * 0.5, headR * 0.26);
+    s.restore();
+  }
+
+  ctx.save();
+  ctx.globalAlpha = SHADOW_ALPHA * fade;
+  // The upscale is the blur. `imageSmoothingQuality` is a hint the browser is
+  // free to ignore, but where it is honoured it is the difference between a
+  // soft body and a visibly pixelated one.
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+
+  // **Drawn smaller than life, and anchored to the floor.**
+  //
+  // A player has to stand close enough for their wrists to reach the edges of
+  // the frame, because that is what makes the whole screen reachable — so a
+  // one-to-one silhouette is, correctly, enormous. Measured on the device: it
+  // filled two thirds of the play area, fruit had to be cut *on* it, and both
+  // rounds played so far lost about forty-five seconds to bombs hiding against
+  // black cloth.
+  //
+  // So the figure is scaled about the bottom of the screen and about the
+  // player's own centre line. Feet stay on the floor, the head comes down, and
+  // it reads as somebody standing a few paces back — which is what the arcade
+  // game it is imitating actually shows. The cost is that the ninja's hands no
+  // longer sit exactly under the blades, and that is the right trade: the
+  // blades are bright glowing markers with tails and are what the player
+  // tracks, while the figure is there to show the shape of the movement.
+  // Relative motion is preserved exactly; only the scale changes.
+  const centre = ((ls[0] + rs[0]) / 2);
+  const dw = GAME_W * SHADOW_SCALE, dh = GAME_H * SHADOW_SCALE;
+  ctx.drawImage(shadowCanvas, 0, 0, SHADOW_W, SHADOW_H,
+                centre * GAME_W - centre * dw, GAME_H - dh, dw, dh);
+  ctx.restore();
+}
+
+// ── the effects ─────────────────────────────────────────────────────
+//
+// Sections 7, 9, 12 and 41. Everything here is the *page's* simulation, not
+// the Pi's, and that division is the same one the whole game already uses:
+// the Pi decides what happened and this decides what it looked like. None of
+// it can change a score, so none of it needs to be authoritative, and keeping
+// it here means a hundred and fifty droplets are a hundred and fifty numbers
+// in this tab rather than a hundred and fifty more objects serialised into
+// every snapshot thirty times a second.
+//
+// **Every list is hard-capped** — section 41. A two-minute round with an
+// Ultimate in the middle of it is exactly the shape of thing that accumulates:
+// thirty hits in ten seconds, each throwing a dozen particles, is a few
+// hundred objects arriving faster than they expire. The caps drop the *oldest*
+// rather than refusing the newest, so the screen always shows the most recent
+// thing that happened.
+
+const FX_CAPS = { splats: 26, drops: 240, halves: 20, popups: 14 };
+const gameFx = { splats: [], drops: [], halves: [], popups: [] };
+//: Pixels per second squared, for the client-side pieces. The same figure the
+//: Pi uses, so a half falls at the rate the fruit it came from was falling.
+const FX_GRAVITY = GAME_GRAVITY;
+
+function resetEffects() {
+  gameFx.splats.length = 0;
+  gameFx.drops.length = 0;
+  gameFx.halves.length = 0;
+  gameFx.popups.length = 0;
+}
+
+function fxPush(list, item) {
+  list.push(item);
+  const cap = FX_CAPS[list === gameFx.splats ? "splats"
+    : list === gameFx.drops ? "drops"
+    : list === gameFx.halves ? "halves" : "popups"];
+  if (list.length > cap) list.splice(0, list.length - cap);
+}
+
+// Section 7. One splash routine, parameterised by colour, size, count, speed
+// and lifetime, rather than ten near-copies — which is what the requirement
+// asks for and is also the only way ten fruit stay maintainable.
+function splash(x, y, colour, wetness, radius, angle) {
+  // The stain on the wall. Drawn as a handful of overlapping blobs, generated
+  // once here and then only faded, so a splat costs nothing per frame.
+  const blobs = [];
+  const spread = radius * (0.9 + wetness * 0.5);
+  for (let i = 0; i < 5 + Math.round(wetness * 4); i++) {
+    const a = Math.random() * Math.PI * 2;
+    const d = Math.random() * spread;
+    blobs.push({
+      dx: Math.cos(a) * d, dy: Math.sin(a) * d,
+      r: radius * (0.16 + Math.random() * 0.34) * wetness,
+    });
+  }
+  fxPush(gameFx.splats, {
+    x, y, colour, blobs, life: 1, decay: 1 / 2.6,
+  });
+
+  // The droplets. Thrown mostly along the cut — a slice sprays in the
+  // direction the blade went, and a uniform circle of droplets reads as an
+  // explosion rather than as something being cut open.
+  const count = Math.round((10 + wetness * 14) * fxBudget());
+  for (let i = 0; i < count; i++) {
+    const along = angle + (Math.random() - 0.5) * 1.5 + (Math.random() < 0.5 ? 0 : Math.PI);
+    const speed = (90 + Math.random() * 330) * (0.7 + wetness * 0.4);
+    fxPush(gameFx.drops, {
+      x, y,
+      vx: Math.cos(along) * speed,
+      vy: Math.sin(along) * speed - Math.random() * 140,
+      r: 2 + Math.random() * (3 + wetness * 3),
+      colour, life: 1, decay: 1 / (0.5 + Math.random() * 0.6),
+      glow: false,
+    });
+  }
+}
+
+// Sparks: the white/bright bits, for the slash flash and the Ultimate. Drawn
+// additively, which is what separates them from juice.
+function sparks(x, y, colour, count, speed) {
+  count = Math.round(count * fxBudget());
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const v = speed * (0.3 + Math.random() * 0.9);
+    fxPush(gameFx.drops, {
+      x, y,
+      vx: Math.cos(a) * v, vy: Math.sin(a) * v - 40,
+      r: 1.5 + Math.random() * 3,
+      colour, life: 1, decay: 1 / (0.35 + Math.random() * 0.45),
+      glow: true,
+    });
+  }
+}
+
+//: A multiplier on every particle count, cut when the frame rate drops.
+//: Section 41 in its most direct form: the effects are the first thing to go,
+//: because the one thing this game cannot trade away is the hand following the
+//: blade. Stepped rather than continuous so the density does not visibly
+//: breathe as the measured rate wobbles either side of a threshold.
+function fxBudget() {
+  if (gameFps >= 50) return 1;
+  if (gameFps >= 38) return 0.6;
+  return 0.3;
+}
+
+// Section 9. Two halves, each with its own velocity, spin and gravity, thrown
+// apart perpendicular to the cut. Spawned from the slice event rather than
+// sent by the Pi — they are decoration and the Pi has already decided the
+// fruit is gone.
+function spawnHalves(event) {
+  const cut = event.cut || 0;
+  // Perpendicular to the blade, which is the direction the two pieces of
+  // anything cut in half actually separate.
+  const nx = -Math.sin(cut), ny = Math.cos(cut);
+  for (const side of [-1, 1]) {
+    const kick = 120 + Math.random() * 90;
+    fxPush(gameFx.halves, {
+      x: event.x, y: event.y,
+      vx: nx * side * kick + (Math.random() - 0.5) * 60,
+      // Both halves are given a little lift, so they part and rise before
+      // gravity takes them. Without it they simply drop, which looks like the
+      // fruit fell apart rather than like it was cut.
+      vy: ny * side * kick - 120 - Math.random() * 80,
+      angle: cut, spin: (Math.random() - 0.5) * 9 + side * 2.5,
+      r: event.r || 40, side, cut,
+      colour: event.colour || event.juice, flesh: event.flesh,
+      shape: event.kind, life: 1, decay: 1 / 1.5,
+    });
+  }
+}
+
+// Section 12's score popup. Also the combo and Ultimate banners' little
+// brother — one routine, different text and colour.
+function popup(x, y, text, colour, size) {
+  fxPush(gameFx.popups, {
+    x, y, text, colour, size: size || 30,
+    life: 1, decay: 1 / 0.95, vy: -74,
+  });
+}
+
+function stepEffects(dt, now) {
+  for (const s of gameFx.splats) s.life -= s.decay * dt;
+  for (const d of gameFx.drops) {
+    d.life -= d.decay * dt;
+    d.x += d.vx * dt;
+    d.y += d.vy * dt + 0.5 * FX_GRAVITY * dt * dt;
+    d.vy += FX_GRAVITY * dt;
+  }
+  for (const h of gameFx.halves) {
+    h.life -= h.decay * dt;
+    h.x += h.vx * dt;
+    h.y += h.vy * dt + 0.5 * FX_GRAVITY * dt * dt;
+    h.vy += FX_GRAVITY * dt;
+    h.angle += h.spin * dt;
+  }
+  for (const p of gameFx.popups) {
+    p.life -= p.decay * dt;
+    p.y += p.vy * dt;
+    p.vy *= 0.94;          // eases to a stop as it fades, rather than sailing off
+  }
+  // Expired objects go immediately — section 41 — and so does anything that
+  // has left the screen, which for a half thrown sideways happens long before
+  // its lifetime is up.
+  const alive = (o) => o.life > 0;
+  gameFx.splats = gameFx.splats.filter(alive);
+  gameFx.drops = gameFx.drops.filter((d) => d.life > 0 && d.y < GAME_H + 40);
+  gameFx.halves = gameFx.halves.filter((h) => h.life > 0 && h.y < GAME_H + 160);
+  gameFx.popups = gameFx.popups.filter(alive);
+}
+
+function drawSplats(ctx) {
+  ctx.save();
+  for (const s of gameFx.splats) {
+    // Squared, so a stain sits at nearly full strength for most of its life
+    // and then goes quickly, rather than being a faint smudge for two seconds.
+    ctx.globalAlpha = 0.5 * s.life * s.life;
+    ctx.fillStyle = s.colour;
+    for (const b of s.blobs) {
+      ctx.beginPath();
+      ctx.arc(s.x + b.dx, s.y + b.dy, b.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function drawDrops(ctx) {
+  ctx.save();
+  // Two passes so the composite mode is set twice rather than per droplet:
+  // juice is ordinary alpha and sparks are additive, and switching
+  // `globalCompositeOperation` between every one of two hundred particles is
+  // the sort of thing that quietly costs a frame.
+  ctx.globalCompositeOperation = "source-over";
+  for (const d of gameFx.drops) {
+    if (d.glow) continue;
+    ctx.globalAlpha = Math.min(1, d.life * 1.4);
+    ctx.fillStyle = d.colour;
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, d.r * (0.4 + d.life * 0.6), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = "lighter";
+  for (const d of gameFx.drops) {
+    if (!d.glow) continue;
+    ctx.globalAlpha = Math.min(1, d.life);
+    ctx.fillStyle = d.colour;
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, d.r * (0.3 + d.life * 0.7), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawHalves(ctx) {
+  for (const h of gameFx.halves) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, h.life * 1.6);
+    ctx.translate(h.x, h.y);
+    ctx.rotate(h.angle);
+    // The cut face: a half-disc of flesh, flat side along the blade. Drawn
+    // first so the rind arc lands on top of its edge.
+    ctx.beginPath();
+    ctx.arc(0, 0, h.r * 0.94, h.side > 0 ? 0 : Math.PI,
+            h.side > 0 ? Math.PI : Math.PI * 2);
+    ctx.closePath();
+    ctx.fillStyle = h.flesh || "#ffd9c0";
+    ctx.fill();
+    // The skin, as a thick arc around the curved side only — the flat side is
+    // where the blade went and has no skin on it, which is the detail that
+    // makes a half read as cut rather than as a semicircle.
+    ctx.beginPath();
+    ctx.arc(0, 0, h.r * 0.88, h.side > 0 ? 0 : Math.PI,
+            h.side > 0 ? Math.PI : Math.PI * 2);
+    ctx.strokeStyle = h.colour;
+    ctx.lineWidth = h.r * 0.24;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawPopups(ctx) {
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const p of gameFx.popups) {
+    // Rises and grows slightly as it appears, then fades. The growth is only
+    // over the first fifth of its life; a number that keeps growing the whole
+    // time reads as approaching the viewer rather than as being announced.
+    const grow = 1 + 0.25 * Math.max(0, Math.min(1, (1 - p.life) * 5));
+    ctx.globalAlpha = Math.min(1, p.life * 1.8);
+    ctx.font = `700 ${Math.round(p.size * grow)}px "Segoe UI", system-ui, sans-serif`;
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = "rgba(0,0,0,0.62)";
+    ctx.strokeText(p.text, p.x, p.y);
+    ctx.fillStyle = p.colour;
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.restore();
 }
 
 // The countdown, extrapolated between snapshots for the same reason the fruit
@@ -4698,7 +5700,15 @@ function drawClockHud(game, ahead) {
   // Rounded up, so the clock shows "1" for the whole of the last second and
   // hits zero exactly when the round does. Rounding down shows 0 for a full
   // second while fruit are still live, which looks like the game overran.
-  clock.firstChild.nodeValue = String(Math.ceil(left));
+  //
+  // Minutes and seconds, because a round is two minutes now: `1:42` is a
+  // duration a person has a feel for and `102` is one they have to divide.
+  // Under a minute it stays `0:42` rather than dropping to `42` — a field that
+  // changes width partway through a round moves the whole HUD sideways at
+  // exactly the moment the player has least attention to spare for it.
+  const whole = Math.ceil(left);
+  const text = Math.floor(whole / 60) + ":" + String(whole % 60).padStart(2, "0");
+  if (clock.textContent !== text) clock.textContent = text;
 
   const urgent = left <= 5, low = left <= 10;
   clock.classList.toggle("low", low && !urgent);
@@ -4706,7 +5716,7 @@ function drawClockHud(game, ahead) {
   bar.classList.toggle("low", low && !urgent);
   bar.classList.toggle("urgent", urgent);
   bar.firstElementChild.style.width =
-    (100 * left / (game.duration || 60)).toFixed(1) + "%";
+    (100 * left / (game.duration || 120)).toFixed(1) + "%";
 
   // One tick per second through the last five. Driven off the displayed
   // second rather than a timer, so it cannot drift away from the number the
@@ -4722,55 +5732,487 @@ function drawClockHud(game, ahead) {
 }
 let lastClockSecond = -1;
 
+// ── the fruit ───────────────────────────────────────────────────────
+//
+// Section 6's ten, each with its own routine rather than ten tints of one
+// disc — "do not simply recolor one fruit model" is the requirement, and it is
+// also the only version that works at the distance this game is played from.
+// A player a metre and a half back cannot tell a red circle from a pink one
+// mid-swing, but a crescent, a cluster and a wedge are different *shapes* and
+// shape survives peripheral vision.
+//
+// All of it is drawn from paths rather than loaded from sprites; the module
+// docstring in `aipi5/games/fruit_ninja/fruit.py` has the why, and
+// `ASSET_LICENSES.md` has the consequence, which is that this game ships no
+// third-party artwork at all.
+//
+// Each routine draws into a space centred on the origin and already rotated,
+// with radius `r`. None of them creates a gradient: gradient objects are
+// allocated per call and there can be a dozen fruit on screen at 60 Hz, which
+// is where the frame budget goes if you are not careful. Highlights are flat
+// arcs at low alpha instead, which at this size is indistinguishable.
+
+const SHAPES = {
+  round(ctx, r, item) {                      // apple
+    ball(ctx, r, item.colour);
+    // Stem and leaf, drawn at the top of the *fruit* — which spins, so they
+    // sweep around with it and give the eye something to read the rotation
+    // from. A featureless disc could be spinning at any speed at all.
+    ctx.strokeStyle = "#6b3f21";
+    ctx.lineWidth = Math.max(2, r * 0.09);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 0.86);
+    ctx.quadraticCurveTo(r * 0.12, -r * 1.14, r * 0.04, -r * 1.3);
+    ctx.stroke();
+    ctx.fillStyle = "#4e8a35";
+    ctx.beginPath();
+    ctx.ellipse(r * 0.32, -r * 1.06, r * 0.3, r * 0.15, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    shine(ctx, r);
+  },
+
+  melon(ctx, r, item) {                      // watermelon
+    ball(ctx, r, item.colour);
+    // Dark stripes down the rind, clipped to the fruit. The clip is what lets
+    // them be drawn as simple wide arcs without spilling over the edge.
+    ctx.save();
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.clip();
+    ctx.strokeStyle = "rgba(14,60,20,0.75)";
+    ctx.lineWidth = r * 0.15;
+    for (let i = -2; i <= 2; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * r * 0.42, -r * 1.1);
+      ctx.quadraticCurveTo(i * r * 0.62, 0, i * r * 0.42, r * 1.1);
+      ctx.stroke();
+    }
+    ctx.restore();
+    shine(ctx, r);
+  },
+
+  citrus(ctx, r, item) {                     // orange, lime
+    ball(ctx, r, item.colour);
+    // Peel dimples. A fixed pattern rather than a random one, so a given fruit
+    // does not shimmer as it is redrawn each frame with new dots.
+    ctx.fillStyle = "rgba(0,0,0,0.14)";
+    for (let i = 0; i < 12; i++) {
+      const a = i * 2.3, d = r * (0.25 + (i % 4) * 0.18);
+      ctx.beginPath();
+      ctx.arc(Math.cos(a) * d, Math.sin(a) * d, r * 0.055, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#4e8a35";
+    ctx.beginPath();
+    ctx.ellipse(r * 0.1, -r * 0.98, r * 0.26, r * 0.13, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+    shine(ctx, r);
+  },
+
+  banana(ctx, r, item) {
+    // A crescent: one thick tapered arc, with a second lighter arc inside it
+    // along the inner curve. The tapering is done by stroking the same path
+    // three times at decreasing width and increasing arc span, which is much
+    // cheaper than building a proper outline and reads the same at this size.
+    ctx.lineCap = "round";
+    for (const [w, from, to, colour] of [
+      [r * 0.62, 0.25, 0.95, "#8a6a12"],
+      [r * 0.52, 0.28, 0.92, item.colour],
+      [r * 0.20, 0.36, 0.80, "#fff0a8"],
+    ]) {
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      ctx.arc(0, -r * 0.35, r * 1.05, Math.PI * from, Math.PI * to);
+      ctx.stroke();
+    }
+    // The two dark tips.
+    ctx.fillStyle = "#5d4410";
+    for (const a of [Math.PI * 0.25, Math.PI * 0.95]) {
+      ctx.beginPath();
+      ctx.arc(Math.cos(a) * r * 1.05, -r * 0.35 + Math.sin(a) * r * 1.05,
+              r * 0.15, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+
+  pearl(ctx, r, item) {
+    ball(ctx, r, item.colour);
+    // The one fruit that is defined by its highlight rather than its colour.
+    // Two of them — a hard specular dot and a broad soft one — because a
+    // single highlight reads as plastic and two read as nacre.
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.beginPath();
+    ctx.arc(-r * 0.3, -r * 0.34, r * 0.19, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(190,220,255,0.45)";
+    ctx.beginPath();
+    ctx.arc(r * 0.28, r * 0.3, r * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.55)";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0, 0, r * 0.97, 0, Math.PI * 2); ctx.stroke();
+  },
+
+  grape(ctx, r, item) {
+    // A cluster, which is what makes it unmistakable at a glance — and the
+    // reason its collision radius is generous relative to what is drawn: the
+    // shape is ragged and the circle the Pi tests against is the whole bunch.
+    const beads = [[0, -0.55], [-0.42, -0.15], [0.42, -0.15],
+                   [-0.2, 0.32], [0.2, 0.32], [0, -0.05], [0, 0.72]];
+    for (const [bx, by] of beads) {
+      ctx.beginPath();
+      ctx.arc(bx * r, by * r, r * 0.36, 0, Math.PI * 2);
+      ctx.fillStyle = item.colour;
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.22)";
+      ctx.beginPath();
+      ctx.arc(bx * r - r * 0.12, by * r - r * 0.13, r * 0.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = "#4e8a35";
+    ctx.lineWidth = Math.max(2, r * 0.1);
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 0.85); ctx.lineTo(r * 0.1, -r * 1.25);
+    ctx.stroke();
+  },
+
+  strawberry(ctx, r, item) {
+    // A rounded cone, point down. Built from one bezier per side rather than
+    // an ellipse, because the silhouette — wide shoulders tapering to a tip —
+    // is the whole of what identifies it.
+    ctx.beginPath();
+    ctx.moveTo(0, r * 1.05);
+    ctx.bezierCurveTo(-r * 1.05, r * 0.15, -r * 0.9, -r * 0.85, 0, -r * 0.8);
+    ctx.bezierCurveTo(r * 0.9, -r * 0.85, r * 1.05, r * 0.15, 0, r * 1.05);
+    ctx.fillStyle = item.colour;
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,240,180,0.85)";
+    for (let i = 0; i < 9; i++) {
+      const a = i * 2.6, d = r * (0.2 + (i % 3) * 0.22);
+      ctx.beginPath();
+      ctx.ellipse(Math.cos(a) * d * 0.8, Math.sin(a) * d, r * 0.06, r * 0.1,
+                  a, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#3f8a30";
+    for (let i = 0; i < 5; i++) {
+      const a = -Math.PI / 2 + (i - 2) * 0.55;
+      ctx.beginPath();
+      ctx.ellipse(Math.cos(a) * r * 0.42, -r * 0.78 + Math.sin(a) * r * 0.16,
+                  r * 0.3, r * 0.12, a, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+
+  kiwi(ctx, r, item) {
+    ball(ctx, r, item.colour);
+    // Fuzz: short strokes around the rim. Fixed positions again, so it does
+    // not crawl frame to frame.
+    ctx.strokeStyle = "rgba(190,160,110,0.6)";
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 22; i++) {
+      const a = (i / 22) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * r * 0.93, Math.sin(a) * r * 0.93);
+      ctx.lineTo(Math.cos(a) * r * 1.1, Math.sin(a) * r * 1.1);
+      ctx.stroke();
+    }
+    // A hint of the green inside showing through, which is the only way a
+    // brown ball says "kiwi" rather than "potato".
+    ctx.fillStyle = "rgba(140,190,70,0.35)";
+    ctx.beginPath(); ctx.arc(0, 0, r * 0.55, 0, Math.PI * 2); ctx.fill();
+    shine(ctx, r);
+  },
+
+  dragon(ctx, r, item) {
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 0.82, r, 0, 0, Math.PI * 2);
+    ctx.fillStyle = item.colour;
+    ctx.fill();
+    // The green-tipped scales. Three pairs down the sides, which is the one
+    // feature everybody recognises a pitaya by.
+    ctx.fillStyle = "#7fd44a";
+    for (let i = -1; i <= 1; i++) {
+      for (const side of [-1, 1]) {
+        ctx.save();
+        ctx.translate(side * r * 0.72, i * r * 0.5);
+        ctx.rotate(side * 0.6 - i * 0.25);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, r * 0.38, r * 0.14, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+    ctx.fillStyle = "rgba(255,255,255,0.3)";
+    ctx.beginPath();
+    ctx.ellipse(-r * 0.24, -r * 0.32, r * 0.2, r * 0.3, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+  },
+
+  // **The one shape that had to be redrawn after the first real round.**
+  // A near-black sphere with a thin white highlight was perfectly legible on
+  // the black background this game used to have — the highlight was the whole
+  // of it. On warm wood, with the player's own shadow lying across the middle
+  // of the screen, it is camouflage: dark grey on dark brown on dark brown.
+  // Measured, not guessed — the first person to play a full round hit **ten**
+  // bombs, which at five seconds each cost fifty seconds of a hundred and
+  // twenty second round, and a screenshot shows one sitting invisibly in the
+  // middle of their own silhouette.
+  //
+  // So a bomb now announces itself with something the background cannot: a
+  // pulsing warning ring and a burning fuse, both drawn additively. The body
+  // stays black, because a bomb should still look like a bomb and not like an
+  // eleventh fruit.
+  bomb(ctx, r, item) {
+    const t = performance.now() / 1000;
+    // The pulse is fast — about three a second — because it has to be caught
+    // in peripheral vision by somebody who is looking at a fruit somewhere
+    // else. A slow throb reads as decoration.
+    const pulse = 0.55 + 0.45 * Math.sin(t * Math.PI * 2 * 3);
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    // A soft danger halo, so the *area* around a bomb is brighter than the
+    // wood even where the body is darker than it. This is what makes it
+    // visible against the shadow, which is the case that actually failed.
+    const halo = ctx.createRadialGradient(0, 0, r * 0.7, 0, 0, r * 1.9);
+    halo.addColorStop(0, `rgba(255,80,40,${0.32 + 0.16 * pulse})`);
+    halo.addColorStop(1, "rgba(255,80,40,0)");
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ball(ctx, r, item.colour);
+
+    // The warning ring, on the body's edge. Dashed and counter-rotating, which
+    // separates it from every fruit's smooth rim at a glance.
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.strokeStyle = `rgba(255,${90 + 90 * pulse},50,${0.75 + 0.25 * pulse})`;
+    ctx.lineWidth = Math.max(3, r * 0.14);
+    ctx.setLineDash([r * 0.5, r * 0.34]);
+    ctx.lineDashOffset = -t * r * 1.4;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.88, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    // The fuse.
+    ctx.strokeStyle = "#8a6b3a";
+    ctx.lineWidth = Math.max(3, r * 0.13);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(r * 0.1, -r * 0.92);
+    ctx.quadraticCurveTo(r * 0.7, -r * 1.24, r * 0.5, -r * 1.5);
+    ctx.stroke();
+
+    // The lit end, twice the size it was and with a halo of its own.
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const flare = r * (0.34 + 0.12 * Math.sin(performance.now() / 55));
+    const spark = ctx.createRadialGradient(r * 0.5, -r * 1.5, 0,
+                                           r * 0.5, -r * 1.5, flare * 2.4);
+    spark.addColorStop(0, "rgba(255,240,190,0.95)");
+    spark.addColorStop(0.4, "rgba(255,150,40,0.55)");
+    spark.addColorStop(1, "rgba(255,120,20,0)");
+    ctx.fillStyle = spark;
+    ctx.beginPath();
+    ctx.arc(r * 0.5, -r * 1.5, flare * 2.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#fff8dc";
+    ctx.beginPath();
+    ctx.arc(r * 0.5, -r * 1.5, flare * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // The highlight band that used to be the only cue, kept and brightened.
+    ctx.strokeStyle = "rgba(255,255,255,0.45)";
+    ctx.lineWidth = Math.max(2, r * 0.08);
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.62, Math.PI * 1.05, Math.PI * 1.45);
+    ctx.stroke();
+  },
+};
+
+//: The plain body every round fruit starts from: a flat disc with a darker rim
+//: and a soft lower shadow, which is enough to read as a sphere without a
+//: gradient object per fruit per frame.
+function ball(ctx, r, colour) {
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fillStyle = colour;
+  ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.28)";
+  ctx.lineWidth = Math.max(2, r * 0.09);
+  ctx.stroke();
+  ctx.save();
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.clip();
+  ctx.fillStyle = "rgba(0,0,0,0.2)";
+  ctx.beginPath();
+  ctx.arc(r * 0.35, r * 0.42, r * 0.85, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+//: The specular arc. Deliberately an arc rather than a blob: a curved
+//: highlight follows the surface and sells the roundness, and it costs one
+//: stroke.
+function shine(ctx, r) {
+  ctx.strokeStyle = "rgba(255,255,255,0.42)";
+  ctx.lineWidth = Math.max(2, r * 0.12);
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.66, Math.PI * 1.08, Math.PI * 1.44);
+  ctx.stroke();
+}
+
 function drawFruit(ctx, item, ahead) {
   // Extrapolated with the same closed form the Pi integrates, so the drawn
   // position and the authoritative one agree rather than drifting apart.
-  const x = item.sliced ? item.x : item.x + item.vx * ahead;
-  const y = item.sliced ? item.y
-    : item.y + item.vy * ahead + 0.5 * GAME_GRAVITY * ahead * ahead;
+  const x = item.x + item.vx * ahead;
+  const y = item.y + item.vy * ahead + 0.5 * GAME_GRAVITY * ahead * ahead;
   const angle = (item.angle || 0) * Math.PI / 180;
 
   ctx.save();
   ctx.translate(x, y);
-
-  if (item.sliced) {
-    // Two halves falling apart along the cut. Cosmetic, and cheap: the same
-    // circle drawn twice with a growing offset perpendicular to the slash.
-    const spread = 26;
-    ctx.rotate(item.cut || 0);
-    for (const side of [-1, 1]) {
-      ctx.save();
-      ctx.translate(0, side * spread);
-      ctx.globalAlpha = 0.75;
-      ctx.beginPath();
-      ctx.arc(0, 0, item.r * 0.92, side > 0 ? 0 : Math.PI,
-              side > 0 ? Math.PI : Math.PI * 2);
-      ctx.fillStyle = item.flesh;
-      ctx.fill();
-      ctx.restore();
-    }
-    ctx.restore();
-    return;
-  }
-
   ctx.rotate(angle);
-  ctx.beginPath();
-  ctx.arc(0, 0, item.r, 0, Math.PI * 2);
-  ctx.fillStyle = item.colour;
-  ctx.fill();
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = "rgba(255,255,255,0.16)";
-  ctx.stroke();
-
-  // The emoji rides on top of the disc. If the colour-emoji font is missing
-  // this draws nothing and the fruit is still a correctly coloured, correctly
-  // sized target — the same trade the main page's buttons make.
-  ctx.font = `${Math.round(item.r * 1.5)}px "Noto Color Emoji", "Segoe UI Emoji", sans-serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(item.glyph, 0, 2);
+  (SHAPES[item.shape] || SHAPES.round)(ctx, item.r, item);
   ctx.restore();
 }
+
+// ── the Ultimate Dragon Fruit ───────────────────────────────────────
+//
+// Sections 19 and 25. It has to look, at a glance and from across the room,
+// like a fundamentally more important object than the dragon fruit that flies
+// past during normal play — and then it has to visibly *take damage* over
+// thirty hits, so that a player who is swinging as fast as they can and has no
+// attention left for the counter can still tell they are getting somewhere.
+//
+// The damage is overlays and particles on the same body, not four sprites. The
+// requirement asks for that and it is also the only version where the fruit
+// stays recognisably one object through the whole sequence.
+
+function drawDragon(ctx, d, now) {
+  const t = now / 1000;
+  // The pulse: 1.4 Hz, deeper as it takes damage, so the thing visibly gets
+  // more agitated as it comes apart.
+  const pulse = 1 + (0.035 + d.stage * 0.02) * Math.sin(t * Math.PI * 2 * 1.4);
+  // A short recoil on each hit, driven off the hit count rather than a
+  // timestamp — the page and the Pi have different clocks (`performance.now()`
+  // against `time.monotonic()`), and this is the same trap the slash fade fell
+  // into. Counting a change in `hits` needs no clock at all.
+  if (d.hits !== lastDragonHits) {
+    lastDragonHits = d.hits;
+    dragonShakeUntil = now + 130;
+  }
+  const shaking = now < dragonShakeUntil;
+  const jx = shaking ? (Math.random() - 0.5) * 9 : 0;
+  const jy = shaking ? (Math.random() - 0.5) * 9 : 0;
+  const r = d.r * pulse;
+
+  ctx.save();
+  ctx.translate(d.x + jx, d.y + jy);
+
+  // The aura. The one place in this game a per-frame radial gradient is worth
+  // it: there is exactly one of these on screen and it is the whole reason the
+  // fruit reads as an event rather than as a big fruit.
+  const auraR = r * (2.1 + 0.12 * Math.sin(t * 3));
+  const aura = ctx.createRadialGradient(0, 0, r * 0.6, 0, 0, auraR);
+  const heat = d.completed ? 0.5 : 0.26 + d.stage * 0.07;
+  aura.addColorStop(0, `rgba(255,60,175,${heat})`);
+  aura.addColorStop(0.55, "rgba(255,60,175,0.12)");
+  aura.addColorStop(1, "rgba(255,60,175,0)");
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.fillStyle = aura;
+  ctx.beginPath(); ctx.arc(0, 0, auraR, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+
+  // The particle ring: points orbiting the fruit, faster and denser with
+  // damage. Drawn rather than spawned into `gameFx`, because these are
+  // permanent for the ten seconds and pushing them through the particle system
+  // would mean re-spawning a ring sixty times a second.
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  const ringCount = 10 + d.stage * 4;
+  for (let i = 0; i < ringCount; i++) {
+    const a = (i / ringCount) * Math.PI * 2 + t * (0.7 + d.stage * 0.35);
+    const rr = r * (1.45 + 0.1 * Math.sin(t * 2.5 + i));
+    ctx.fillStyle = i % 3 === 0 ? "#ffffff" : "#ff6fc4";
+    ctx.beginPath();
+    ctx.arc(Math.cos(a) * rr, Math.sin(a) * rr, 3.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // The body: the ordinary dragon fruit's own routine, at scale. Reusing it is
+  // the point — this is the same fruit, grown, and drawing it a second way
+  // would break that.
+  ctx.save();
+  ctx.rotate(t * 0.35);                    // section 18's slow rotation
+  SHAPES.dragon(ctx, r, { colour: d.colour });
+  ctx.restore();
+
+  // Section 25's cracks. Jagged strokes from the centre outwards, seeded off
+  // the index so a given crack stays in the same place from frame to frame —
+  // a crack that moves is a scribble.
+  if (d.stage >= 1) {
+    ctx.strokeStyle = d.stage >= 3 ? "rgba(255,255,255,0.95)"
+      : `rgba(255,240,250,${0.45 + d.stage * 0.16})`;
+    ctx.lineWidth = 1.6 + d.stage * 1.1;
+    ctx.lineCap = "round";
+    const cracks = d.stage * 3;
+    for (let i = 0; i < cracks; i++) {
+      const a = i * 2.399;               // golden angle: no two cracks align
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      let px = 0, py = 0;
+      for (let seg = 1; seg <= 3; seg++) {
+        const wobble = ((i * 7 + seg * 13) % 11 - 5) * 0.06;
+        const d2 = (r * 0.3) * seg;
+        px = Math.cos(a + wobble) * d2;
+        py = Math.sin(a + wobble) * d2;
+        ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+  }
+
+  // Section 25's leaking juice, from stage 2. A slow drip rather than a burst,
+  // so it is clearly the fruit failing rather than another hit landing.
+  if (d.stage >= 2 && Math.random() < 0.25 * fxBudget()) {
+    const a = Math.random() * Math.PI * 2;
+    fxPush(gameFx.drops, {
+      x: d.x + Math.cos(a) * r * 0.8, y: d.y + Math.sin(a) * r * 0.8,
+      vx: Math.cos(a) * 30, vy: Math.abs(Math.sin(a)) * 40 + 20,
+      r: 3 + Math.random() * 3, colour: d.juice,
+      life: 1, decay: 1 / 0.9, glow: false,
+    });
+  }
+
+  ctx.restore();
+
+  // The counter, on the fruit. Section 19 wants the player to understand
+  // "keep cutting" without reading a manual, and a number that visibly climbs
+  // under their hands is the whole of that instruction.
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = "rgba(0,0,0,0.7)";
+  const label = d.completed ? `${d.hits} HITS` : `${d.hits} / ${d.required}`;
+  ctx.font = '800 42px "Segoe UI", system-ui, sans-serif';
+  const ly = d.y + d.r * 1.9;
+  ctx.strokeText(label, d.x, ly);
+  ctx.fillStyle = d.completed ? "#fff2fb" : "#ffffff";
+  ctx.fillText(label, d.x, ly);
+  ctx.restore();
+}
+let lastDragonHits = -1;
+let dragonShakeUntil = 0;
 
 function drawSlash(ctx, slash) {
   // Debug only — see the call site. Not faded by age, because the fade needs
@@ -4945,11 +6387,20 @@ function drawGameDebug(state) {
   const m = (state.motion && state.motion.stats) || {};
   const pose = state.pose && state.pose.player;
   const left = pose && pose.left_wrist, right = pose && pose.right_wrist;
+  const game = state.game || {};
   panel.innerHTML =
     `<b>AI Accelerator</b> Hailo-10H<br>` +
     `camera ${m.camera_fps || 0} fps · dropped ${m.dropped || 0}<br>` +
     `inference ${m.inference_fps || 0} fps · ${m.inference_ms || 0} ms<br>` +
     `capture→pose ${m.pipeline_ms || 0} ms · render ${gameFps.toFixed(0)} fps<br>` +
+    // Section 47 wants the worst frame rate during a big splash and during a
+    // thirty-hit Ultimate, and the only way to attribute a drop to the effects
+    // rather than to the accelerator is to see both numbers at once.
+    `phase ${game.phase || "-"} · fx ${gameFx.drops.length}d ` +
+    `${gameFx.halves.length}h ${gameFx.splats.length}s ` +
+    `${gameFx.popups.length}p · budget ${fxBudget().toFixed(1)}<br>` +
+    (game.dragon ? `ultimate ${game.dragon.hits}/${game.dragon.required} ` +
+                   `stage ${game.dragon.stage} · ${game.dragon.time_left}s<br>` : "") +
     (left ? `L ${left.x.toFixed(3)},${left.y.toFixed(3)} @${left.confidence}` +
             `${left.live ? "" : " (lost)"}<br>` : "") +
     (right ? `R ${right.x.toFixed(3)},${right.y.toFixed(3)} @${right.confidence}` +
@@ -4986,11 +6437,16 @@ function gameAudio() {
 // under it so it lands rather than hisses. Two voices, both a few lines, and
 // no audio files to license or ship — section 10 solved by not having the
 // problem.
-function sliceNoise(ctx, at, gainValue) {
-  // A quarter second of white noise, band-passed and swept downwards. The
-  // sweep is what makes it read as a *pass* rather than a burst.
-  const seconds = 0.16;
-  const frames = Math.floor(ctx.sampleRate * seconds);
+// Band-passed white noise, swept from one frequency to another. The sweep is
+// what makes it read as a blade *passing through* something rather than as a
+// burst, and where it starts and ends is most of what distinguishes a lime
+// from a watermelon — see `SLICE_VOICES`.
+//
+// Parameterised rather than fixed as of the ten-fruit expansion. It used to
+// hard-code one sweep, which was right when there was one slice sound and is
+// the whole of section 8's requirement now that there are ten.
+function sweptNoise(ctx, at, from, to, seconds, gainValue) {
+  const frames = Math.max(1, Math.floor(ctx.sampleRate * seconds));
   const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < frames; i++) {
@@ -5005,8 +6461,10 @@ function sliceNoise(ctx, at, gainValue) {
   const filter = ctx.createBiquadFilter();
   filter.type = "bandpass";
   filter.Q.value = 1.1;
-  filter.frequency.setValueAtTime(5200, at);
-  filter.frequency.exponentialRampToValueAtTime(900, at + seconds);
+  filter.frequency.setValueAtTime(from, at);
+  // Guarded against zero: an exponential ramp to 0 throws, and a voice table
+  // is exactly the sort of thing somebody will one day put a 0 in.
+  filter.frequency.exponentialRampToValueAtTime(Math.max(20, to), at + seconds);
 
   const gain = ctx.createGain();
   gain.gain.setValueAtTime(gainValue, at);
@@ -5037,21 +6495,177 @@ function tone(ctx, at, spec) {
   osc.stop(at + seconds + 0.02);
 }
 
+// ── section 8: a voice per fruit ────────────────────────────────────
+//
+// Ten fruit want ten sounds, and the requirement is explicit that they need
+// not be ten unrelated recordings — a swish plus an impact, varied in pitch
+// and weight, is what it asks for. That is exactly what the synthesiser above
+// already produces, so each fruit is a row in this table rather than a file.
+//
+// It also means the licensing question does not arise (see
+// `ASSET_LICENSES.md`), the sounds are ready before the first fruit is thrown
+// with no preload step at all — section 35 — and none of it can be read from
+// disk mid-collision, which section 8 warns against, because there is no disk.
+//
+//   cut    the noise sweep: where the band starts and ends, and how long.
+//          A high, short sweep is a crisp cut; a low, long one is a wet one.
+//   body   the pitched thump underneath, which is what gives it weight.
+//   type   the oscillator. `triangle` is soft, `square` is bright and cheap,
+//          `sawtooth` is heavy.
+const SLICE_VOICES = {
+  //         cut: [from,  to,   secs] body: [from, to,  secs] type        gains
+  crisp:     { cut: [6400, 1400, 0.13], body: [520, 240, 0.10], type: "triangle", cg: 0.26, bg: 0.15 },
+  soft:      { cut: [3200,  700, 0.19], body: [300, 150, 0.16], type: "sine",     cg: 0.20, bg: 0.17 },
+  juicy:     { cut: [4200,  650, 0.20], body: [360, 130, 0.17], type: "triangle", cg: 0.26, bg: 0.19 },
+  sharp:     { cut: [8200, 2100, 0.10], body: [760, 380, 0.08], type: "square",   cg: 0.24, bg: 0.11 },
+  heavy:     { cut: [2600,  380, 0.28], body: [190,  62, 0.30], type: "sawtooth", cg: 0.30, bg: 0.24 },
+  polished:  { cut: [9000, 3400, 0.07], body: [1180, 900, 0.13], type: "sine",    cg: 0.14, bg: 0.15 },
+  pop:       { cut: [5200, 1800, 0.07], body: [640, 200, 0.07], type: "square",   cg: 0.16, bg: 0.16 },
+  exotic:    { cut: [7000,  900, 0.22], body: [470, 210, 0.24], type: "triangle", cg: 0.26, bg: 0.20 },
+};
+
+//: Section 36. A hard ceiling on how many slice voices may start in the same
+//: tenth of a second. Two hands through a triple throw plus an Ultimate hit is
+//: four simultaneous sounds, and beyond about five the summed gain clips into
+//: a crackle that sounds like broken hardware rather than like a busy game.
+const VOICE_LIMIT = 5;
+const VOICE_WINDOW = 0.1;
+let voiceTimes = [];
+
+function voiceAvailable(now) {
+  voiceTimes = voiceTimes.filter((t) => now - t < VOICE_WINDOW);
+  if (voiceTimes.length >= VOICE_LIMIT) return false;
+  voiceTimes.push(now);
+  return true;
+}
+
+// Section 8, and section 12's "immediate feedback". Every fruit gets its own
+// character; the streak still bends the pitch on top of it, which is what
+// makes a long run audibly climb without needing a separate combo sound for
+// every step.
+function playSliceSound(voice, streak) {
+  try {
+    const ctx = gameAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    if (!voiceAvailable(now)) return;
+    const v = SLICE_VOICES[voice] || SLICE_VOICES.crisp;
+
+    // Per-slice pitch and level variation. Section 8 asks for it directly, and
+    // without it the fifth apple in a row is obviously the same sample again —
+    // the ear is far better at spotting exact repetition than at telling two
+    // similar sounds apart.
+    const wobble = 0.92 + Math.random() * 0.16;
+    const level = 0.85 + Math.random() * 0.3;
+    const step = Math.min(8, Math.max(0, (streak | 0) - 1));
+    const climb = Math.pow(1.055, step);
+
+    sweptNoise(ctx, now, v.cut[0] * wobble, v.cut[1] * wobble, v.cut[2],
+               v.cg * level);
+    tone(ctx, now, {
+      freq: v.body[0] * wobble * climb, to: v.body[1] * wobble,
+      ms: v.body[2] * 1000, type: v.type, gain: v.bg * level,
+    });
+  } catch (err) { /* a device with no audio output is a quiet game */ }
+}
+
+// Section 26's "multiple hit-sound variations so 30+ rapid attacks do not
+// sound identical". Driven off the hit *number* rather than off randomness, so
+// the sequence is a rising figure the player can hear themselves climbing
+// rather than a shuffle — and so the band changes at 10, 20 and 30, where the
+// points go up, are audible as well as visible.
+function playUltimateHit(hits) {
+  try {
+    const ctx = gameAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    if (!voiceAvailable(now)) return;
+    const band = hits > 29 ? 3 : hits > 19 ? 2 : hits > 9 ? 1 : 0;
+    // A pentatonic step per hit, wrapping every five. Pentatonic because any
+    // two notes in it sit well together, which matters when four of them are
+    // overlapping in the same tenth of a second.
+    const steps = [0, 2, 4, 7, 9];
+    const semitone = steps[hits % 5] + band * 3;
+    const root = 330 * Math.pow(2, semitone / 12);
+    sweptNoise(ctx, now, 7600, 1500, 0.09, 0.17);
+    tone(ctx, now, { freq: root, to: root * 0.55, ms: 110,
+                     type: band >= 2 ? "square" : "triangle",
+                     gain: 0.13 + band * 0.015 });
+  } catch (err) { /* quiet, not broken */ }
+}
+
 function playGameSound(name, detail) {
   try {
     const ctx = gameAudio();
     if (!ctx) return;
     const now = ctx.currentTime;
 
+    if (name === "combo") {
+      // A short rising pair, higher for a bigger combo. Deliberately thin so
+      // it sits on top of the slice sounds that triggered it rather than
+      // masking them.
+      const base = 660 * Math.pow(1.09, Math.min(6, (detail | 0) - 2));
+      tone(ctx, now, { freq: base, to: base, ms: 70, type: "square", gain: 0.1 });
+      tone(ctx, now + 0.075, { freq: base * 1.5, to: base * 1.5, ms: 110,
+                               type: "square", gain: 0.11 });
+      return;
+    }
+
+    if (name === "ultimate-warning") {
+      // Section 17's brief warning. Three rising notes with a swell under
+      // them — an alarm rather than a reward, because what it announces has
+      // not happened yet.
+      [0, 0.13, 0.26].forEach((offset, i) => {
+        tone(ctx, now + offset, { freq: 440 * Math.pow(1.26, i),
+                                  to: 440 * Math.pow(1.26, i),
+                                  ms: 150, type: "square", gain: 0.14 });
+      });
+      tone(ctx, now, { freq: 90, to: 220, ms: 620, type: "sawtooth", gain: 0.12 });
+      return;
+    }
+
+    if (name === "ultimate-spawn") {
+      // The arrival. A bright chord over a rising sweep — the one moment in
+      // the round that is allowed to be loud.
+      sweptNoise(ctx, now, 600, 9000, 0.5, 0.2);
+      [523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => {
+        tone(ctx, now + i * 0.045, { freq, to: freq, ms: 520,
+                                     type: "triangle", gain: 0.14 });
+      });
+      return;
+    }
+
+    if (name === "ultimate-complete") {
+      // Section 27, and the biggest sound in the game — it is worth five
+      // hundred points and it should be obvious without looking.
+      [0, 0.09, 0.18, 0.3].forEach((offset, i) => {
+        const freq = [659.25, 830.61, 987.77, 1318.5][i];
+        tone(ctx, now + offset, { freq, to: freq, ms: 620,
+                                  type: "triangle", gain: 0.19 });
+      });
+      sweptNoise(ctx, now, 1200, 11000, 0.42, 0.24);
+      tone(ctx, now, { freq: 165, to: 82, ms: 800, type: "sawtooth", gain: 0.18 });
+      return;
+    }
+
+    if (name === "ultimate-burst" || name === "ultimate-fade") {
+      // The fruit coming apart. The completed version bursts; the incomplete
+      // one deflates. Same gesture, opposite direction, which says which
+      // happened without a word.
+      const done = name === "ultimate-burst";
+      sweptNoise(ctx, now, done ? 5200 : 2400, done ? 900 : 380,
+                 done ? 0.38 : 0.5, done ? 0.3 : 0.18);
+      tone(ctx, now, { freq: done ? 300 : 260, to: done ? 70 : 96,
+                       ms: done ? 620 : 760,
+                       type: done ? "sawtooth" : "sine",
+                       gain: done ? 0.22 : 0.14 });
+      return;
+    }
+
     if (name === "slice") {
-      sliceNoise(ctx, now, 0.28);
-      // The pitched body. Rises with the streak — capped — so a good run
-      // audibly climbs. This is the one place the game rewards a combo with
-      // something other than a number, and it is what makes a long streak feel
-      // like one.
-      const step = Math.min(8, Math.max(0, (detail | 0) - 1));
-      tone(ctx, now, { freq: 420 * Math.pow(1.06, step), to: 190,
-                       ms: 130, type: "triangle", gain: 0.17 });
+      // Kept for anything that still asks for a generic slice — the game does
+      // not, but the button and the tests do not know that.
+      playSliceSound("crisp", detail);
       return;
     }
 
@@ -5059,7 +6673,7 @@ function playGameSound(name, detail) {
       // Noise for the crack, a low falling tone for the weight of it, and a
       // deliberately longer tail than anything else in the game — a bomb costs
       // five seconds and should sound like it cost something.
-      sliceNoise(ctx, now, 0.34);
+      sweptNoise(ctx, now, 4200, 320, 0.3, 0.34);
       tone(ctx, now, { freq: 190, to: 32, ms: 620, type: "sawtooth", gain: 0.26 });
       tone(ctx, now + 0.02, { freq: 96, to: 24, ms: 700, type: "sine", gain: 0.22 });
       return;
@@ -5097,7 +6711,16 @@ function gameCommand(action) {
   // A new round must not inherit the last one's comet tail, or the first
   // frame draws a streak from wherever the player's hands were when the
   // previous round ended.
-  if (action === "start" || action === "restart") resetHandTrails();
+  // Section 40's reset, on the page's side of the line. The Pi throws its own
+  // Ultimate state away in `Session.start`; these are the things only this
+  // page knows about — the comet tail, the splashes on the wall, the banner
+  // and the dragon fruit's recoil counter.
+  if (action === "start" || action === "restart") {
+    resetHandTrails();
+    resetEffects();
+    resetBanner();
+    lastDragonHits = -1;
+  }
   return gamePost("/api/game/command", { action });
 }
 

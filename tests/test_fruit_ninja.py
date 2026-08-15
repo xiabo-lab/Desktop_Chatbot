@@ -14,8 +14,9 @@ from pathlib import Path
 from aipi5.games.fruit_ninja import fruit as fruit_mod
 from aipi5.games.fruit_ninja.fruit import BOMB, KINDS, Fruit, Spawner
 from aipi5.games.fruit_ninja.game import (BOMB_PENALTY_S, MIN_SLASH_SPEED,
-                                          ROUND_SECONDS, HighScores, Session,
-                                          State)
+                                          ROUND_SECONDS, ULTIMATE_START_AT,
+                                          ULTIMATE_WARNING_AT, HighScores,
+                                          Phase, Session, State)
 from aipi5.motion.pose_filter import Hand
 
 
@@ -218,9 +219,19 @@ class TestLivesAndGameOver(unittest.TestCase):
             self.session.tick(now=now, hands=list(hands))
         return now
 
-    def test_a_full_minute_to_begin_with(self):
+    def test_the_full_clock_to_begin_with(self):
         self.assertAlmostEqual(self.session.time_left, ROUND_SECONDS)
         self.assertAlmostEqual(self.session.duration, ROUND_SECONDS)
+
+    def test_a_round_is_two_minutes(self):
+        """Section 14, asserted against the constant rather than a literal.
+
+        The number is here as a literal exactly once, on purpose: this is the
+        test that fails if somebody changes `ROUND_SECONDS` without meaning
+        to, and every other test reads the constant so that a *deliberate*
+        change needs one edit rather than forty.
+        """
+        self.assertEqual(ROUND_SECONDS, 120.0)
 
     def test_the_clock_runs_down(self):
         self.run_for(5.0)
@@ -289,7 +300,7 @@ class TestLivesAndGameOver(unittest.TestCase):
         self.run_for(0.5)
         self.assertEqual(self.session.state, State.OVER)
 
-    def test_the_round_is_a_whole_minute_long(self):
+    def test_the_round_lasts_the_whole_clock(self):
         self.run_for(ROUND_SECONDS - 1.0)
         self.assertEqual(self.session.state, State.PLAYING)
         self.run_for(1.5)
@@ -425,18 +436,37 @@ class TestSpawner(unittest.TestCase):
         self.assertAlmostEqual(spawner._next_at - 1.0, spawner.floor, places=5)
 
     def test_a_whole_round_throws_far_more_at_the_end_than_the_start(self):
-        """"More fruit as time goes by", measured rather than asserted."""
+        """"More fruit as time goes by", measured rather than asserted.
+
+        Measured over `ROUND_SECONDS` rather than over a hard-coded minute.
+        When the round went from sixty seconds to a hundred and twenty the
+        spawner's thresholds were stretched with it, and a test that kept
+        looking at the first sixty seconds was measuring the first *half* of
+        the ramp against itself — it failed, correctly, and the fix is here
+        rather than in the tuning it was reporting on.
+        """
         spawner = Spawner()
         spawner.seed(21)
+        third = ROUND_SECONDS / 3
         now, first_third, last_third = 0.0, 0, 0
-        while now < 60.0:
+        while now < ROUND_SECONDS:
             now += 0.05
             thrown = len(spawner.due(now=now, elapsed=now))
-            if now <= 20.0:
+            if now <= third:
                 first_third += thrown
-            elif now > 40.0:
+            elif now > 2 * third:
                 last_third += thrown
         self.assertGreater(last_third, first_third * 2)
+
+    def test_the_ramp_finishes_before_the_ultimate_warning(self):
+        """The busiest normal stretch should run *into* the Ultimate.
+
+        A ramp that was still accelerating when the screen cleared for the
+        dragon fruit would make the last stretch of normal play the quietest
+        part of the round, which is backwards.
+        """
+        spawner = Spawner()
+        self.assertLess(spawner.ramp_over, ROUND_SECONDS - ULTIMATE_WARNING_AT)
 
     def test_no_bombs_in_the_opening_seconds(self):
         spawner = Spawner()

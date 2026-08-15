@@ -1964,10 +1964,16 @@ speeds as a starting point. The implementation is not taken from it: that one
 ties physics to the frame rate and slices by proximity to a single wrist
 sample, and both are things this needed to do better.
 
-**No artwork or audio is shipped.** Fruit are a colour and an emoji drawn on a
-canvas; the five sound effects are an oscillator. Nothing from the commercial
-game of a similar name is used or imitated. The UI says "Fruit Ninja"; the code
-calls it Fruit Slice.
+**No artwork or audio is shipped.** Fruit are drawn as canvas paths with an
+emoji garnish on top; every sound is an oscillator and a noise buffer. Nothing
+from the commercial game of a similar name is used or imitated. The UI says
+"Fruit Ninja"; the code calls it Fruit Slice.
+
+That survived the ten-fruit upgrade in 29.12, which declined several
+recommended CC0 asset packs rather than build a static-file route to serve
+them. `ASSET_LICENSES.md` is the full record — what is generated, what is
+borrowed as an idea rather than a file, and the empty table any future bundled
+asset has to be entered into.
 
 ### 29.9 What the next game needs
 
@@ -2165,3 +2171,407 @@ removed from the device.
 Still not verified: the wake chime through an actual spoken wake word (the
 waveform plays on demand on the Pi, but no audio has gone through the wake
 detector into it), and the slice sound heard from the Pi's speaker during play.
+
+### 29.12 The two-minute round, the wood, the shadow, and the Ultimate
+
+The game as of 29.11 was a black screen with five coloured discs on it. This is
+the upgrade to something that looks like an arcade game: a warm dojo wall, the
+player's own shadow behind the fruit, ten fruit that each cut and splash and
+sound like themselves, and a two-minute round that builds to one guaranteed
+boss fruit in the last twenty seconds.
+
+**Nothing about the pose path changed.** Camera to Hailo-10H to seventeen
+joints to two filtered wrists to a moving-segment collision test, exactly as
+29.2 describes. The one addition to `aipi5/motion/` is eleven joint positions
+published alongside the wrists — see the shadow, below — and it costs the pose
+loop a dictionary comprehension over eleven keys.
+
+#### The round
+
+`ROUND_SECONDS` is 120, and the round now has a shape rather than a slope:
+
+    120 -> 22 s   NORMAL              fruit, ramping
+     22 -> 20 s   ULTIMATE_WARNING    banner and a warning sound
+     20 -> 10 s   ULTIMATE_ACTIVE     the dragon fruit; no fruit, no bombs
+     10 ->  0 s   NORMAL_FINAL        fruit resumes for a short coda
+
+That is a `Phase` enum in `Session`, not a set of time comparisons, and the
+reason is that each transition is an *edge* that must fire exactly once —
+`if time_left <= 22` is true for every frame of the next two seconds, so the
+warning sound would play sixty times. `_advance_phase` computes what the phase
+*should* be from the clock and then compares it to what it was.
+
+**The thresholds are seconds remaining, not seconds elapsed, and that is
+load-bearing.** A bomb takes five seconds off the clock, so the two are not
+views of one number. A player who sliced three bombs still gets their Ultimate
+with twenty seconds showing, which is what the screen promised them.
+
+The spawner's ramp was stretched by about 1.8x rather than doubled — full tilt
+at 85 s rather than 45 s. Doubling would have kept the old round's shape and
+played it slower; leaving it alone would have hit the ceiling at 45 s and held
+it flat for over a minute, which stops reading as a climb. 85 s puts the
+busiest normal stretch immediately before the warning.
+
+#### The Ultimate Dragon Fruit
+
+`aipi5/games/fruit_ninja/ultimate.py`, its own module because it shares almost
+nothing with a thrown fruit. A thrown fruit is launched, arcs, is cut once and
+is gone; this one is placed near the centre, bobs on a slow lissajous, is cut
+thirty times and then keeps going. Putting it in `Fruit` would have added an
+"unless this one" to every rule in that file.
+
+Scoring is banded — 10 a hit to nine, 15 to nineteen, 20 to twenty-nine, then
+30 — with a 500 bonus on the thirtieth. Past thirty it stays in bonus mode until
+the ten seconds are up, which is what rewards somebody fast. Failing it costs
+nothing at all: no life (there are none), no time, and every point already
+earned is kept.
+
+**The hard part was refusing hits that are not real.** A wrist resting inside a
+fruit 172 px across is reported thirty times a second, and the naive test hands
+the player five hundred points for holding still. It takes three gates, and
+each lets through something the others do not:
+
+| gate | value | what it alone would allow |
+|---|---|---|
+| per-hand cooldown | 110 ms | a still hand scoring 9 times a second |
+| movement | 0.035 frame widths | a hand jittering fast in place |
+| path crosses the fruit | segment vs moving circle | a swing nowhere near it |
+
+The cooldowns are **per hand and there is no global one**. The intended way to
+play is to alternate, and one global cooldown long enough for a single hand
+would halve what two hands can do. 110 ms comes from the physical limit rather
+than the middle of the suggested range: a sustainable back-and-forth is about
+four passes a second per hand (250 ms), and the fastest real interval seen is
+around 140 ms.
+
+Both failure modes are asserted directly in `tests/test_ultimate.py`: three
+hundred frames of a parked hand and three hundred frames of a jittering one,
+each scoring exactly zero.
+
+#### The wood
+
+Procedural, painted once into an offscreen canvas and blitted with one
+`drawImage` per frame: a radial base gradient, ~2600 bowed grain strokes, four
+panel boards with seams, a faint 64 px lattice, a vignette. Deliberately dark —
+everything the player looks at is drawn at full brightness on top of it, and a
+handsome bright wood competes with the fruit.
+
+**No asset packs were downloaded**, and `ASSET_LICENSES.md` records why in
+full. The short version is that `aipi5/ui/server.py` serves exactly one file
+from one fixed path and has no static directory, no MIME table and no
+path-traversal defence — adding fifteen megabytes of sprites means building all
+three plus a preloader, to draw shapes a canvas draws for nothing.
+
+#### The shadow
+
+The player's silhouette, behind the fruit, at 42% opacity. Built from pose
+keypoints, never from the camera image, for two reasons and the second decided
+it: section 22 forbids showing the room, and person segmentation would be a
+second model on an accelerator that permits exactly one VDevice for the whole
+machine — the mask would timeshare with the pose model the blade depends on.
+
+Two implementation notes worth keeping:
+
+- **It is drawn small and scaled up rather than blurred.** A canvas `filter`
+  blur on a 1280x800 surface is tens of milliseconds on this hardware and would
+  halve the frame rate on its own. Painting into a 320x200 buffer and letting
+  `drawImage` scale it back up gives bilinear softening for free.
+- **Joints the model is unsure about are omitted, not sent at low confidence.**
+  `PersonPose.silhouette` filters; `as_dict` does not. A debug overlay should
+  show uncertainty, but a shadow drawn through a guessed elbow does not look
+  uncertain, it looks like the player has a broken arm.
+
+Smoothing is on the *page*, at alpha 0.3 — much heavier than the wrists' 0.55,
+and it costs nothing that matters. The blade must not lag the hand; a shadow
+that lags by 60 ms is a calm shadow.
+
+#### Ten fruit
+
+Apple, banana, orange, lime, watermelon, pearl, grape, strawberry, kiwi, dragon
+fruit. Each carries its own juice colour, wetness, sound voice, spawn weight and
+launch/spin scaling in `fruit.py`, and each has a canvas routine — crescent,
+cluster, cone, striped rind. **Shape, not tint**, because a player a metre and a
+half back cannot tell a red circle from a pink one mid-swing but can tell a
+crescent from a cluster in peripheral vision.
+
+Sounds are the existing synthesiser with a table: band-passed noise swept
+between two frequencies plus a pitched body, per fruit, with per-hit pitch and
+level wobble so the fifth apple does not sound like a repeat. A five-voice cap
+per 100 ms stops thirty rapid Ultimate hits summing into a crackle.
+
+Sliced halves, juice, splats, sparks and score popups are all simulated on the
+page rather than on the Pi — they cannot change a score, so they do not need to
+be authoritative, and a hundred and fifty droplets are a hundred and fifty
+numbers in the browser instead of a hundred and fifty more objects in every
+snapshot thirty times a second. Every list is hard-capped and the oldest is
+dropped, and particle counts scale down through 0.6 and 0.3 as the measured
+frame rate falls: the effects are the first thing to go, because the one thing
+this game cannot trade away is the hand following the blade.
+
+#### What is verified, and what is not
+
+Verified without hardware: the whole phase machine over seeded 120-second
+rounds, the 29-versus-30 threshold, per-hand cooldowns and two-handed
+alternation, both fake-hit refusals, bomb suppression during the Ultimate,
+fruit already in flight surviving the transition, Play Again clearing every
+piece of state, and the ten fruit all spawning. `tests/test_ultimate.py` is 60
+tests; the suite is 793 and passes.
+
+Verified by rendering the real page in headless Chrome with a synthetic
+snapshot: the wood, the shadow following a pose, all ten fruit and the bomb,
+splats, halves, popups, the combo readout, the Ultimate with its aura, cracks,
+ring and counter, and the clock in `m:ss`.
+
+**Not yet verified, and it needs the device:** section 47's performance numbers.
+Pose FPS, camera FPS, render FPS, hand-to-slash latency, CPU, RAM and Hailo
+utilisation all have to be measured on the Pi — a frame time from a Windows
+laptop says nothing about a Pi 5. The debug overlay now reports render FPS
+alongside the pose figures, plus the live phase, the four effect-list depths
+and the current particle budget, which is what makes it possible to attribute a
+drop to the effects rather than to the accelerator. The four cases to record are
+ordinary play, a big splash, a bomb, and a 30-hit Ultimate sequence.
+
+Also unverified on hardware: the new sounds through the Pi's speaker, and
+whether 42% is the right shadow opacity in the room's actual lighting.
+
+#### One rule deliberately not followed
+
+The upgrade plan says in section 30 that slicing a bomb costs a life, and its
+HUD sketch shows three hearts. **This game has no lives**, and did not get them
+back. They were replaced by the clock in 29.11 for a recorded reason: with
+lives, an awkward fruit was better ignored than attempted, because a failed
+swing ended the game a third sooner; on a clock, doing nothing costs exactly
+what missing costs, so there is never a reason not to swing. Section 30 also
+opens with "keep existing bomb behavior", which is what was done — a sliced
+bomb costs five seconds. Section 28's rule that a failed Ultimate must not cost
+a life is satisfied trivially, since it could not.
+
+### 29.13 The upgrade on the device, and where the frame rate actually goes
+
+Deployed 2026-08-15 by `scp` (`~/AIPI5` is not a git repository), CRLF stripped
+from `index.html` and `test_fruit_ninja.py`, `systemctl --user restart aipi5`
+because a changed page is cached in the assistant's memory and restarting the
+kiosk alone reloads the stale bytes. `NRestarts=0` after. The 204 game and
+motion tests pass on the Pi as well as on Windows.
+
+Nobody was in the room, so every round below was started with `restart`, which
+skips the player-detected check that `start` enforces. That exercises the
+clock, the phase machine, the spawner, the renderer and the load — everything
+except hands.
+
+#### It runs, and the round has the shape it was supposed to
+
+    PHASE None    -> normal   at 120.0s left
+    PHASE normal  -> warning  at  21.8s left
+    PHASE warning -> ultimate at  19.7s left
+    PHASE ultimate-> final    at   9.0s left
+    GAME OVER at 0.0s left
+
+Captured with `grim` off the real panel: the start screen at `2:00` with START
+correctly disabled and `BEST 876` carried over from the last session; ordinary
+play with grape, kiwi, strawberry and dragon fruit on warm wood; the amber
+`ULTIMATE FRUIT INCOMING / GET READY` over the busiest stretch of the round —
+nine fruit and two bombs, all of them distinguishable at a glance; and the
+Ultimate itself, screen cleared, aura and particle ring, `0 / 30` under it and
+the clock still legible at `0:13`.
+
+#### Section 47, measured
+
+| | idle, game open | in play |
+|---|---|---|
+| camera | 30.1 fps | 30.2 fps |
+| pose inference | 30.1 fps | **26.3 mean, 24.5 min** |
+| inference time | 29.4 ms | 34-39 ms |
+| capture to pose | 43.3 ms | 53.6 ms mean, 72.2 max |
+| render | — | **57-58 fps** |
+| assistant CPU / RSS | — | 56.5% mean, 63.1% peak / 869 MB |
+| kiosk CPU / RSS | — | 50.8% mean, 61.8% peak / 1112 MB |
+
+Hailo-10H, firmware 5.1.1, `yolov8s_pose_h10.hef`, 9 output tensors, camera at
+640x360. Two accelerator holders — the game and the assistant's person
+detector — sharing the one VDevice, as designed.
+
+Render sat at 57-58 fps against a 60 target for the whole round, in normal play
+and through the Ultimate alike, with the particle budget never dropping below
+1.0. The wood blit and the ten shape routines are not what costs anything here.
+
+#### The pose rate falls under load, and it is not the new code
+
+The interesting number is 30.1 idle against 26.3 in play, with a minimum of
+24.5 — just under section 2's 25-30 band. It is worth being precise about where
+that goes, because the obvious answer was wrong twice.
+
+**It tracks fruit on screen**, cleanly:
+
+    fruit on screen    pose fps
+       0- 3            27.3
+       4- 7            26.1
+       8-11            25.2
+      12-15            25.1
+
+and during the Ultimate, once the last fruit thrown before it had fallen, the
+rate went straight back to 29.4-30.1 with the dragon fruit and its aura and
+ring still on screen. So the boss fruit costs nothing; a screenful of ordinary
+fruit costs about 5 fps.
+
+**First guess: my own observer.** The first run forked `ps -eo pcpu,rss,args`
+twice a second and took eight screenshots. Re-run with a poll every two seconds
+and nothing else: 26.3 mean, 24.5 min. Unchanged.
+
+**Second guess: the JSON.** The pose loop and the SSE serialiser are threads in
+one Python process, so they share a GIL — and the ten-fruit upgrade added four
+fields to every fruit in every snapshot, thirty times a second. Measured on the
+device rather than assumed:
+
+    14 fruit: 102.6 us per snapshot, 3788 B   -> 0.31% of a core at 30 Hz
+
+Nowhere near enough. Stripping the four static fields would save 24 µs and half
+the bytes, and buy nothing worth the complication of a per-kind lookup table.
+
+**So: is it a regression at all?** The backup taken before the deploy made this
+answerable. Old code restored, service restarted, the same script, same room,
+nobody in front of the camera:
+
+    old (60 s round)   pose 27.2 mean, 24.6 min   pipeline 53.3 mean, 70.8 max
+    new (120 s round)  pose 26.3 mean, 24.5 min   pipeline 53.6 mean, 72.2 max
+
+**The minimum is identical and the pipeline latency is unchanged.** The dip
+with fruit count is how this game has always behaved; what the upgrade changed
+is how much of the round is spent at the busy end, because the ramp now holds
+the floor for longer. The remaining ~1 fps of mean is one run against one run.
+
+That leaves the real cause unattributed, and honestly so: it is not the
+renderer (render fps never moved), not serialisation (0.3% of a core), and not
+the observer. The likeliest remaining candidate is the SSE thread waking thirty
+times a second on a busier snapshot and taking the GIL at the wrong moment
+relative to the inference loop — cheap in total CPU but badly timed. Worth
+chasing only if the minimum ever goes below about 24, which is where a hand
+starts to feel it.
+
+#### Camera and screensaver lifecycle
+
+Closing the game returned `active: ""` with no error; `/api/game/preview` then
+correctly answered 503, `/api/state` dropped its `game` object, and
+`/api/camera/stream` delivered **48 JPEG frames in eight seconds** — the Brio
+was lent, used and given back. The screensaver hold was released and the mode
+was back to `night-weather`. The assistant's own vision reads the same `Camera`
+object the camera page just proved, so it was not exercised separately: at ten
+to one in the morning the end-to-end camera action speaks aloud in the room.
+
+#### What still needs a person
+
+Everything that needs hands, and it is the interesting half:
+
+- slicing at all, and therefore every juice colour, splash, half, popup, combo
+  and per-fruit sound in a real round
+- the player's shadow, which needs somebody in frame — the joints are published
+  and the renderer is proven, but nothing has stood in front of it
+- render fps **under effect load**. The overlay read `fx 0d 0h 0s 0p` all round
+  because nothing was cut, so the particle budget's step-down at 50 and 38 fps
+  has never been exercised on hardware
+- the Ultimate actually being hit: thirty valid cuts, two-handed alternation,
+  the completion banner and bonus, and whether 110 ms is the right per-hand
+  cooldown for a real arm rather than a simulated one
+- whether 42% shadow opacity is right in that room's light
+
+### 29.14 Two rounds with a person in them, and the three things they broke
+
+The first two rounds anybody has played of the upgraded game, 2026-08-15.
+Everything before this was simulated or rendered against a synthetic snapshot;
+these are the numbers and the screenshots from a person standing in front of
+the Brio swinging their arms.
+
+    round 1   score 3628 (new best)   66 sliced   40 missed   10 bombs
+              ultimate COMPLETE, 88 hits, 2710 points
+    round 2   score 2255              46 sliced   49 missed    9 bombs
+              ultimate COMPLETE, 78 hits, 1630 points
+
+Both rounds completed the Ultimate comfortably. Nothing crashed, the phase
+machine ran clean, the shadow tracked, and the blade followed the hands. Three
+things were wrong, and none of them would have shown up without a player.
+
+#### The bomb had become invisible
+
+Ten bombs in round one is fifty seconds off a hundred-and-twenty second round —
+nearly half the game — and it was not the player being careless. A screenshot
+shows a bomb sitting inside their own silhouette: a near-black sphere, on a
+dark shadow, on dark brown wood.
+
+**This is a regression the wood background caused.** The old game was played on
+black, where a dark sphere with a thin white highlight was perfectly legible
+because the highlight was the only thing that needed to be seen. Moving the
+background to warm wood and then putting a large dark figure in front of it
+removed both of the cues it had.
+
+The bomb now carries a pulsing red halo *around* it — so the area is brighter
+than the wood even where the body is darker — a dashed counter-rotating warning
+ring on its rim, and a fuse spark two and a half times the size with a glow of
+its own. The body stays black; it should still look like a bomb rather than an
+eleventh fruit. Verified against the worst case, which is a bomb lying on the
+ninja's black sash: plainly visible.
+
+#### The Ultimate ran away with the score
+
+Section 23 requires that the Ultimate be a major bonus and not dominate the
+final score. Round one: **2710 of 3628 points, 75%, off one fruit.**
+
+The plan's +30 for every cut past thirty assumed a player would manage
+thirty-five or forty. A real one landed **88** — 8.8 a second across two hands,
+which is about 59% of what the 110 ms per-hand cooldown physically permits, so
+the cooldown was never the limiter and raising it would only have made the
+game worse to play.
+
+So the tail was tapered instead: ten more cuts at the full +30, and after that
+**+10, which is what an ordinary apple is worth** — the reasoning being that
+this is precisely what the player would be scoring if the dragon fruit were not
+on the screen. Completing it is untouched at 970 points, because that part was
+never the problem. Re-scored: 88 hits now pays 1730 rather than 2710, and round
+two's 78 hits paid 1630 rather than 2440.
+
+The ratio is still high (72% in round two) but the other half of that is the
+bombs: forty-five seconds of lost clock is forty-five seconds of normal fruit
+not thrown. The bomb fix and the scoring taper pull on the same rope.
+
+#### The ninja, and why it is drawn smaller than life
+
+The player asked for the silhouette to be a ninja rather than a plain shadow,
+with a reference illustration. It is built from the same eleven pose joints —
+hood, eye slit, headband with two streaming tails, red waist sash with a knot
+and tails, wrist cuffs — and none of the reference is used: a costume
+convention is not protectable and the drawing of one is, so nothing was traced
+or embedded. `ASSET_LICENSES.md` records that.
+
+Drawn one-to-one it was **enormous** — filling two thirds of the play area,
+with fruit having to be cut on top of it. That is not a bug in the drawing, it
+is arithmetic: a player has to stand close enough that their wrists reach the
+edges of the camera frame, because that is what makes the whole screen
+reachable, so a faithful silhouette is necessarily screen-sized.
+
+It is now drawn at **0.72 scale, anchored to the bottom of the screen and to
+the player's own centre line**. Feet stay on the floor, the head comes down,
+and it reads as somebody standing a few paces back — which is what the arcade
+game being imitated actually shows. The cost is that the ninja's hands no
+longer sit exactly under the blades. That is the right trade: the blades are
+bright glowing markers with tails and are what the player tracks, and relative
+motion is preserved exactly.
+
+#### Performance with a person in front of the camera
+
+| | empty room | round 1 | round 2 |
+|---|---|---|---|
+| pose | 26.3 mean / 24.5 min | 21.8 / 19.9 | **26.1 / 25.3** |
+| camera | 30.2 | — | 30.2 |
+| capture to pose | 53.6 mean / 72.2 max | 45.9 / 88.6 | 58.6 / 81.1 |
+| assistant CPU | 56% | — | 76% |
+| kiosk CPU | 51% | — | 77% |
+| load average | — | — | 3.00 mean, 3.55 max of 4 |
+| SoC | — | — | 61.7C mean, 62.8C max |
+
+Round one's 21.8 is the outlier and is not explained; round two ran the *more*
+expensive renderer — a 640x400 ninja buffer against a 320x200 grey silhouette,
+four times the pixels — and came out at 26.1, inside section 2's 25-30 band.
+The likeliest reading is that round one was the first round after a service
+restart. Worth watching rather than acting on.
+
+Nothing is thermally limited: 62.8C peak against a throttle point in the
+eighties, and a load average of 3.0 on four cores.

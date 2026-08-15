@@ -53,6 +53,31 @@ KEYPOINT_INDEX: dict[str, int] = {name: i for i, name in enumerate(KEYPOINT_NAME
 #: three copies of the string "left_wrist" is three places to typo it.
 WRISTS: tuple[str, str] = ("left_wrist", "right_wrist")
 
+#: The joints a stylised body needs, and no more. Section 5 of the Fruit Ninja
+#: upgrade: the player's shadow behind the fruit is built from these rather
+#: than from a segmentation mask, because the accelerator is already running
+#: one model and a second one would cost the pose rate the game is built on.
+#:
+#: Upper body only, plus hips to close the torso. Fruit Ninja is played from
+#: about the waist up and the requirement says so — showing head, shoulders,
+#: arms and hands accurately matters and fine lower-body detail does not — but
+#: the real reason to stop at the hips is that knees and ankles are the joints
+#: most often *outside the frame* at the distance this game is played from, and
+#: a silhouette with a confidently wrong leg on it is worse than one with no
+#: legs at all.
+#:
+#: Eleven points at three numbers each is about 250 bytes a frame, which is
+#: what makes this affordable on the same stream as everything else — the full
+#: seventeen-joint skeleton stays debug-only.
+SILHOUETTE: tuple[str, ...] = (
+    "nose",
+    "left_shoulder", "right_shoulder",
+    "left_elbow", "right_elbow",
+    "left_wrist", "right_wrist",
+    "left_hip", "right_hip",
+    "left_ear", "right_ear",
+)
+
 #: What "the player is standing where the camera can see them" means, checked
 #: by `PersonPose.upper_body_visible`. Shoulders rather than hips because
 #: Fruit Ninja is played from about the waist up and requiring hips would push
@@ -125,6 +150,22 @@ class PersonPose:
     def upper_body_visible(self, threshold: float) -> bool:
         """Both shoulders. The calibration screen's "stand back a bit" test."""
         return all(self.visible(name, threshold) for name in UPPER_BODY)
+
+    def silhouette(self, threshold: float) -> dict:
+        """The eleven joints a body outline is drawn from, filtered.
+
+        Joints below `threshold` are **omitted rather than sent with a low
+        confidence**, which is the opposite of what `as_dict` does and is
+        deliberate. `as_dict` serves a debug overlay whose whole job is to show
+        what the model believes, including where it is unsure. This serves a
+        shadow, and a shadow drawn through a guessed elbow does not look
+        uncertain — it looks like the player has a broken arm. Whoever draws it
+        can only leave out what is not here.
+        """
+        return {name: (round(point.x, 3), round(point.y, 3))
+                for name in SILHOUETTE
+                if (point := self.keypoints.get(name)) is not None
+                and point.confidence >= threshold}
 
     def wrists_visible(self, threshold: float) -> bool:
         return all(self.visible(name, threshold) for name in WRISTS)
