@@ -2068,3 +2068,100 @@ taken away) and it is also the clearest proof the navigation works: verified on
 the panel with `grim`, which showed the start screen, the live preview and a
 correctly disabled START, none of which anything local had asked for. `POST
 /api/game/close` when finished testing.
+
+### 29.11 A timed round, a comet blade, and sound that actually plays
+
+Six changes on 2026-08-14, after the first real play session. One of them turned
+out to be a bug rather than a feature.
+
+**The game sounds had never played — not once.** Chromium's default autoplay
+policy requires a user gesture before an `AudioContext` may produce sound, and
+a kiosk page opened by systemd has never had one. `new AudioContext()` starts
+`suspended` and `resume()` is refused, so every slice, bomb and game-over tone
+was being synthesised and discarded in silence. Measured in a browser without
+the flag: `suspended` before a click, `running` immediately after one. It is
+worse for a game started by voice, which by design involves nobody touching
+anything at all. Fixed with `--autoplay-policy=no-user-gesture-required` in
+`scripts/aipi5-ui.sh`, which is the right setting for this machine rather than
+a workaround — the policy exists to stop pages a person did not ask for from
+making noise, and this is the single local page that *is* the device.
+
+The slice is no longer a beep. A band-passed noise burst swept 5.2 kHz → 900 Hz
+for the cut, and a pitched body under it that climbs with the streak, so a good
+run audibly goes somewhere. Verified by counting the nodes each sound builds:
+slice = 1 buffer + 1 oscillator, bomb = 1 buffer + 2 oscillators, game over =
+3 oscillators.
+
+**Three lives became a sixty-second clock, and that changes what the game
+rewards.** With lives, an awkward fruit was better ignored than attempted — a
+failed swing ended the game a third sooner. On a fixed minute, doing nothing
+costs exactly what trying and missing costs, so there is never a reason not to
+swing. It also makes every round the same length, which is what makes two
+scores comparable. A sliced bomb takes **5 s** off the clock rather than a life;
+a dropped fruit costs only its points and the streak; a bomb that reaches the
+floor still costs nothing.
+
+The clock runs off the same clamped `dt` as the physics, not off
+`now - started_at`, so a pause is never charged and a stalled frame cannot take
+ten seconds at once.
+
+**Difficulty now ramps on seconds elapsed, not on score.** The old reasoning —
+score means "this person is doing well", time punishes somebody struggling —
+belonged to a game with lives. In a fixed minute it is wrong in both
+directions: ramping on score gives the best player the busiest screen, leaves a
+beginner throwing one fruit at a time for a whole minute, and makes the high
+score measure the ramp as much as the player. Now: interval 1.15 s → 0.38 s
+over 45 s, pairs from 15 s, triples from 35 s, and nothing new thrown in the
+last 1.4 s because a fruit launched at the whistle cannot be reached. Measured
+over a whole round, the last third throws more than twice what the first does.
+
+**The hands are 3x with a comet tail.** At a metre and a half a 9 px dot and a
+one-frame line are genuinely hard to see, and a blade you cannot see is a blade
+you cannot aim. Glow 34 → 46 px, core 9 → 15 px, plus a tapered 260 ms trail
+drawn as a run of segments — a single stroked polyline cannot narrow along its
+length — with `globalCompositeOperation = "lighter"` so overlaps at the head
+glow rather than just stacking opacity. The tail is the browser's, not the Pi's:
+it is decoration, collision has already been decided against the segment in the
+snapshot, and sixty points per hand per frame is not worth serialising for
+something the page already knows.
+
+**Wake word acknowledgement.** `aipi5/core/earcon.py`: two rising notes (A6,
+E7), 150 ms, synthesised with numpy and played through `sounddevice` the instant
+the wake word fires. Until now the only sign was a line on the screen, which is
+no use from across a room, outside the camera's view, or with your hands in the
+air a metre and a half back. Non-blocking, because the loop's next move is to
+start collecting speech. **Deliberately not drained from the capture buffer
+afterwards** — AIA supports saying the wake word and the command in one breath,
+so draining would throw away the start of "小艾同学，现在几点" every time, and a
+short quiet tone at the head of the audio is something SenseVoice ignores.
+`assistant.wake_chime` turns it off.
+
+**"Play again" / "重来"**, since the Play Again button is on the game-over
+screen and therefore just as unreachable as START was. Two more measured drops:
+
+| candidate | worst neighbour | score | |
+|---|---|---|---|
+| `replay` | resume[`play`] | **0.80** | dropped |
+| `restart game` | start_game[`start game`] | **0.91** | dropped |
+
+`重来` is 0.50 from reboot[`重启`] — close enough to name, far enough to be
+safe, and asserted both ways in the tests. It differs from "start game" in one
+respect: `fresh=True`, so a round already in progress *is* restarted. "Again" is
+a deliberate word where "start" is ambiguous, and refusing it would leave the
+player with no way to start over from where they are standing.
+
+**First real gameplay, and it works.** During a test round somebody played it:
+**score 283, 28 fruit sliced, 5 bombs, 26 missed**, with the round ending early
+because the five bombs took 25 seconds off the clock. That is the validation
+29.6 said was missing — a person moving their hands, a blade following, fruit
+being cut, the clock and the bomb penalty both behaving.
+
+It also turned up a real bug: the live scores file had grown a `""` key
+alongside `"fruit-ninja"`. A pose frame arriving after `_teardown` had cleared
+`active` — it clears under the lock and stops the pose service outside it —
+recorded the score under an empty name. Guarded at both ends and the junk key
+removed from the device.
+
+Still not verified: the wake chime through an actual spoken wake word (the
+waveform plays on demand on the Pi, but no audio has gone through the wake
+detector into it), and the slice sound heard from the Pi's speaker during play.
