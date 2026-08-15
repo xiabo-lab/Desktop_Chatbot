@@ -346,8 +346,8 @@ class GameManager:
                 return False
             time.sleep(PLAYER_POLL_S)
 
-    def voice_start(self, game_id: str = "",
-                    timeout: float = PLAYER_WAIT_S) -> tuple[str, str]:
+    def voice_start(self, game_id: str = "", timeout: float = PLAYER_WAIT_S,
+                    fresh: bool = False) -> tuple[str, str]:
         """Start a game because somebody asked out loud.
 
         Returns `(outcome, detail)` rather than speech, so that what happens
@@ -360,6 +360,13 @@ class GameManager:
             no-player       the game is open but the camera cannot see anybody
             unavailable     the camera or the accelerator refused; detail says
             no-games        nothing playable is configured
+
+        **`fresh` is the difference between "start game" and "play again".**
+        Without it, a round already under way is left alone, because "start
+        game" said mid-game is ambiguous and the harmless reading is the right
+        one — nobody means "throw my score away". "Again" is not ambiguous: it
+        is a deliberate request to begin over, and refusing it would leave the
+        player with no way to restart from where they are standing.
 
         **Blocks for up to `timeout` plus however long opening takes**, on the
         voice loop's thread. That is the same trade `KodamaLauncher.open` makes
@@ -385,28 +392,32 @@ class GameManager:
             session = self.session
             state = session.state if session is not None else None
 
-        # A round already under way is not restarted. Somebody mid-game saying
-        # "start game" has not asked to throw their score away, and doing it
-        # would be the most annoying possible reading of an ambiguous phrase.
-        if state is State.PLAYING:
-            return ("already", name)
+        # A round already under way is not restarted — unless "again" was the
+        # word. Somebody mid-game saying "start game" has not asked to throw
+        # their score away, and doing it would be the most annoying possible
+        # reading of an ambiguous phrase.
+        if not fresh:
+            if state is State.PLAYING:
+                return ("already", name)
 
-        if state is State.PAUSED:
-            try:
-                self.command("resume")
-            except GameError as exc:
-                return ("unavailable", str(exc))
-            return ("resumed", name)
+            if state is State.PAUSED:
+                try:
+                    self.command("resume")
+                except GameError as exc:
+                    return ("unavailable", str(exc))
+                return ("resumed", name)
 
         if not self.wait_for_player(timeout):
             return ("no-player", name)
 
-        # `restart` rather than `start` after a game over: same thing, except
-        # that it is the verb `Session` uses for Play Again, and it skips the
-        # player check that `wait_for_player` has just satisfied. For a fresh
-        # session the two are identical — `Session.start` resets either way.
+        # `restart` rather than `start` once a session exists in any state but
+        # READY: same thing, except that it is the verb `Session` uses for Play
+        # Again, and it skips the player check that `wait_for_player` has just
+        # satisfied. For a fresh session the two are identical — `Session.start`
+        # resets either way.
+        again = fresh or state is State.OVER
         try:
-            self.command("restart" if state is State.OVER else "start")
+            self.command("restart" if again else "start")
         except GameError:
             # The player stepped out between the wait and the command. Rare,
             # and reported honestly rather than retried into a loop.
@@ -426,7 +437,13 @@ class GameManager:
             if session is None:
                 return
             session.tick(time.monotonic(), snapshot.hands.values())
-            if session.state is State.OVER and session.score:
+            # `self.active` is checked, not assumed. `_teardown` clears it
+            # under this lock and then stops the pose service *outside* it, so
+            # a frame already in flight arrives here with a live session and no
+            # game name — and recorded the score under the empty string. Seen
+            # in the wild: a scores file with both `"fruit-ninja": 283` and
+            # `"": 283` in it.
+            if self.active and session.state is State.OVER and session.score:
                 self.scores.record(self.active, session.score)
 
     # ── what the page reads ──────────────────────────────────────────

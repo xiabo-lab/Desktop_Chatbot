@@ -135,6 +135,18 @@ exec "$browser" \
   `# touch-only screen.` \
   --disable-pinch \
   --overscroll-history-navigation=0 \
+  `# **Without this the games are silent, and nothing says so.** Chromium's` \
+  `# default autoplay policy requires a user gesture before an AudioContext` \
+  `# may produce sound, and a kiosk page that was opened by systemd has never` \
+  `# had one — so \`new AudioContext()\` starts suspended and \`resume()\` is` \
+  `# refused. Every slice, bomb and game-over tone was being synthesised and` \
+  `# thrown away. It is worse for a game started by voice, which by design` \
+  `# involves nobody touching anything at all.` \
+  `#` \
+  `# This is the right setting for this machine rather than a workaround: the` \
+  `# autoplay policy exists to stop pages a person did not ask for from making` \
+  `# noise, and this is a single trusted local page that *is* the device.` \
+  --autoplay-policy=no-user-gesture-required \
   `# Do NOT touch the system keyring. Chromium otherwise asks GNOME Keyring` \
   `# for somewhere to keep secrets, and on a machine with no keyring yet that` \
   `# raises a modal "Choose password for new keyring" dialog — centred, on` \

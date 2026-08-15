@@ -401,6 +401,14 @@ class FilesConfig:
 class AssistantConfig:
     llm_enabled: bool = True
     retention_hours: float = 24.0
+    #: Play a short rising chime the instant the wake word fires.
+    #:
+    #: On by default, because without it the only acknowledgement is a line on
+    #: the screen and there is no way to tell "it did not hear me" from "it
+    #: heard me and is thinking" without saying the whole command. A switch
+    #: rather than a constant because it is the one thing here that plays a
+    #: sound into a room where somebody might be asleep.
+    wake_chime: bool = True
 
 
 @dataclass(frozen=True)
@@ -793,6 +801,7 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
             llm_enabled=bool(assistant.get("llm_enabled", True)),
             retention_hours=_positive(assistant.get("retention_hours", 24.0), 24.0,
                                       "assistant.retention_hours"),
+            wake_chime=bool(assistant.get("wake_chime", True)),
         ),
         source=source,
     )

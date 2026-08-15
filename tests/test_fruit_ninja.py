@@ -13,8 +13,9 @@ from pathlib import Path
 
 from aipi5.games.fruit_ninja import fruit as fruit_mod
 from aipi5.games.fruit_ninja.fruit import BOMB, KINDS, Fruit, Spawner
-from aipi5.games.fruit_ninja.game import (MIN_SLASH_SPEED, STARTING_LIVES,
-                                          HighScores, Session, State)
+from aipi5.games.fruit_ninja.game import (BOMB_PENALTY_S, MIN_SLASH_SPEED,
+                                          ROUND_SECONDS, HighScores, Session,
+                                          State)
 from aipi5.motion.pose_filter import Hand
 
 
@@ -208,31 +209,59 @@ class TestLivesAndGameOver(unittest.TestCase):
             Fruit(kind=kind, x=640, y=fruit_mod.GONE_Y + 5, vx=0, vy=500,
                   spin=0))
 
-    def test_three_lives_to_begin_with(self):
-        self.assertEqual(self.session.lives, STARTING_LIVES)
+    def run_for(self, seconds: float, step: float = 0.05, hands=()):
+        """Play `seconds` of game time in `step` increments from `now=0`."""
+        now = self.session._last_tick
+        end = now + seconds
+        while now < end:
+            now = min(end, now + step)
+            self.session.tick(now=now, hands=list(hands))
+        return now
 
-    def test_a_missed_fruit_costs_a_life(self):
+    def test_a_full_minute_to_begin_with(self):
+        self.assertAlmostEqual(self.session.time_left, ROUND_SECONDS)
+        self.assertAlmostEqual(self.session.duration, ROUND_SECONDS)
+
+    def test_the_clock_runs_down(self):
+        self.run_for(5.0)
+        self.assertAlmostEqual(self.session.time_left, ROUND_SECONDS - 5.0,
+                               delta=0.2)
+
+    def test_a_missed_fruit_costs_no_time(self):
+        """The whole point of the change.
+
+        With lives, an awkward fruit was better ignored than attempted — a
+        failed swing ended the game a third sooner. On a clock, doing nothing
+        costs exactly what trying and missing costs, so there is never a reason
+        not to swing.
+        """
+        before = self.session.time_left
         self.drop()
         self.session.tick(now=0.033, hands=[])
-        self.assertEqual(self.session.lives, STARTING_LIVES - 1)
+        self.assertAlmostEqual(self.session.time_left, before - 0.033,
+                               delta=0.01)
         self.assertEqual(self.session.missed_total, 1)
 
-    def test_a_missed_bomb_costs_nothing(self):
+    def test_a_missed_bomb_costs_nothing_and_breaks_no_streak(self):
         """Leaving a bomb alone is the correct play and must not be punished."""
+        self.session.streak = 4
         self.drop(kind=BOMB)
         self.session.tick(now=0.033, hands=[])
-        self.assertEqual(self.session.lives, STARTING_LIVES)
         self.assertEqual(self.session.missed_total, 0)
+        self.assertEqual(self.session.streak, 4)
 
-    def test_a_sliced_bomb_costs_a_life(self):
+    def test_a_sliced_bomb_costs_seconds(self):
+        before = self.session.time_left
         self.session.fruit.append(
             Fruit(kind=BOMB, x=640, y=400, vx=0, vy=0, spin=0))
         self.session.tick(now=0.033,
                           hands=[screen_hand("right_wrist", 400, 400, 900, 400)])
-        self.assertEqual(self.session.lives, STARTING_LIVES - 1)
+        self.assertAlmostEqual(self.session.time_left,
+                               before - BOMB_PENALTY_S - 0.033, delta=0.01)
         self.assertEqual(self.session.bombs_hit, 1)
 
     def test_a_sliced_bomb_does_not_subtract_score(self):
+        """A number that goes backwards reads as the game taking something."""
         self.session.score = 50
         self.session.fruit.append(
             Fruit(kind=BOMB, x=640, y=400, vx=0, vy=0, spin=0))
@@ -240,19 +269,44 @@ class TestLivesAndGameOver(unittest.TestCase):
                           hands=[screen_hand("right_wrist", 400, 400, 900, 400)])
         self.assertEqual(self.session.score, 50)
 
+    def test_a_bomb_cannot_push_the_clock_below_zero(self):
+        self.session.time_left = 2.0
+        self.session.fruit.append(
+            Fruit(kind=BOMB, x=640, y=400, vx=0, vy=0, spin=0))
+        self.session.tick(now=0.033,
+                          hands=[screen_hand("right_wrist", 400, 400, 900, 400)])
+        self.assertEqual(self.session.time_left, 0.0)
+        self.assertEqual(self.session.state, State.OVER)
+
     def test_a_miss_breaks_the_streak(self):
         self.session.streak = 5
         self.drop()
         self.session.tick(now=0.033, hands=[])
         self.assertEqual(self.session.streak, 0)
 
-    def test_no_lives_is_game_over(self):
-        now = 0.0
-        for _ in range(STARTING_LIVES):
-            self.drop()
-            now += 0.033
-            self.session.tick(now=now, hands=[])
+    def test_time_up_is_game_over(self):
+        self.session.time_left = 0.2
+        self.run_for(0.5)
         self.assertEqual(self.session.state, State.OVER)
+
+    def test_the_round_is_a_whole_minute_long(self):
+        self.run_for(ROUND_SECONDS - 1.0)
+        self.assertEqual(self.session.state, State.PLAYING)
+        self.run_for(1.5)
+        self.assertEqual(self.session.state, State.OVER)
+
+    def test_nothing_is_thrown_in_the_last_moment(self):
+        """A fruit launched at the whistle cannot be reached."""
+        self.session.time_left = 1.0
+        before = len(self.session.fruit)
+        self.run_for(0.9)
+        self.assertEqual(len(self.session.fruit), before)
+
+    def test_elapsed_excludes_the_seconds_a_bomb_took(self):
+        """Difficulty follows time *used*, so a bomb is not also a harder game."""
+        self.run_for(10.0)
+        self.session.time_left -= BOMB_PENALTY_S
+        self.assertAlmostEqual(self.session.elapsed, 15.0, delta=0.3)
 
     def test_a_finished_game_stops_simulating(self):
         self.session.finish(now=1.0)
@@ -261,19 +315,32 @@ class TestLivesAndGameOver(unittest.TestCase):
         self.session.tick(now=2.0, hands=[])
         self.assertEqual(self.session.fruit[0].y, 400)
 
+    def test_the_clock_stops_at_game_over(self):
+        self.session.finish(now=1.0)
+        before = self.session.time_left
+        self.session.tick(now=5.0, hands=[])
+        self.assertEqual(self.session.time_left, before)
+
     def test_the_best_score_is_kept_at_game_over(self):
         self.session.score = 120
         self.session.finish(now=1.0)
         self.assertEqual(self.session.best, 120)
 
-    def test_play_again_resets_everything_but_the_best(self):
+    def test_play_again_resets_the_clock_but_not_the_best(self):
         self.session.score = 120
-        self.session.finish(now=1.0)
-        self.session.start(now=2.0)
+        self.run_for(20.0)
+        self.session.finish(now=self.session._last_tick)
+        self.session.start(now=100.0)
         self.assertEqual(self.session.score, 0)
-        self.assertEqual(self.session.lives, STARTING_LIVES)
+        self.assertAlmostEqual(self.session.time_left, ROUND_SECONDS)
         self.assertEqual(self.session.best, 120)
         self.assertEqual(self.session.state, State.PLAYING)
+
+    def test_a_short_round_can_be_configured(self):
+        """`duration` is a field so a future game need not patch a module."""
+        session = Session(duration=5.0, time_left=5.0)
+        session.start(now=0.0)
+        self.assertAlmostEqual(session.time_left, 5.0)
 
 
 class TestPause(unittest.TestCase):
@@ -327,54 +394,93 @@ class TestPause(unittest.TestCase):
 
 
 class TestSpawner(unittest.TestCase):
+    """Difficulty is a function of seconds elapsed, not of score."""
 
     def test_nothing_is_thrown_immediately(self):
         spawner = Spawner()
         spawner.seed(1)
-        self.assertEqual(spawner.due(now=0.0, score=0), [])
+        self.assertEqual(spawner.due(now=0.0, elapsed=0.0), [])
 
     def test_fruit_arrive_after_the_opening_delay(self):
         spawner = Spawner()
         spawner.seed(1)
-        spawner.due(now=0.0, score=0)
-        self.assertTrue(spawner.due(now=1.0, score=0))
+        spawner.due(now=0.0, elapsed=0.0)
+        self.assertTrue(spawner.due(now=1.0, elapsed=1.0))
 
-    def test_it_speeds_up_with_the_score(self):
-        easy, hard = Spawner(), Spawner()
-        easy.seed(2)
-        hard.seed(2)
-        easy.due(now=0.0, score=0)
-        hard.due(now=0.0, score=0)
-        easy.due(now=1.0, score=0)
-        hard.due(now=1.0, score=5000)
-        self.assertGreater(easy._next_at, hard._next_at)
+    def test_it_speeds_up_as_the_round_goes_on(self):
+        early, late = Spawner(), Spawner()
+        early.seed(2)
+        late.seed(2)
+        early.due(now=0.0, elapsed=0.0)
+        late.due(now=0.0, elapsed=0.0)
+        early.due(now=1.0, elapsed=1.0)
+        late.due(now=1.0, elapsed=50.0)
+        self.assertGreater(early._next_at, late._next_at)
 
-    def test_no_bombs_early_on(self):
+    def test_the_gap_reaches_the_floor_by_the_end(self):
+        spawner = Spawner()
+        spawner.seed(2)
+        spawner.due(now=0.0, elapsed=0.0)
+        spawner.due(now=1.0, elapsed=spawner.ramp_over)
+        self.assertAlmostEqual(spawner._next_at - 1.0, spawner.floor, places=5)
+
+    def test_a_whole_round_throws_far_more_at_the_end_than_the_start(self):
+        """"More fruit as time goes by", measured rather than asserted."""
+        spawner = Spawner()
+        spawner.seed(21)
+        now, first_third, last_third = 0.0, 0, 0
+        while now < 60.0:
+            now += 0.05
+            thrown = len(spawner.due(now=now, elapsed=now))
+            if now <= 20.0:
+                first_third += thrown
+            elif now > 40.0:
+                last_third += thrown
+        self.assertGreater(last_third, first_third * 2)
+
+    def test_no_bombs_in_the_opening_seconds(self):
         spawner = Spawner()
         spawner.seed(3)
         now = 0.0
         thrown = []
-        for _ in range(200):
-            now += 0.2
-            thrown.extend(spawner.due(now=now, score=0))
+        while now < spawner.bomb_after:
+            now += 0.1
+            thrown.extend(spawner.due(now=now, elapsed=now))
         self.assertTrue(thrown)
         self.assertFalse(any(item.is_bomb for item in thrown))
 
-    def test_bombs_appear_once_the_player_is_going_well(self):
+    def test_bombs_appear_later_in_a_round(self):
         spawner = Spawner()
         spawner.seed(3)
         now = 0.0
         thrown = []
-        for _ in range(400):
-            now += 0.2
-            thrown.extend(spawner.due(now=now, score=800))
+        while now < 60.0:
+            now += 0.1
+            thrown.extend(spawner.due(now=now, elapsed=now))
         self.assertTrue(any(item.is_bomb for item in thrown))
+
+    def test_pairs_and_triples_only_come_later(self):
+        spawner = Spawner()
+        spawner.seed(5)
+        now, biggest_early = 0.0, 0
+        while now < spawner.double_after:
+            now += 0.1
+            biggest_early = max(biggest_early,
+                                len(spawner.due(now=now, elapsed=now)))
+        self.assertEqual(biggest_early, 1)
+
+        biggest_late = 0
+        while now < 60.0:
+            now += 0.1
+            biggest_late = max(biggest_late,
+                               len(spawner.due(now=now, elapsed=now)))
+        self.assertGreater(biggest_late, 1)
 
     def test_fruit_are_launched_upwards_from_below_the_screen(self):
         spawner = Spawner()
         spawner.seed(4)
-        spawner.due(now=0.0, score=0)
-        thrown = spawner.due(now=1.0, score=0)
+        spawner.due(now=0.0, elapsed=0.0)
+        thrown = spawner.due(now=1.0, elapsed=1.0)
         for item in thrown:
             self.assertLess(item.vy, 0)
             self.assertGreater(item.y, fruit_mod.HEIGHT)
@@ -385,7 +491,7 @@ class TestSpawner(unittest.TestCase):
         now = 0.0
         for _ in range(60):
             now += 0.5
-            for item in spawner.due(now=now, score=0):
+            for item in spawner.due(now=now, elapsed=now):
                 if item.x < fruit_mod.WIDTH * 0.25:
                     self.assertGreaterEqual(item.vx, 0)
                 elif item.x > fruit_mod.WIDTH * 0.75:
@@ -398,7 +504,7 @@ class TestSpawner(unittest.TestCase):
             now, kinds = 0.0, []
             for _ in range(40):
                 now += 0.5
-                kinds.extend(i.kind.name for i in spawner.due(now=now, score=300))
+                kinds.extend(i.kind.name for i in spawner.due(now=now, elapsed=now))
             return kinds
 
         self.assertEqual(run(), run())
@@ -438,6 +544,15 @@ class TestHighScores(unittest.TestCase):
     def test_a_corrupt_file_is_not_fatal(self):
         self.path.write_text("{not json", encoding="utf-8")
         self.assertEqual(HighScores(self.path).best("fruit-ninja"), 0)
+
+    def test_a_nameless_game_is_refused(self):
+        """Seen in the wild: a scores file with a `""` key alongside the real
+        one, written by a pose frame that arrived while the manager was being
+        torn down and `active` had already been cleared."""
+        scores = HighScores(self.path)
+        self.assertFalse(scores.record("", 500))
+        self.assertEqual(scores.best(""), 0)
+        self.assertNotIn("", scores._scores)
 
     def test_an_unwritable_location_is_not_fatal(self):
         scores = HighScores(Path(self._dir.name) / "nope" / "x" / "scores.json")

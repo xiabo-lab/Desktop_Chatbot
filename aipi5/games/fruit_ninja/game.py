@@ -41,8 +41,27 @@ from aipi5.motion import geometry
 
 log = logging.getLogger(__name__)
 
-#: Section 27.
-STARTING_LIVES = 3
+#: How long one round lasts. Section 27 originally asked for three lives; the
+#: game is now a fixed minute and the score at the end of it.
+#:
+#: **The change is not cosmetic — it changes what the game rewards.** With
+#: lives, a dropped fruit ended the game a third sooner, so the safe play was
+#: to ignore anything awkward and wait for an easy one. With a clock, doing
+#: nothing costs exactly as much as trying and missing, so there is never a
+#: reason not to swing. It also makes every round the same length, which is
+#: what makes two scores comparable and a high score worth having.
+ROUND_SECONDS = 60.0
+
+#: What slicing a bomb costs, in seconds off the clock. Section 26's bomb
+#: cannot cost a life any more, and it has to cost *something* or it is a free
+#: extra target.
+#:
+#: Five, chosen against the clock rather than in the abstract: it is a twelfth
+#: of the round, which is enough to be worth avoiding and not enough to end a
+#: good run. A score penalty was the alternative and is worse — it can make the
+#: number on screen go backwards, which reads as the game taking something away
+#: rather than as a mistake costing time.
+BOMB_PENALTY_S = 5.0
 
 #: How long a sliced fruit stays in the state so the page can animate its
 #: halves flying apart. Purely visual; it cannot be hit again.
@@ -82,7 +101,13 @@ class Session:
     owns the only instance — holds a lock around all of them.
     """
 
-    lives: int = STARTING_LIVES
+    #: How long this round lasts. A field rather than the constant so a future
+    #: game — or a test — can run a ten-second round without patching a module.
+    duration: float = ROUND_SECONDS
+    #: Seconds left, recomputed every tick. Held rather than derived from
+    #: `started_at` because bombs take time off it, so it is genuinely its own
+    #: quantity and not a function of the wall clock.
+    time_left: float = ROUND_SECONDS
     score: int = 0
     best: int = 0
     state: State = State.READY
@@ -115,7 +140,7 @@ class Session:
 
     def start(self, now: float) -> None:
         """Begin, or begin again. Section 28's Play Again is this."""
-        self.lives = STARTING_LIVES
+        self.time_left = self.duration
         self.score = 0
         self.fruit.clear()
         self.slashes.clear()
@@ -180,6 +205,13 @@ class Session:
             return
         dt = min(dt, MAX_STEP_S)
 
+        # The clock runs off the same clamped `dt` as the physics, not off
+        # `now - started_at`. That is what keeps the round honest across a
+        # pause: `resume` moves `_last_tick` forward, so the paused seconds are
+        # never charged, and a stalled frame cannot take ten seconds off the
+        # player at once.
+        self.time_left = max(0.0, self.time_left - dt)
+
         for item in self.fruit:
             if not item.sliced:
                 item.advance(dt)
@@ -189,10 +221,15 @@ class Session:
 
         self._retire(now)
 
-        for spawned in self.spawner.due(now, self.score):
-            self.fruit.append(spawned)
+        # Nothing new is thrown in the last moment of a round. A fruit launched
+        # with half a second left cannot be reached before the whistle, and
+        # watching one arc up as the clock hits zero reads as the game having
+        # cheated rather than as bad luck.
+        if self.time_left > self.spawner.dead_air:
+            for spawned in self.spawner.due(now, self.elapsed):
+                self.fruit.append(spawned)
 
-        if self.lives <= 0:
+        if self.time_left <= 0:
             self.finish(now)
 
     def _slice(self, now: float, hands, dt: float) -> None:
@@ -241,14 +278,17 @@ class Session:
         item.slice_angle = collision.slash_angle(from_point, to_point)
 
         if item.is_bomb:
-            # Section 26. A bomb costs a life and breaks the streak; it does
-            # not subtract score, because a negative score is a worse thing to
-            # show somebody than a stalled one.
+            # Section 26, in the timed game: a bomb costs seconds rather than a
+            # life, and breaks the streak. It does not subtract score, because
+            # a number that goes backwards reads as the game taking something
+            # away rather than as a mistake costing time — and the clock is
+            # already the thing the player is watching.
             self.bombs_hit += 1
-            self.lives -= 1
+            self.time_left = max(0.0, self.time_left - BOMB_PENALTY_S)
             self.streak = 0
             self.events.append("bomb")
-            log.info("Game: bomb sliced — %d lives left", self.lives)
+            log.info("Game: bomb sliced — %.0fs off the clock, %.0fs left",
+                     BOMB_PENALTY_S, self.time_left)
             return
 
         self.streak += 1
@@ -271,11 +311,16 @@ class Session:
                     kept.append(item)
                 continue
             if item.missed:
-                # Section 27. A bomb that falls off the bottom is a *good*
-                # outcome and must not cost anything — the player correctly
-                # left it alone.
+                # A dropped fruit costs no time, only the points it was worth
+                # and the streak. That is the whole point of a timed round:
+                # with lives, an awkward fruit was better ignored than
+                # attempted, because a failed swing ended the game a third
+                # sooner. On a clock, doing nothing costs exactly what trying
+                # and missing costs, so there is never a reason not to swing.
+                #
+                # A bomb reaching the floor is still a *good* outcome — the
+                # player correctly left it alone — and does not break a streak.
                 if not item.is_bomb:
-                    self.lives -= 1
                     self.missed_total += 1
                     self.streak = 0
                     self.events.append("miss")
@@ -287,17 +332,30 @@ class Session:
 
     # ── publishing ───────────────────────────────────────────────────
 
+    @property
+    def elapsed(self) -> float:
+        """Seconds of play so far, from the clock rather than the wall.
+
+        `duration - time_left`, not `now - started_at`, so it does not count
+        paused time and *does* count the seconds a bomb took away. It is what
+        the spawner ramps on, which means a player who slices a bomb gets the
+        difficulty of the time they have used rather than the time they have
+        sat there — the penalty is the lost clock, not a harder game.
+        """
+        return max(0.0, self.duration - self.time_left)
+
     def snapshot(self, now: float) -> dict:
         """What the page draws. Small enough to send thirty times a second."""
         return {
             "state": self.state.value,
             "score": self.score,
             "best": self.best,
-            "lives": max(0, self.lives),
+            "time_left": round(self.time_left, 1),
+            "duration": round(self.duration, 1),
             "streak": self.streak,
             "fruit": [item.as_dict() for item in self.fruit],
             "slashes": self.slashes[-6:],
-            "elapsed": round(now - self.started_at, 1) if self.started_at else 0.0,
+            "elapsed": round(self.elapsed, 1),
             "stats": {
                 "sliced": self.sliced_total,
                 "missed": self.missed_total,
@@ -344,8 +402,16 @@ class HighScores:
             return 0
 
     def record(self, game: str, score: int) -> bool:
-        """Remember `score` if it beats what is there. True if it did."""
-        if score <= self.best(game):
+        """Remember `score` if it beats what is there. True if it did.
+
+        A nameless game is refused rather than filed under the empty string.
+        There is one caller that can reach here without a name — a pose frame
+        arriving while the manager is being torn down — and it is fixed at
+        source, but this is the file that has to stay clean and the guard is
+        one line. It also keeps `""` out of `best()`, which iterates nothing
+        and would otherwise report a high score for a game nobody named.
+        """
+        if not game or score <= self.best(game):
             return False
         self._scores[game] = int(score)
         self._scores.setdefault("updated", 0)

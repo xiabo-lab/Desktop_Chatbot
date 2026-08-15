@@ -60,8 +60,10 @@ class StubManager:
         self.outcome = outcome
         self.calls = []
 
-    def voice_start(self, game_id: str = "", timeout: float = 4.0):
-        self.calls.append((game_id, timeout))
+    def voice_start(self, game_id: str = "", timeout: float = 4.0,
+                    fresh: bool = False):
+        self.calls.append({"game_id": game_id, "timeout": timeout,
+                           "fresh": fresh})
         return self.outcome
 
 
@@ -95,6 +97,24 @@ class TestTheNewPhrasesRoute(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertEqual(self.routed(phrase), "start_game")
 
+    def test_play_again_english(self):
+        for phrase in ("play again", "again", "one more", "one more time",
+                       "another go", "play once more"):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(self.routed(phrase), "play_again")
+
+    def test_play_again_mandarin(self):
+        for phrase in ("重来", "再来一次", "再玩一次", "再来", "再来一局",
+                       "重新开始"):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(self.routed(phrase), "play_again")
+
+    def test_start_and_again_do_not_shadow_each_other(self):
+        self.assertEqual(self.routed("start game"), "start_game")
+        self.assertEqual(self.routed("play again"), "play_again")
+        self.assertEqual(self.routed("开始游戏"), "start_game")
+        self.assertEqual(self.routed("重来"), "play_again")
+
 
 class TestItStealsNothing(unittest.TestCase):
     """Adding to a fuzzy phrase matcher is how a neighbour quietly breaks."""
@@ -116,6 +136,11 @@ class TestItStealsNothing(unittest.TestCase):
         """
         self.assertEqual(self.routed("restart the pi"), "reboot")
         self.assertEqual(self.routed("reboot the pi"), "reboot")
+
+    def test_chongqi_still_reboots_despite_chonglai(self):
+        """`重来` is 0.50 from `重启`. Close enough to be worth a test."""
+        self.assertEqual(self.routed("重启"), "reboot")
+        self.assertEqual(self.routed("重来"), "play_again")
 
     def test_playback_commands_are_untouched(self):
         for phrase, expected in (("play pause", "toggle"),
@@ -170,9 +195,16 @@ class TestTheMeasurementsInTheComment(unittest.TestCase):
         self.assertEqual(name, "resume")
         self.assertGreater(score, 0.60)
 
+    def test_replay_is_too_close_to_play(self):
+        score, name = self.worst("replay")
+        self.assertEqual(name, "resume")
+        self.assertGreater(score, 0.70)
+
     def test_the_phrases_that_were_kept_have_margin(self):
         for phrase in ("start game", "begin game", "开始游戏", "玩游戏",
-                       "游戏开始", "开始游戏吧", "开始水果忍者"):
+                       "游戏开始", "开始游戏吧", "开始水果忍者",
+                       "play again", "again", "one more", "another go",
+                       "重来", "再来一次", "再玩一次", "再来"):
             with self.subTest(phrase=phrase):
                 score, _name = self.worst(phrase)
                 self.assertLess(score, 0.70)
@@ -227,8 +259,17 @@ class TestTheHandlerSpeaks(unittest.TestCase):
                 self.assertNotEqual(result.say("en"), result.say("zh"))
 
     def test_a_missing_manager_is_refused_rather_than_raising(self):
-        result = GameVoice(lambda: None).start()
-        self.assertFalse(result.ok)
+        self.assertFalse(GameVoice(lambda: None).start().ok)
+        self.assertFalse(GameVoice(lambda: None).again().ok)
+
+    def test_start_asks_for_a_normal_start_and_again_asks_for_a_fresh_one(self):
+        """The one bit of wiring that decides whether a score is thrown away."""
+        manager = StubManager()
+        GameVoice(manager).start()
+        self.assertIs(manager.calls[-1]["fresh"], False)
+
+        GameVoice(manager).again()
+        self.assertIs(manager.calls[-1]["fresh"], True)
 
     def test_the_plugin_is_available_even_with_no_game_running(self):
         """The trap this command would otherwise fall into.
@@ -398,6 +439,46 @@ class TestVoiceStart(VoiceStartCase):
         self.assertEqual(outcome, "already")
         self.assertEqual(self.manager.session.score, 250)
         self.assertEqual(self.manager.session.state, State.PLAYING)
+
+    def test_but_play_again_does_restart_it(self):
+        """"Again" is deliberate in a way "start" is not."""
+        self.manager.voice_start()
+        self.manager.session.score = 250
+
+        outcome, _ = self.manager.voice_start(fresh=True)
+        self.assertEqual(outcome, "started")
+        self.assertEqual(self.manager.session.score, 0)
+        self.assertEqual(self.manager.session.state, State.PLAYING)
+
+    def test_play_again_from_a_paused_round_starts_over(self):
+        self.manager.voice_start()
+        self.manager.session.score = 80
+        self.manager.command("pause")
+
+        outcome, _ = self.manager.voice_start(fresh=True)
+        self.assertEqual(outcome, "started")
+        self.assertEqual(self.manager.session.score, 0)
+        self.assertEqual(self.manager.session.state, State.PLAYING)
+
+    def test_play_again_still_banks_the_previous_score(self):
+        self.manager.voice_start()
+        self.manager.session.score = 310
+        self.manager.session.finish(time.monotonic())
+
+        self.manager.voice_start(fresh=True)
+        self.assertEqual(self.manager.scores.best("fruit-ninja"), 310)
+        self.assertEqual(self.manager.session.score, 0)
+
+    def test_play_again_opens_a_game_that_is_not_open(self):
+        """Said after walking away and coming back, with nothing running."""
+        outcome, _ = self.manager.voice_start(fresh=True)
+        self.assertEqual(outcome, "started")
+        self.assertEqual(self.manager.active, "fruit-ninja")
+
+    def test_play_again_still_needs_a_player(self):
+        FakePose.ready_after = 60.0
+        outcome, _ = self.manager.voice_start(fresh=True, timeout=0.3)
+        self.assertEqual(outcome, "no-player")
 
     def test_a_paused_round_is_resumed_not_restarted(self):
         self.manager.voice_start()

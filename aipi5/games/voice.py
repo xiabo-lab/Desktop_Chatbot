@@ -128,22 +128,63 @@ class GameVoice(Plugin):
                            "开始水果忍者"),
                 },
             ),
+            CommandSpec(
+                name="play_again",
+                description="Play the game again",
+                handler=self.again,
+                speaks=True,
+                speech={
+                    "en": "Play the fruit game again",
+                    "zh": "再玩一次体感游戏",
+                },
+                # The Play Again button, which is on the game-over screen and
+                # therefore just as unreachable as START was — the round has
+                # ended, the player is still standing where they were playing,
+                # and the only way to go again was to walk to the panel.
+                #
+                # Two more measured drops:
+                #
+                #   "replay"        0.80 vs resume["play"]            DROPPED
+                #   "restart game"  0.91 vs start_game["start game"]  DROPPED
+                #
+                # `重来` is 0.50 from reboot[`重启`], which is close enough to
+                # be worth naming and far enough to be safe: an exact 重来
+                # scores 1.00 here and 0.50 there, and an exact 重启 does the
+                # reverse. Asserted in tests/test_game_voice.py.
+                phrases={
+                    "en": ("play again", "again", "one more", "one more time",
+                           "another go", "play once more"),
+                    "zh": ("重来", "再来一次", "再玩一次", "再来", "再来一局",
+                           "重新开始"),
+                },
+            ),
         ]
 
     # ── the handler ──────────────────────────────────────────────────
 
-    def start(self) -> Result:
-        """Open a game if needed, wait for the player, start the round.
+    def again(self) -> Result:
+        """Play Again, from where the player is standing.
 
-        Every branch of this says something different out loud, because the
-        five outcomes want five different things from the person listening:
-        stand in shot, wait, stop asking, look at the screen, or nothing at
-        all.
+        The same lifecycle as `start`, with `fresh=True`: a round already in
+        progress *is* restarted here, because "again" is a deliberate word in a
+        way "start" is not. See `GameManager.voice_start`.
+        """
+        return self._begin(fresh=True)
+
+    def start(self) -> Result:
+        """Open a game if needed, wait for the player, start the round."""
+        return self._begin(fresh=False)
+
+    def _begin(self, fresh: bool) -> Result:
+        """Every branch says something different out loud.
+
+        The outcomes want different things from the person listening: stand in
+        shot, wait, stop asking, look at the screen, or nothing at all.
         """
         if self.manager is None:
             return Result.failed("Games are turned off.", "游戏功能没有开启。")
 
-        outcome, detail = self.manager.voice_start()
+        outcome, detail = self.manager.voice_start(fresh=fresh)
 
         if outcome == "started":
             # Short on purpose. This is a starting gun — it is spoken while

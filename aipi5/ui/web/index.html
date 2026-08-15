@@ -281,10 +281,36 @@
     font-size: 40px; font-weight: 600; font-variant-numeric: tabular-nums;
   }
   #game-streak { font-size: 19px; color: var(--accent-warm); min-height: 24px; }
-  #game-lives {
-    font-size: 34px; letter-spacing: 6px;
-    font-family: "Noto Color Emoji", "Noto Emoji", "Segoe UI Emoji", sans-serif;
+
+  /* The clock, where the hearts used to be. Tabular figures so the seconds
+     column does not shuffle the whole number sideways as it counts down —
+     which is distracting in the corner of an eye that is watching fruit. */
+  #game-clock {
+    font-size: 52px; font-weight: 300; font-variant-numeric: tabular-nums;
+    line-height: 1; text-align: right;
   }
+  #game-clock .unit { font-size: 20px; color: var(--ink-dim); margin-left: 6px; }
+  /* The last ten seconds. Colour first, then a pulse under five — the pulse
+     alone is easy to miss while concentrating, and colour alone does not say
+     "hurry" as loudly as movement does. */
+  #game-clock.low { color: var(--accent-warm); }
+  #game-clock.urgent { color: var(--danger); animation: clock-pulse 1s ease-in-out infinite; }
+  @keyframes clock-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.09); }
+  }
+  /* A thin bar under the clock, because a number has to be read and a bar can
+     be seen. Width is set from the script. */
+  #game-clock-bar {
+    width: 190px; height: 5px; margin-top: 8px; margin-left: auto;
+    background: var(--panel-edge); border-radius: 3px; overflow: hidden;
+  }
+  #game-clock-bar > div {
+    height: 100%; width: 100%; background: var(--accent);
+    border-radius: 3px; transition: width 0.2s linear;
+  }
+  #game-clock-bar.low > div { background: var(--accent-warm); }
+  #game-clock-bar.urgent > div { background: var(--danger); }
   /* Pause is the one thing on the HUD that is touched, so it is the one thing
      that takes pointer events back. Bottom left, away from where hands swing. */
   #game-pause {
@@ -1169,7 +1195,10 @@
           <div id="game-score">0</div>
           <div id="game-streak"></div>
         </div>
-        <div id="game-lives"></div>
+        <div>
+          <div id="game-clock">60<span class="unit">s</span></div>
+          <div id="game-clock-bar"><div></div></div>
+        </div>
       </div>
     </div>
 
@@ -4512,6 +4541,7 @@ function stopGame() {
   // it. Same trap as the camera page's.
   gameEl("game-preview").src = "";
   gameState = null;
+  resetHandTrails();
   gameId = "";
   // Fire and forget. The manager's watchdog would give the hardware back
   // anyway, but not for twenty-five seconds, and the camera page may be the
@@ -4575,7 +4605,6 @@ function applyGameState(state) {
 
   if (game) {
     gameEl("game-score").textContent = game.score;
-    gameEl("game-lives").textContent = "❤".repeat(Math.max(0, game.lives));
     gameEl("game-streak").textContent =
       game.streak >= 3 ? `${game.streak} in a row` : "";
     showSheet({ ready: "start", paused: "paused", over: "over",
@@ -4585,7 +4614,8 @@ function applyGameState(state) {
       gameEl("over-best").textContent = game.best;
       const s = game.stats || {};
       gameEl("over-detail").textContent =
-        `${s.sliced || 0} sliced · ${s.missed || 0} missed · best run ${s.best_streak || 0}`;
+        `${s.sliced || 0} sliced · ${s.missed || 0} missed · ` +
+        `${s.bombs || 0} bombs · best run ${s.best_streak || 0}`;
     }
   }
 
@@ -4597,7 +4627,12 @@ function applyGameState(state) {
     showSheet("error");
   }
 
-  for (const sound of state.sounds || []) playGameSound(sound);
+  // The streak rides along so a slice can climb in pitch through a run. Read
+  // from the same snapshot the events came in, so the note matches the number
+  // on screen rather than trailing it.
+  for (const sound of state.sounds || []) {
+    playGameSound(sound, game ? game.streak : 0);
+  }
   drawGameDebug(state);
 }
 
@@ -4638,10 +4673,54 @@ function renderGame(now) {
   const ahead = game.state === "playing"
     ? Math.min(0.2, (now - gameStateAt) / 1000) : 0;
 
+  drawClockHud(game, ahead);
   for (const item of game.fruit || []) drawFruit(ctx, item, ahead);
-  for (const slash of game.slashes || []) drawSlash(ctx, slash);
-  drawHands(ctx);
+  // The blade the *Pi* tested for collisions. Redundant with the comet tail
+  // during normal play — and worse than redundant, because these have no age
+  // and so cannot fade — so they are debug-only now, where seeing exactly what
+  // the server tested is the whole point.
+  if (gameState.debug) {
+    for (const slash of game.slashes || []) drawSlash(ctx, slash);
+  }
+  drawHands(ctx, now);
 }
+
+// The countdown, extrapolated between snapshots for the same reason the fruit
+// are: state arrives ~30 times a second and a clock that steps twice per
+// second reads as a stopwatch that is broken. `ahead` is zero unless the round
+// is actually running, so a paused clock is frozen rather than draining under
+// the pause sheet.
+function drawClockHud(game, ahead) {
+  const left = Math.max(0, (game.time_left || 0) - ahead);
+  const clock = gameEl("game-clock");
+  const bar = gameEl("game-clock-bar");
+
+  // Rounded up, so the clock shows "1" for the whole of the last second and
+  // hits zero exactly when the round does. Rounding down shows 0 for a full
+  // second while fruit are still live, which looks like the game overran.
+  clock.firstChild.nodeValue = String(Math.ceil(left));
+
+  const urgent = left <= 5, low = left <= 10;
+  clock.classList.toggle("low", low && !urgent);
+  clock.classList.toggle("urgent", urgent);
+  bar.classList.toggle("low", low && !urgent);
+  bar.classList.toggle("urgent", urgent);
+  bar.firstElementChild.style.width =
+    (100 * left / (game.duration || 60)).toFixed(1) + "%";
+
+  // One tick per second through the last five. Driven off the displayed
+  // second rather than a timer, so it cannot drift away from the number the
+  // player is reading, and it stays silent while paused because `ahead` is
+  // zero and the value simply stops changing.
+  const second = Math.ceil(left);
+  if (game.state === "playing" && second !== lastClockSecond) {
+    if (second > 0 && second <= 5) playGameSound("tick");
+    lastClockSecond = second;
+  } else if (game.state !== "playing") {
+    lastClockSecond = -1;
+  }
+}
+let lastClockSecond = -1;
 
 function drawFruit(ctx, item, ahead) {
   // Extrapolated with the same closed form the Pi integrates, so the drawn
@@ -4694,11 +4773,10 @@ function drawFruit(ctx, item, ahead) {
 }
 
 function drawSlash(ctx, slash) {
-  // Not faded by age. The obvious thing — fade over the slash's lifetime —
-  // needs the slash's `at` and the current time on *the same clock*, and they
-  // are not: `at` is the Pi's `time.monotonic()` and this page has only
-  // `performance.now()`. Subtracting one from the other gives nonsense. The
-  // server already keeps only the last few, so they age out by being dropped.
+  // Debug only — see the call site. Not faded by age, because the fade needs
+  // the slash's `at` and the current time on *the same clock*, and they are
+  // not: `at` is the Pi's `time.monotonic()` and this page has only
+  // `performance.now()`. Subtracting one from the other gives nonsense.
   ctx.save();
   ctx.strokeStyle = "rgba(255,255,255,0.55)";
   ctx.lineWidth = 5;
@@ -4710,43 +4788,151 @@ function drawSlash(ctx, slash) {
   ctx.restore();
 }
 
-function drawHands(ctx) {
+// ── the hands ───────────────────────────────────────────────────────
+//
+// Three times the size they were, and with a comet tail. Both because of where
+// the player is standing: a metre and a half back is far enough that a 9 px
+// dot and a one-frame line are genuinely hard to see, and a blade you cannot
+// see is a blade you cannot aim.
+//
+// The tail is kept here rather than sent by the Pi. It is pure decoration —
+// collision has already been decided against the segment in the snapshot — and
+// a second of history at 60 fps is sixty points per hand that would otherwise
+// be serialised thirty times a second to draw something the browser already
+// knows.
+
+const HAND_COLOURS = { left_wrist: "#4da3ff", right_wrist: "#ffb454" };
+//: How long a point stays in the tail. Long enough to read as a streak
+//: behind a fast hand, short enough that a slow one does not trail spaghetti.
+const TRAIL_MS = 260;
+//: Points kept per hand. A ceiling rather than a target — at 60 fps the age
+//: limit above is what usually decides, and this is what stops a stalled
+//: frame from letting the array grow.
+const TRAIL_MAX = 48;
+//: Radius of the outer glow. 3x the 34 px it was.
+const HAND_GLOW = 46;
+const HAND_CORE = 15;
+
+const handTrails = { left_wrist: [], right_wrist: [] };
+
+function resetHandTrails() {
+  handTrails.left_wrist = [];
+  handTrails.right_wrist = [];
+}
+
+function drawHands(ctx, now) {
   const pose = gameState && gameState.pose;
-  if (!pose || !pose.player || !pose.player.present) return;
+  const player = pose && pose.player;
 
-  // Section 23: a subtle indicator per hand, never the whole skeleton. The
-  // skeleton is debug-only and is drawn by `drawGameDebug`.
-  for (const [key, colour] of [["left_wrist", "#4da3ff"],
-                               ["right_wrist", "#ffb454"]]) {
-    const hand = pose.player[key];
-    if (!hand || !hand.live) continue;
-    const x = hand.x * GAME_W, y = hand.y * GAME_H;
+  for (const key of ["left_wrist", "right_wrist"]) {
+    const colour = HAND_COLOURS[key];
+    const hand = player && player.present ? player[key] : null;
+    const trail = handTrails[key];
 
-    ctx.save();
-    const glow = ctx.createRadialGradient(x, y, 0, x, y, 34);
-    glow.addColorStop(0, colour + "cc");
-    glow.addColorStop(1, colour + "00");
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(x, y, 34, 0, Math.PI * 2);
-    ctx.fill();
+    // A hand that has gone still leaves its tail to fade rather than deleting
+    // it — a blade that vanishes the instant the model loses a wrist for one
+    // frame flickers badly, and the fade covers exactly that.
+    if (hand && hand.live) {
+      const x = hand.x * GAME_W, y = hand.y * GAME_H;
+      // `new` is the first frame back after the hand was lost. Its previous
+      // position is meaningless, so the tail starts again rather than drawing
+      // a streak across the screen from wherever the hand vanished.
+      if (hand.new) trail.length = 0;
+      trail.push({ x, y, t: now });
+      if (trail.length > TRAIL_MAX) trail.splice(0, trail.length - TRAIL_MAX);
+    }
 
-    ctx.beginPath();
-    ctx.arc(x, y, 9, 0, Math.PI * 2);
-    ctx.fillStyle = colour;
-    ctx.fill();
+    while (trail.length && now - trail[0].t > TRAIL_MS) trail.shift();
+    if (!trail.length) continue;
 
-    // The trail is the same segment the Pi tested for collisions, so what the
-    // player sees is literally what was used to decide the hit.
-    ctx.beginPath();
-    ctx.moveTo(hand.px * GAME_W, hand.py * GAME_H);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = colour + "88";
-    ctx.lineWidth = 6;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    ctx.restore();
+    drawTrail(ctx, trail, colour, now);
+
+    if (hand && hand.live) {
+      drawHandMarker(ctx, trail[trail.length - 1], colour);
+    }
   }
+}
+
+// The shooting star. Drawn as a run of tapered segments rather than one
+// stroked polyline, because the width has to fall off along the tail and a
+// single `lineWidth` cannot do that — the head is a blade and the far end is
+// a wisp.
+function drawTrail(ctx, trail, colour, now) {
+  ctx.save();
+  // `lighter` is what makes the overlaps at the head glow instead of just
+  // stacking opacity, which is most of what reads as "hot" about a comet.
+  ctx.globalCompositeOperation = "lighter";
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  for (let i = 1; i < trail.length; i++) {
+    const a = trail[i - 1], b = trail[i];
+    // Age of the *older* end, so a segment fades as a unit.
+    const life = 1 - Math.min(1, (now - a.t) / TRAIL_MS);
+    if (life <= 0) continue;
+
+    // Squared, so the tail thins fast near the end and stays broad near the
+    // head. Linear looked like a wedge rather than a streak.
+    const width = 2 + 16 * life * life;
+    ctx.strokeStyle = colour + alphaHex(0.55 * life);
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+
+  // A brighter, thinner core down the same path — the white-hot centre of the
+  // streak. Cheap: the same points, half the width.
+  ctx.strokeStyle = "#ffffff";
+  for (let i = 1; i < trail.length; i++) {
+    const a = trail[i - 1], b = trail[i];
+    const life = 1 - Math.min(1, (now - a.t) / TRAIL_MS);
+    if (life <= 0.35) continue;
+    ctx.globalAlpha = 0.5 * (life - 0.35) / 0.65;
+    ctx.lineWidth = 1 + 4 * life * life;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawHandMarker(ctx, point, colour) {
+  const { x, y } = point;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+
+  const glow = ctx.createRadialGradient(x, y, 0, x, y, HAND_GLOW);
+  glow.addColorStop(0, colour + "e0");
+  glow.addColorStop(0.45, colour + "55");
+  glow.addColorStop(1, colour + "00");
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(x, y, HAND_GLOW, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(x, y, HAND_CORE, 0, Math.PI * 2);
+  ctx.fillStyle = colour;
+  ctx.fill();
+
+  // A white centre, so the marker reads against a bright fruit as well as
+  // against the dark background.
+  ctx.beginPath();
+  ctx.arc(x, y, HAND_CORE * 0.42, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+  ctx.restore();
+}
+
+//: 0-1 alpha as the two hex digits a `#rrggbb` string needs to become
+//: `#rrggbbaa`. Canvas takes the 8-digit form, and building it this way keeps
+//: one colour constant per hand instead of a colour and a matching rgba().
+function alphaHex(alpha) {
+  const value = Math.round(Math.min(1, Math.max(0, alpha)) * 255);
+  return value.toString(16).padStart(2, "0");
 }
 
 // ── section 45's debug overlay ──────────────────────────────────────
@@ -4779,32 +4965,126 @@ function drawGameDebug(state) {
 // master volume as everything else. Nothing here touches a device directly,
 // so nothing here can break TTS, Kodama or a call.
 
-function playGameSound(name) {
+// The context, built on demand and kept. Chromium is launched with
+// `--autoplay-policy=no-user-gesture-required` (see scripts/aipi5-ui.sh) —
+// without it this starts suspended on a kiosk page nobody has touched, and
+// every sound below is synthesised and silently discarded. The `resume()` is
+// kept anyway as a belt for a browser started without the flag, where a touch
+// will then unlock it.
+function gameAudio() {
+  if (!gameSounds) {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) return null;
+    gameSounds = new Ctor();
+  }
+  if (gameSounds.state === "suspended") gameSounds.resume();
+  return gameSounds;
+}
+
+// A slice is not a beep. What it has to sound like is a blade passing through
+// something wet: a fast noise sweep for the cut, and a short pitched body
+// under it so it lands rather than hisses. Two voices, both a few lines, and
+// no audio files to license or ship — section 10 solved by not having the
+// problem.
+function sliceNoise(ctx, at, gainValue) {
+  // A quarter second of white noise, band-passed and swept downwards. The
+  // sweep is what makes it read as a *pass* rather than a burst.
+  const seconds = 0.16;
+  const frames = Math.floor(ctx.sampleRate * seconds);
+  const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < frames; i++) {
+    // Shaped as it is generated: an instant attack and an exponential decay,
+    // so the transient is at the very front where a cut's is.
+    data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / frames, 2.5);
+  }
+
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = "bandpass";
+  filter.Q.value = 1.1;
+  filter.frequency.setValueAtTime(5200, at);
+  filter.frequency.exponentialRampToValueAtTime(900, at + seconds);
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(gainValue, at);
+  gain.gain.exponentialRampToValueAtTime(0.0001, at + seconds);
+
+  source.connect(filter).connect(gain).connect(ctx.destination);
+  source.start(at);
+  source.stop(at + seconds + 0.02);
+}
+
+function tone(ctx, at, spec) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  const seconds = spec.ms / 1000;
+  osc.type = spec.type || "sine";
+  osc.frequency.setValueAtTime(spec.freq, at);
+  if (spec.to && spec.to !== spec.freq) {
+    osc.frequency.exponentialRampToValueAtTime(spec.to, at + seconds);
+  }
+  // A short attack rather than a step. Starting a gain at full value clicks,
+  // and on a slice that fires several times a second the clicks are the part
+  // you notice.
+  gain.gain.setValueAtTime(0.0001, at);
+  gain.gain.exponentialRampToValueAtTime(spec.gain, at + 0.008);
+  gain.gain.exponentialRampToValueAtTime(0.0001, at + seconds);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(at);
+  osc.stop(at + seconds + 0.02);
+}
+
+function playGameSound(name, detail) {
   try {
-    if (!gameSounds) gameSounds = new (window.AudioContext || window.webkitAudioContext)();
-    const ctx = gameSounds;
-    if (ctx.state === "suspended") ctx.resume();
+    const ctx = gameAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    if (name === "slice") {
+      sliceNoise(ctx, now, 0.28);
+      // The pitched body. Rises with the streak — capped — so a good run
+      // audibly climbs. This is the one place the game rewards a combo with
+      // something other than a number, and it is what makes a long streak feel
+      // like one.
+      const step = Math.min(8, Math.max(0, (detail | 0) - 1));
+      tone(ctx, now, { freq: 420 * Math.pow(1.06, step), to: 190,
+                       ms: 130, type: "triangle", gain: 0.17 });
+      return;
+    }
+
+    if (name === "bomb") {
+      // Noise for the crack, a low falling tone for the weight of it, and a
+      // deliberately longer tail than anything else in the game — a bomb costs
+      // five seconds and should sound like it cost something.
+      sliceNoise(ctx, now, 0.34);
+      tone(ctx, now, { freq: 190, to: 32, ms: 620, type: "sawtooth", gain: 0.26 });
+      tone(ctx, now + 0.02, { freq: 96, to: 24, ms: 700, type: "sine", gain: 0.22 });
+      return;
+    }
+
+    if (name === "game-over") {
+      // Three falling notes, spaced. The only sound here that is a phrase
+      // rather than an event, because it is the only one that is an ending.
+      const notes = [523.25, 392.0, 261.63];
+      notes.forEach((freq, i) => {
+        tone(ctx, now + i * 0.16,
+             { freq, to: freq, ms: 260, type: "triangle", gain: 0.2 });
+      });
+      return;
+    }
 
     const spec = {
-      slice: { freq: 880, to: 1600, ms: 90, type: "triangle", gain: 0.16 },
-      miss: { freq: 300, to: 160, ms: 200, type: "sine", gain: 0.12 },
-      bomb: { freq: 140, to: 40, ms: 420, type: "sawtooth", gain: 0.2 },
-      "game-over": { freq: 420, to: 120, ms: 700, type: "sine", gain: 0.18 },
+      miss: { freq: 300, to: 150, ms: 190, type: "sine", gain: 0.1 },
       button: { freq: 660, to: 660, ms: 60, type: "square", gain: 0.1 },
+      // The last five seconds, one per second. Deliberately thin and high so
+      // it sits above the slicing rather than competing with it.
+      tick: { freq: 1500, to: 1500, ms: 55, type: "sine", gain: 0.09 },
+      start: { freq: 520, to: 780, ms: 180, type: "triangle", gain: 0.16 },
     }[name];
-    if (!spec) return;
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    const now = ctx.currentTime;
-    osc.type = spec.type;
-    osc.frequency.setValueAtTime(spec.freq, now);
-    osc.frequency.exponentialRampToValueAtTime(spec.to, now + spec.ms / 1000);
-    gain.gain.setValueAtTime(spec.gain, now);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + spec.ms / 1000);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + spec.ms / 1000 + 0.02);
+    if (spec) tone(ctx, now, spec);
   } catch (err) {
     // A device with no audio output is a quiet game, not a broken one.
   }
@@ -4814,6 +5094,10 @@ function playGameSound(name) {
 
 function gameCommand(action) {
   playGameSound("button");
+  // A new round must not inherit the last one's comet tail, or the first
+  // frame draws a streak from wherever the player's hands were when the
+  // previous round ended.
+  if (action === "start" || action === "restart") resetHandTrails();
   return gamePost("/api/game/command", { action });
 }
 

@@ -71,6 +71,7 @@ from aipi5.call.server import CallServer
 from aipi5.call.signaling import SignalingHub
 from aipi5.call.tokens import TrustedDevices
 from aipi5.core import config as config_mod
+from aipi5.core import earcon
 from aipi5.core import preflight
 from aipi5.core.audio_priority import AudioPriority
 from aipi5.core.housekeeping import Housekeeping
@@ -346,6 +347,13 @@ class Assistant:
         self.speaker.warm()
 
         self.detector_wake = wake_mod.build(self.aia.wake, self.aia.audio)
+
+        # Built now rather than on the first wake word. The waveform costs a
+        # few milliseconds to generate and the whole point of it is to be
+        # immediate, so paying that on the first utterance would put the cost
+        # exactly where it is least wanted.
+        if self.settings.assistant.wake_chime:
+            earcon.warm()
 
         if self.settings.camera.enabled:
             self.camera.open()
@@ -1017,6 +1025,23 @@ def main() -> int:
 
                 turn = machine.begin_turn()
                 machine.to(State.LISTENING)
+
+                # "I heard you", out loud, before anything slower happens.
+                #
+                # Until this existed the only acknowledgement was a line on the
+                # screen, which is no use to somebody across the room, outside
+                # the camera's view, or standing back from the panel with their
+                # hands up playing a motion game. Without it the only way to
+                # find out whether the wake word fired is to say the whole
+                # command and see — and when it did not, people say the wake
+                # word again over the turn that did start.
+                #
+                # Non-blocking, and placed before the duck rather than after,
+                # because ducking shells out to playerctl and can take a
+                # noticeable moment. The acknowledgement has to be immediate or
+                # it is not an acknowledgement.
+                if assistant.settings.assistant.wake_chime:
+                    earcon.play()
 
                 # `talk` opens the conversation page and then behaves exactly
                 # like the wake word: it wants the microphone, so it falls

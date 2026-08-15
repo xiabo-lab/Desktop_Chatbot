@@ -181,26 +181,47 @@ class Fruit:
 class Spawner:
     """Decides when to throw something, and what.
 
-    Difficulty is a function of score and nothing else — not of time, and not
-    of lives. Score is what the player is being rewarded for and it is the only
-    signal here that means "this person is doing well"; ramping on elapsed time
-    instead punishes somebody who is struggling by speeding up while they miss.
+    **Difficulty ramps on seconds elapsed, not on score.** It used to be score,
+    and the reasoning was that score means "this person is doing well" while
+    time punishes somebody who is struggling. That reasoning belonged to a game
+    with lives, where a bad run ended early; in a fixed minute it is wrong in
+    both directions. Ramping on score gives the best player the busiest screen
+    and leaves a beginner throwing one fruit at a time for a whole minute, and
+    it makes two rounds incomparable — the same minute is a different game
+    depending on how it went, so the high score measures the ramp as much as
+    the player.
+
+    On the clock, every round is the same shape: quiet enough at the start to
+    find your hands, and thick enough at the end that the last fifteen seconds
+    are where a score is really made.
     """
 
-    #: Seconds between throws at the start, and the floor it ramps down to.
+    #: Seconds between throws at the start of a round, and the floor it ramps
+    #: down to by the end. The floor is a third of the opening interval, so the
+    #: closing stretch throws roughly three times as much fruit.
     interval: float = 1.15
-    floor: float = 0.42
-    #: Score at which the floor is reached.
-    ramp_over: int = 900
+    floor: float = 0.38
+    #: Seconds of play by which the floor is reached. Slightly less than a
+    #: round, so the last stretch is spent at full tilt rather than still
+    #: accelerating when the whistle goes.
+    ramp_over: float = 45.0
     #: Chance a given throw is a bomb, once bombs start appearing.
     bomb_chance: float = 0.14
-    #: No bombs until this score, so the first half-minute teaches the game
-    #: before it starts punishing. Section 26: bombs must not hold up the
-    #: basic thing working.
-    bomb_after: int = 120
-    #: Chance of throwing two at once, once the player is going well.
-    double_after: int = 400
-    double_chance: float = 0.3
+    #: No bombs for the opening seconds, so the round teaches the game before
+    #: it starts punishing. Section 26: bombs must not hold up the basic thing
+    #: working.
+    bomb_after: float = 10.0
+    #: After this many seconds, throws sometimes come in pairs — and later, in
+    #: threes. This is most of what "more fruit as time goes by" feels like:
+    #: a shorter gap alone reads as a faster metronome, while two at once reads
+    #: as the game getting harder.
+    double_after: float = 15.0
+    double_chance: float = 0.34
+    triple_after: float = 35.0
+    triple_chance: float = 0.22
+    #: No new fruit in the last moment of a round — see `Session.tick`. A fruit
+    #: launched with less than this left cannot be reached before the whistle.
+    dead_air: float = 1.4
 
     _next_at: float = 0.0
     _counter: int = field(default=0, repr=False)
@@ -210,8 +231,12 @@ class Spawner:
         """Make a session reproducible. Used by the tests, never in play."""
         self._random = random.Random(value)
 
-    def due(self, now: float, score: int) -> list[Fruit]:
-        """Whatever should be thrown at `now`. Usually nothing."""
+    def due(self, now: float, elapsed: float) -> list[Fruit]:
+        """Whatever should be thrown at `now`. Usually nothing.
+
+        `elapsed` is seconds of *play* — `Session.elapsed`, which excludes
+        paused time and includes the seconds a bomb took away.
+        """
         if self._next_at == 0.0:
             # First call. A short delay so the game does not open with a fruit
             # already halfway up the screen before the player has looked up.
@@ -220,21 +245,24 @@ class Spawner:
         if now < self._next_at:
             return []
 
-        progress = min(1.0, max(0, score) / self.ramp_over)
+        progress = min(1.0, max(0.0, elapsed) / self.ramp_over)
         gap = self.interval + (self.floor - self.interval) * progress
         self._next_at = now + gap
 
-        thrown = [self._make(score)]
-        if (score >= self.double_after
+        thrown = [self._make(elapsed)]
+        if (elapsed >= self.double_after
                 and self._random.random() < self.double_chance):
-            thrown.append(self._make(score))
+            thrown.append(self._make(elapsed))
+        if (elapsed >= self.triple_after
+                and self._random.random() < self.triple_chance):
+            thrown.append(self._make(elapsed))
         return thrown
 
-    def _make(self, score: int) -> Fruit:
+    def _make(self, elapsed: float) -> Fruit:
         self._counter += 1
         rng = self._random
 
-        bomb = (score >= self.bomb_after and rng.random() < self.bomb_chance)
+        bomb = (elapsed >= self.bomb_after and rng.random() < self.bomb_chance)
         kind = BOMB if bomb else rng.choice(KINDS)
 
         x = rng.uniform(SPAWN_MARGIN, WIDTH - SPAWN_MARGIN)
