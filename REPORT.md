@@ -2058,3 +2058,13 @@ accelerator still took only 31.5 ms per frame. That is the dim-room behaviour
 of section 14, not the buffer fault of section 29.2: the earlier 15 fps came
 with a 25 ms exposure that could have carried 40. Playable, but the 30 fps in
 section 29.3 is a daylight number.
+
+One thing that looks like a leak and is not: opening a game from the shell
+makes the **kiosk** adopt it, and the kiosk's event stream calls
+`status(seen=True)` about thirty times a second, which keeps `_last_seen` fresh
+— so the 25 s idle watchdog never fires and the Brio stays lent indefinitely.
+That is correct behaviour (a game visibly on screen must not have its camera
+taken away) and it is also the clearest proof the navigation works: verified on
+the panel with `grim`, which showed the start screen, the live preview and a
+correctly disabled START, none of which anything local had asked for. `POST
+/api/game/close` when finished testing.
