@@ -185,8 +185,14 @@ class TestWhatThePageNeeds(unittest.TestCase):
         now = time.localtime()
         stamp = "%04d-%02d-%02dT%02d:00" % (now.tm_year, now.tm_mon,
                                             now.tm_mday, now.tm_hour)
-        earlier = "%04d-%02d-%02dT%02d:00" % (now.tm_year, now.tm_mon,
-                                              now.tm_mday, max(0, now.tm_hour - 3))
+        # Genuinely three hours ago, across midnight. `max(0, hour - 3)` looks
+        # like it guards the subtraction and instead makes `earlier` *equal to*
+        # `stamp` for the whole of 00:00-02:59 — at which point `upcoming()`
+        # correctly returns both entries and the assertion below fails for
+        # three hours every night. Found at ten past midnight.
+        from datetime import datetime, timedelta
+        past = datetime(*now[:6]) - timedelta(hours=3)
+        earlier = past.strftime("%Y-%m-%dT%H:00")
         weather = Weather(
             place="here",
             now=Conditions(60, 60, 50, 5, 0, True, "F"),
