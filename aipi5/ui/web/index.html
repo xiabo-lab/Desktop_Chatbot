@@ -1809,6 +1809,7 @@ function applyState(state) {
 
   cameraAnswerFromState(state, assistant);
   callFromState(state);
+  gameFromState(state);
   shutdownFromState(state);
   filesFromState(state);
   lastAssistantState = assistant;
@@ -4380,6 +4381,8 @@ let gameFrame = null;               // requestAnimationFrame handle
 let gameId = "";                    // which game is open
 let gameSounds = null;              // lazily built AudioContext
 let gameFps = 0;
+let gameOpening = false;            // an /api/game/open is in flight
+let gameNames = {};                 // id -> display name, from the catalogue
 
 function gameEl(id) { return document.getElementById(id); }
 
@@ -4392,6 +4395,10 @@ async function startLibrary() {
     const data = await response.json();
     grid.innerHTML = "";
     for (const game of data.games || []) {
+      // Remembered so a game adopted from the state poll — started by voice,
+      // or already running when this page loaded — can show its real name
+      // rather than a hardcoded guess.
+      gameNames[game.id] = game.name;
       const tile = document.createElement("button");
       tile.className = "game-tile" + (game.playable ? "" : " soon");
       const best = game.playable && game.best
@@ -4417,6 +4424,7 @@ function stopLibrary() { /* nothing held open */ }
 
 async function openGame(id, name) {
   gameId = id;
+  gameOpening = true;
   gameEl("start-title").textContent = name;
   showSheet("start");
   gameEl("game-preview").src = "";
@@ -4425,6 +4433,7 @@ async function openGame(id, name) {
   show("game");
 
   const answer = await gamePost("/api/game/open", { game: id });
+  gameOpening = false;
   if (!answer.ok) {
     // Section 41. The two failures want different words, and the only honest
     // way to tell them apart is what the Pi said — the camera message names
@@ -4445,6 +4454,54 @@ async function openGame(id, name) {
   gameEl("game-preview").src = "/api/game/preview?t=" + Date.now();
   openGameStream();
   startGameRender();
+}
+
+// A game the Pi has open that this page knows nothing about — started by
+// voice, or running when the page was reloaded. Adopt it rather than sitting
+// on the home screen while a game plays behind it.
+//
+// The same shape as `callFromState`'s adoption of a call in progress, and for
+// the same reason: the Pi's state machine is the real one and the screen
+// follows it.
+function adoptGame(id) {
+  gameId = id;
+  gameEl("game-preview").src = "/api/game/preview?t=" + Date.now();
+  show("game");
+  openGameStream();
+  startGameRender();
+
+  // The title, which may not be known yet: a game started by voice from the
+  // home screen never opened the library, so nothing has read the catalogue.
+  // Filled in behind the game rather than blocking on it — the round is
+  // already running and a heading is not worth a round trip in front of it.
+  if (gameNames[id]) {
+    gameEl("start-title").textContent = gameNames[id];
+    return;
+  }
+  fetch("/api/games").then((r) => r.json()).then((data) => {
+    for (const game of data.games || []) gameNames[game.id] = game.name;
+    if (gameNames[id]) gameEl("start-title").textContent = gameNames[id];
+  }).catch(() => {});
+}
+
+// Voice can start a game from any page at all — the whole reason the spoken
+// command exists is that the player is standing too far back to navigate — so
+// the screen has to follow the Pi rather than only its own buttons.
+function gameFromState(state) {
+  const game = state.game;
+  if (game && game.active) {
+    if (currentPage !== "game") adoptGame(game.active);
+    return;
+  }
+  // The Pi has no game open. Leave the game page rather than drawing a frozen
+  // board — the watchdog gave the camera back, or something else closed it.
+  //
+  // `gameOpening` is what stops this from firing during the second `openGame`
+  // spends waiting for the camera and the HEF: that function shows the page
+  // before the POST returns, so without the guard the very next poll sees an
+  // empty `game` on a page that is already `game`, and throws the player back
+  // to the library a moment before their game starts.
+  if (currentPage === "game" && gameId && !gameOpening) show("games");
 }
 
 function stopGame() {

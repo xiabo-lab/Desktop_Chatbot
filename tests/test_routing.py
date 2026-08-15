@@ -31,6 +31,7 @@ from aia.plugins.system import System
 from aia.router.fast import FastRouter, normalise, similarity
 
 from aipi5.core.config import KodamaLaunchConfig
+from aipi5.games.voice import GameVoice
 from aipi5.kodama.launcher import KodamaLauncher
 
 
@@ -48,8 +49,18 @@ class StubPlayer(Plugin):
 
 
 def build_router() -> FastRouter:
+    """The registry the assistant actually builds — see `main.py`.
+
+    `GameVoice` is in here because it is in production, and the whole point of
+    this file is that adding to a fuzzy phrase matcher breaks neighbours. A
+    router assembled from three of the four plugins would pass this suite while
+    the device failed it. Its own phrase measurements are in
+    `tests/test_game_voice.py`; what it must not do to *these* commands is
+    checked below with everything else.
+    """
     launcher = KodamaLauncher(KodamaLaunchConfig(), StubPlayer())
-    registry = Registry([KodamaLite(), System(), launcher])
+    registry = Registry([KodamaLite(), System(), launcher,
+                         GameVoice(lambda: None)])
     return FastRouter(registry, wake_words=CONFIG.wake.variants)
 
 

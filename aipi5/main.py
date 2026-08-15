@@ -78,6 +78,7 @@ from aipi5.core.presence import Presence, PresenceTracker, ScreensaverPolicy
 from aipi5.core.shutdown import ShutdownCountdown, countdown_and_run
 from aipi5.files import FileStore, human_size
 from aipi5.games.manager import GameManager
+from aipi5.games.voice import GameVoice
 from aipi5.kodama.launcher import KodamaLauncher
 from aipi5.llm import prompts
 from aipi5.llm.client import OpenAIClient
@@ -200,12 +201,28 @@ class Assistant:
         self.audio = AudioPriority(self.ducker)
         self.machine = Machine(self.aia.target_latency_ms)
 
-        # ── the command set: AIA's, plus one launcher ────────────────
+        # ── the command set: AIA's, plus a launcher and the games ────
         self.player = KodamaLite()
         self.launcher = KodamaLauncher(settings.kodama, self.player)
         plugins = [self.player, System()]
         if settings.kodama.enabled:
             plugins.append(self.launcher)
+        if settings.games.enabled:
+            # `lambda: self.games` rather than the manager itself, because the
+            # manager needs a camera, a ducker and a screensaver manager and
+            # none of the three exist yet — the command set is built first so
+            # that the toolbox below can have the registry. Late binding here
+            # is a smaller change than reordering four blocks of a startup
+            # sequence that works.
+            #
+            # This is the command that makes the game playable at all: the
+            # player has to stand out of arm's reach for the camera to see
+            # them, so START is a button only somebody in the wrong place can
+            # press. See `aipi5/games/voice.py`.
+            # `getattr` rather than `self.games`, because `Registry` asks each
+            # plugin for its commands as it is built and that happens before
+            # the attribute exists.
+            plugins.append(GameVoice(lambda: getattr(self, "games", None)))
         self.registry = Registry(plugins)
         self.router = FastRouter(self.registry, wake_words=self.aia.wake.variants)
 
@@ -659,6 +676,14 @@ class Assistant:
             kodama_running=self.player.available(),
             degraded=self.report.degraded if self.report else [],
             call=self._call_snapshot(),
+            # Two fields, so a page that is *not* on the game can notice that
+            # it should be — the same job `call` does when the phone rings,
+            # and needed for the same reason: a game started by voice has to
+            # bring the screen with it, because the person who started it is
+            # standing too far away to navigate there. Everything else about a
+            # game goes over `/api/game/stream`, which only the game page
+            # opens; this poll runs twice a second on every page.
+            game=self.games.brief() if self.games else None,
             # None almost always, and the one moment it is not is the only
             # moment the screen may stop the device powering off.
             shutdown=self.countdown.payload(),

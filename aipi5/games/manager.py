@@ -57,6 +57,22 @@ CATALOGUE: tuple[dict, ...] = (
 #: a closed browser does not hold the camera through the evening.
 IDLE_TIMEOUT_S = 25.0
 
+#: How long `voice_start` waits for the camera to find the player before giving
+#: up. This is the whole reason the voice command exists, so refusing instantly
+#: would defeat it: somebody who has just said "start game" is by definition
+#: standing in front of the camera, but the pose service may have been running
+#: for a fraction of a second when the utterance finishes — opening a game
+#: costs about 1.5 s for the camera and the HEF, and the model then needs a
+#: frame or two to see anybody.
+#:
+#: Four seconds because the wait only begins *after* `open()` has returned, so
+#: it is bounded against detection rather than against startup, and because it
+#: blocks the voice loop — see `voice_start`.
+PLAYER_WAIT_S = 4.0
+
+#: How often to look, while waiting. Two pose frames at 30 fps.
+PLAYER_POLL_S = 0.066
+
 #: How often the watchdog looks.
 WATCHDOG_S = 5.0
 
@@ -256,6 +272,15 @@ class GameManager:
             if action in ("start", "restart"):
                 if not self._ready_to_start() and action == "start":
                     raise GameError("no player is in front of the camera")
+                # Bank the finished round before `start` zeroes it. The pose
+                # loop records a game over on the frame it happens, so this is
+                # normally redundant — but "normally" depends on a pose frame
+                # having arrived between the last life being lost and Play
+                # Again being pressed, and there is no rule that says one has.
+                # A high score that survives only if the timing is right is a
+                # high score somebody will one day watch disappear.
+                if session.state is State.OVER and session.score:
+                    self.scores.record(self.active, session.score)
                 session.start(now)
                 log.info("Game: round started")
             elif action == "pause":
@@ -278,6 +303,115 @@ class GameManager:
             return False
         snapshot = pose.snapshot()
         return bool(snapshot and snapshot.ready)
+
+    # ── starting by voice ────────────────────────────────────────────
+    #
+    # The touchscreen is the wrong input for this game and always was: the
+    # player has to stand far enough back for the camera to see their whole
+    # upper body, which is well out of arm's reach of a 1280x800 panel. So
+    # START is reachable by touch only for somebody who then has to walk
+    # backwards into shot before the first fruit arrives.
+    #
+    # This is the same lifecycle as the buttons — `open` then `command` — with
+    # two differences that only matter because nobody is standing at the
+    # screen: the game is opened if it is not already, and the player-detected
+    # check *waits* instead of refusing.
+
+    def default_game(self) -> str:
+        """The game a bare "start game" means: the first playable one."""
+        with self._lock:
+            if self.active:
+                return self.active
+        return next((g["id"] for g in CATALOGUE if g["playable"]), "")
+
+    @staticmethod
+    def name_of(game_id: str) -> str:
+        entry = next((g for g in CATALOGUE if g["id"] == game_id), None)
+        return entry["name"] if entry else game_id
+
+    def wait_for_player(self, timeout: float = PLAYER_WAIT_S) -> bool:
+        """Block until the camera can see somebody, or `timeout` passes.
+
+        Polled rather than driven by a condition variable set from the pose
+        thread, and deliberately: the pose loop's one job is to keep up with
+        the camera, and putting a notify on its critical path to save a few
+        microseconds of polling here would be the wrong trade in the wrong
+        place. Two pose frames per poll is cheap and the wait is bounded.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            if self._ready_to_start():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(PLAYER_POLL_S)
+
+    def voice_start(self, game_id: str = "",
+                    timeout: float = PLAYER_WAIT_S) -> tuple[str, str]:
+        """Start a game because somebody asked out loud.
+
+        Returns `(outcome, detail)` rather than speech, so that what happens
+        and what is said about it stay separate — the phrasing is the voice
+        plugin's business and the two languages live there. Outcomes:
+
+            started         a round is now running
+            resumed         a paused round was resumed
+            already         a round was already in progress; nothing changed
+            no-player       the game is open but the camera cannot see anybody
+            unavailable     the camera or the accelerator refused; detail says
+            no-games        nothing playable is configured
+
+        **Blocks for up to `timeout` plus however long opening takes**, on the
+        voice loop's thread. That is the same trade `KodamaLauncher.open` makes
+        for the same reason: the alternative is answering "starting" before
+        anything has, and then failing silently where nobody is standing close
+        enough to read the screen.
+        """
+        target = game_id or self.default_game()
+        if not target:
+            return ("no-games", "")
+
+        try:
+            # Idempotent when the game is already open, which is the common
+            # case — somebody walked to the screen, tapped Fruit Ninja, and
+            # walked back into shot.
+            self.open(target)
+        except GameError as exc:
+            return ("unavailable", str(exc))
+
+        name = self.name_of(target)
+
+        with self._lock:
+            session = self.session
+            state = session.state if session is not None else None
+
+        # A round already under way is not restarted. Somebody mid-game saying
+        # "start game" has not asked to throw their score away, and doing it
+        # would be the most annoying possible reading of an ambiguous phrase.
+        if state is State.PLAYING:
+            return ("already", name)
+
+        if state is State.PAUSED:
+            try:
+                self.command("resume")
+            except GameError as exc:
+                return ("unavailable", str(exc))
+            return ("resumed", name)
+
+        if not self.wait_for_player(timeout):
+            return ("no-player", name)
+
+        # `restart` rather than `start` after a game over: same thing, except
+        # that it is the verb `Session` uses for Play Again, and it skips the
+        # player check that `wait_for_player` has just satisfied. For a fresh
+        # session the two are identical — `Session.start` resets either way.
+        try:
+            self.command("restart" if state is State.OVER else "start")
+        except GameError:
+            # The player stepped out between the wait and the command. Rare,
+            # and reported honestly rather than retried into a loop.
+            return ("no-player", name)
+        return ("started", name)
 
     def _on_pose_frame(self, snapshot, frame) -> None:
         """Called from the pose thread, once per frame. Must not block.
@@ -335,6 +469,23 @@ class GameManager:
                     last = pose.last_frame()
                     payload["skeleton"] = last.as_dict() if last else None
             return payload
+
+    def brief(self) -> dict | None:
+        """The two fields `/api/state` carries, or None when nothing is open.
+
+        Deliberately tiny. `/api/state` is polled twice a second by the page
+        at all times, on every page, and the whole game snapshot — every fruit
+        in flight, every slash — belongs on `/api/game/stream`, which only the
+        game page opens. What the poll needs to carry is just enough for a
+        page that is *not* on the game to notice that it should be: the same
+        job `call` does when the phone rings.
+        """
+        with self._lock:
+            if not self.active:
+                return None
+            session = self.session
+            return {"active": self.active,
+                    "state": session.state.value if session else "ready"}
 
     def preview_jpeg(self):
         """One camera frame from the running game, or None. See section 20."""
