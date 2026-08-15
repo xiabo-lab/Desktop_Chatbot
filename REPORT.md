@@ -1977,3 +1977,84 @@ joints with confidences, normalised to the camera and already mirrored, and
 directory beside `fruit_ninja/`, a `readiness`-style check, and joint-angle
 maths over keypoints that are already there — plus one entry in `CATALOGUE`
 with `playable: True`.
+
+### 29.10 Starting by voice
+
+Added 2026-08-14, after the first play attempt made the problem obvious: **the
+touchscreen is the wrong input for this game.** The player has to stand far
+enough back for the camera to see their whole upper body, which is well out of
+arm's reach of a panel on a wall, so START was a button only somebody in the
+wrong place could press — and pressing it meant walking backwards into shot
+before the first fruit arrived.
+
+`aipi5/games/voice.py` adds one command, `start_game`, registered alongside
+AIA's own plugins in `main.py`. It differs from the button in exactly two ways,
+both because nobody is standing at the screen:
+
+* **The game is opened if it is not already.** A press of START implies the
+  start screen is showing; a voice can arrive with the assistant on any page.
+* **The player-detected check waits rather than refusing.**
+  `GameManager.voice_start` blocks for up to four seconds. Somebody who has
+  just finished saying "start game" is by definition in front of the camera,
+  but the pose service may have been running for a fraction of a second —
+  opening a game costs about 1.5 s of camera and HEF, and the model then needs
+  a frame or two. Answering "I cannot see you" to somebody standing in plain
+  sight is the one failure this command must not have.
+
+Five outcomes, five different things said out loud: `started`, `resumed`,
+`already` (a round in progress is never restarted — that would throw the score
+away on an ambiguous phrase), `no-player`, `unavailable`.
+
+**Which phrases are safe is a measurement, not a preference**, because the
+router compares by sound. Measured against every phrase AIA already routes,
+using the router's own `similarity`, against the 0.78 a whole-utterance match
+needs. Three candidates were dropped:
+
+| candidate | worst neighbour | score | |
+|---|---|---|---|
+| `start the game` | reboot[`restart the pi`] | **0.71** | dropped |
+| `play game` | toggle[`play pause`] | **0.74** | dropped |
+| `开始` alone | resume[`开始播放`] | **0.67** | dropped |
+
+The first is worth remembering: "start the game" is the most natural English
+phrasing there is, and it sounds enough like "restart the pi" to be a coin
+toss. `confirm=True` on reboot would have caught it, but a game that sometimes
+asks "shall I restart the Raspberry Pi?" is not a game anybody trusts.
+
+What was kept, with the worst neighbour of each under 0.70:
+
+    en   start game · begin game · lets play · let's play
+         start fruit ninja · start the fruit game
+    zh   开始游戏 · 开始游戏吧 · 玩游戏 · 游戏开始 · 开始水果忍者
+
+`玩游戏` scores 0.00 against everything — there is simply no Kodama command
+about games, which is what leaves this much room. `tests/test_routing.py` now
+builds the registry the assistant actually builds, so a fourth plugin cannot
+pass that suite while the device fails it.
+
+**A voice start has to bring the screen with it**, since the person who started
+it is too far away to navigate. `/api/state` carries a two-field `game` object
+and the page adopts a game it did not open — the same thing `callFromState`
+already does for a call in progress. Guarded against the poll landing inside
+the second `openGame` spends waiting for the camera, which would otherwise
+throw the player back to the library a moment before their game started.
+
+Verified on the device: all eight English and five Mandarin phrases route to
+`start_game` against the Pi's own (older) AIA checkout; `restart the pi`,
+`play pause`, `开始播放`, `播放音乐` and `下一首` all still route to what they
+did before; `/api/state` tracks `ready` → `playing` → gone; and a game opened
+server-side moved the page from Home to the game page with no local call,
+while a server-side close returned it to the library. 703 tests pass.
+
+**Still not verified: the spoken utterance itself.** Nobody has said "开始游戏"
+to this device — the routing is proven against the real router and the handler
+against the real manager, but no audio has gone through the wake word and STT
+into this command.
+
+One measurement worth recording from the same session: with the room dark, the
+Brio opened its exposure to 66 ms (`exposure_time_absolute: 666`) and the whole
+pipeline dropped to **15 fps** — camera 15.0, inference 15.0, while the
+accelerator still took only 31.5 ms per frame. That is the dim-room behaviour
+of section 14, not the buffer fault of section 29.2: the earlier 15 fps came
+with a 25 ms exposure that could have carried 40. Playable, but the 30 fps in
+section 29.3 is a daylight number.
