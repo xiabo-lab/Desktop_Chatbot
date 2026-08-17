@@ -2575,3 +2575,317 @@ restart. Worth watching rather than acting on.
 
 Nothing is thermally limited: 62.8C peak against a throttle point in the
 eighties, and a load average of 3.0 on four cores.
+
+### 53. Logitech BRIO 4K replacement — 720p90 motion capture
+
+The Brio 101 was replaced with a **Logitech BRIO 4K** on 2026-08-15. This is
+not only a product-name update. The new device exposes four V4L2 nodes:
+
+| node | function |
+|---|---|
+| `/dev/video0` | colour capture, selected by AIPI5 |
+| `/dev/video1` | colour-stream metadata |
+| `/dev/video2` | 340×340 infrared capture |
+| `/dev/video3` | infrared-stream metadata |
+
+The colour node identifies as `Logitech BRIO`, serial `C26FB3A8`. Its MJPEG
+mode table contains **1280×720 at 90 / 60 / 30 fps**; 90 fps was verified by
+setting the format through V4L2 and reading the negotiated parameters back.
+Unlike the Brio 101, this camera also offers uncompressed YUYV at 720p30, but
+90 fps still requires MJPEG.
+
+One camera control matters as much as the format. With
+`exposure_dynamic_framerate=1`, the driver still reported 90 fps but the sensor
+delivered only about **38 fps** in the room because auto exposure lengthened
+the frame interval. With that control disabled, a direct stream warmed through
+80–85 fps. A game now disables dynamic frame rate before opening its two-buffer
+stream; returning the camera enables it again so ordinary 720p30 presence and
+vision captures retain better low-light exposure.
+
+The Hailo pose model does not need to run at 90 fps. `CameraLease` continuously
+decodes the camera stream and stores one newest frame; if the approximately
+30 fps pose loop has not consumed it, the next camera frame replaces it. The
+extra cadence therefore lowers frame age rather than creating a backlog.
+
+Measured with the deployed Fruit Ninja pipeline, a person in view:
+
+| | measured |
+|---|---:|
+| negotiated camera mode | **1280×720 MJPG @ 90 fps** |
+| delivered camera rate | **85.7 fps** |
+| pose rate | **25.4 fps** |
+| Hailo inference | **29.7 ms** |
+| capture to decoded pose | **44.2 ms** |
+| AIPI5 process CPU while open | **118% of 400% available** |
+| system idle CPU | **67%** |
+| SoC temperature | **51.0°C** |
+| inference errors | **0** |
+
+Closing the test game restored `1280×720 @ 30`, set
+`exposure_dynamic_framerate=1`, and resumed the person detector. Video calls
+remain deliberately capped at 720p30: tripling WebRTC encoding and home-uplink
+load would not improve local gesture tracking. The Pi-side suite completed
+after deployment: **815 tests passed, 1 skipped**.
+
+### 54. Crossed-arms X replaces palm click
+
+The browser's open-palm / closed-fist click was unreliable precisely at the
+moment it mattered: closing a hand hides landmarks and the browser recognizer
+often lost the hand before it could emit a click. Start and Play Again now use
+one whole-body action instead: cross both forearms into an **X at chest
+height** and hold it for 650 ms.
+
+Detection is authoritative in the Python game loop and reuses the Hailo pose
+snapshot already produced for the ninja. It checks shoulders, elbows and
+wrists rather than hand shape. The test rejects ordinary arms, hands clasped at
+the centre, and low crossed hands; it is invariant to camera mirroring and
+tolerates a short keypoint dropout. After a state change the player must lower
+their arms for 250 ms before the next X is armed, so an X held through the last
+second cannot immediately start another round.
+
+The page shows hold progress beside the green button and keeps the touch button
+as a fallback. It no longer loads or runs the MediaPipe gesture recognizer, so
+the browser does not compete with the game for JPEG decoding and hand-model
+CPU. The retained files remain documented only for provenance. The expanded
+local suite completes with **828 tests passed, 13 skipped**. After deployment,
+the Pi completed the same **828 tests with 1 skipped**. A live Ready screen
+reported `arms-crossed-x`, a 650 ms hold and no false trigger from an ordinary
+stance. Closing that check restored the BRIO to 1280×720 MJPEG at 30 fps with
+dynamic exposure enabled.
+
+### 55. Chinese home title and acknowledged game exit
+
+The home page's upper-left title is now **小爱同学**, including the
+browser document title. The change is deliberately limited to the UI label;
+the separately tuned wake-word spelling and recogniser configuration are not
+changed.
+
+The Fruit Ninja Exit Game button previously returned to the games library and
+then reopened Fruit Ninja until hardware teardown completed. `show("games")`
+correctly started an asynchronous `/api/game/close`, but the next 500 ms state
+poll still saw the old session as active and `gameFromState` adopted it as if
+voice control had just opened it.
+
+The browser now remembers the specific game the player dismissed and refuses
+to adopt that same id until `/api/state` acknowledges that no game is active.
+A different id started by voice is still adopted. A rapid manual reopen waits
+for the old close request too, so its delayed teardown cannot close the new
+session. Failed close requests release the latch rather than hiding a live
+game indefinitely. Two regression checks bring the local suite to **830 tests
+passed, 13 skipped**. The deployed Pi completed all **830 tests with 1
+skipped**. In a browser against the live Pi, the Chinese heading rendered,
+Fruit Ninja was opened, started, paused and exited, and all 20 page samples at
+250 ms intervals remained on the Games library for five seconds: no rebound.
+
+### 56. Boxing — shared-pose training and opponent fight
+
+Boxing is now playable from the existing four-tile Games page. It deliberately
+does not own a camera, model, inference thread, or browser landmark detector.
+`GameManager` creates one existing `PoseService`; the service publishes the
+same selected person, filtered wrists, skeleton, capture timestamp, camera
+rate and pose timing that Fruit Ninja consumes. The only Boxing-specific step
+is the inexpensive motion analysis called from that same pose callback.
+
+The implementation is split by responsibility:
+
+| Module | Responsibility |
+|---|---|
+| `boxing/config.py` | scale-relative motion thresholds, damage, timing and difficulty tables |
+| `boxing/motion.py` | punch/hook, guard/block, parry, duck, dodge and lean-back classification |
+| `boxing/collision.py` | swept segment collision helpers for between-frame movement |
+| `boxing/ai.py` | Observe/Guard/Attack/Recover/Defend/Counter opponent state machine and gradual adaptation |
+| `boxing/damage.py` | animated 100 HP state and body-attached progressive injury zones |
+| `boxing/game.py` | countdown, 90-second Training, fight rules, scoring, slow motion and result statistics |
+| `assets/boxing/boxing.js` | 1280×800 layered Canvas renderer, filtered third-person player rig, animated anime opponent, effects, debug view and synthesised audio |
+| `assets/boxing/arena-anime-v2.png` | original generated empty-arena background used beneath all live fighters and effects |
+| `assets/boxing/player-red-torso.png` | generated transparent rear-view red-player body layer; pose-driven Canvas arms remain separate |
+| `assets/boxing/opponent-blue-torso.png` | generated transparent front-view blue-opponent body layer; AI-driven Canvas arms remain separate |
+
+The established 650 ms crossed-arms X starts both modes and replays the chosen
+mode. The existing release latch remains authoritative, so holding the X
+through the end of a round cannot immediately restart it. Perfect Parry sets
+the game simulation scale to 0.1 for a bounded counter window; pose timestamps
+and gesture classification remain real-time.
+
+Development capability was audited before implementation. The available
+in-app browser supplied Playwright-style DOM control, console capture,
+1280×800 viewport control and screenshots. Python `unittest`, Node syntax
+checking, the existing camera/accelerator debug payload, Git tooling,
+deployment scripts and hardware checks were already present. Image generation
+supplied one original, empty 2.5D anime arena background. The four user
+screenshots informed only the rear-player / centered-opponent / ring / audience
+composition; no pixels, characters, HUD, logos or sounds were copied. Fighters
+remain lightweight code-driven Canvas rigs, so pose response, attacks, guard,
+dodge, injuries and knockout reactions are animated at runtime. No package or
+runtime dependency was added.
+
+One project-specific tool was added: `scripts/preview-boxing.py`. It serves the
+real production page with deterministic synthetic pose/combat snapshots so the
+mode picker, Training, Fight, Perfect Parry, results and motion-debug overlay
+can be exercised without Hailo hardware. It uses only the Python standard
+library, is never imported by the application, and cannot contend for a
+camera. `tests/test_boxing.py` separately feeds synthetic `PersonPose`
+sequences directly into the classifier.
+
+Validation on the development machine:
+
+* **857 tests passed, 13 skipped** with `python -m unittest discover -s tests`.
+* `node --check aipi5/ui/web/assets/boxing/boxing.js` passed.
+* The production page was screenshot-inspected for mode selection, Fight,
+  animated attack, Perfect Parry / slow motion, results/replay and debug.
+* The layout audit found no visible element outside the viewport; the browser
+  console contained no warning or error.
+* The debug view reported camera, pose and game FPS, pipeline latency, dropped
+  frames, both hand coordinates/velocities, guard, current action, AI state,
+  attack impact and parry window.
+
+The upgrade was deployed to the online Pi through the configured `aipi5` SSH
+host. Only the UI, Boxing asset, preview/test files and documentation were
+copied; the existing voice/backend process was not restarted. The kiosk UI was
+restarted once and both user services remained active. A file-for-file backup
+is available at
+`/home/fuwenxu/AIPI5/.deploy-backups/boxing-anime-20260815-2348`.
+
+On-device validation passed **857 tests with 1 skip**. During a sustained live
+Boxing ready-state run, the Hailo pose service held 19.3–19.9 inference FPS,
+the camera held 80.0–83.9 FPS, pipeline latency was 53.2–68.0 ms, and the
+reported error count stayed at zero. The tunneled production page's debug
+overlay reported 57 Canvas FPS. The AIPI5 process used about 985–993 MB RSS,
+swap remained unused, and the Pi held 50.5 °C. The Hailo device remained
+visible at PCIe address `0001:01:00.0`. No person was in the camera view, so
+the safety gate correctly kept START disabled; attack, hit, parry, knockout
+and replay visuals were instead exercised with the deterministic preview
+harness. After the run, Boxing was closed, the pose model was released, and
+the Logitech camera was successfully reclaimed by the assistant.
+
+### 57. Boxing reference anatomy, three lanes and per-hit damage
+
+The user supplied a full-body design sheet for the rear red player and front
+blue opponent. The existing generated transparent body layers remain the
+anchors, but their former constant-width Canvas arm strokes have been replaced
+with an articulated sports-anime rig. Each arm now has a shaped deltoid,
+tapered upper arm, elbow joint, tapered forearm, muscle cuts, wrist wrap and an
+angular glove. Player shoulder, elbow and wrist positions still come directly
+from the shared live pose; opponent limbs use the same anatomy with AI-driven
+guard, jab, cross, hook, body-blow, dodge and lean geometry.
+
+Both fighters now move as complete bodies among left, middle and right lanes.
+Player lane selection comes from the scale-normalised torso offset, while the
+opponent changes lane during attack and dodge decisions. Separate easing keeps
+their movement independent and prevents lane changes from snapping. Impact,
+block, parry and knockout effects use each fighter's current screen position
+instead of the former fixed centre point.
+
+The injury tracker previously ignored normal player punches: a hit deals one
+or two HP for balance, but an injury was recorded only when a single hit dealt
+at least four. Every successful hit now advances its body-attached zone. Stage
+one is an irregular bruise; stage two adds a darker bruise and visible
+swelling; stage three increases the swelling and adds two short, bright,
+stylised blood marks plus a small rounded drop. Health tuning is unchanged.
+
+The deterministic preview gained independent player/opponent lane controls and
+isolated damage stages. Browser screenshots verified opposite lanes and all
+three damage appearances with the production renderer. Node syntax checking
+passed, the focused Boxing/UI suite passed 40 tests, and the complete local
+suite passed **863 tests with 13 skipped**.
+
+The verified files were deployed to the Pi with a pre-deployment copy at
+`/home/fuwenxu/AIPI5/.deploy-backups/boxing-reference-20260816-01`. Both user
+services restarted active. The device passed 80 focused tests and the complete
+**863-test suite with 1 skip**. A short live Fight run reached the playing
+state, drove the opponent into lane `-1` during a jab, held 85.0–93.5 camera
+FPS, and reported zero motion errors. The game was then closed; V4L2 confirmed
+that the assistant reclaimed the Logitech camera at 1280×720 MJPEG, 30 fps,
+with dynamic exposure frame rate restored to `1`.
+
+### 58. Boxing four-location baked damage matrix
+
+Damage is now restricted to the four requested locations: left eye, right
+eye, left shoulder and right shoulder. Every location has four states (normal,
+first punch, second punch and third punch), and the opponent matrix contains
+the Cartesian product of all four locations: `4^4 = 256` complete front-view
+body images. The rear player cannot display eye injuries, so its meaningful
+matrix contains the two visible shoulder locations: `4^2 = 16`. This produces
+**272 complete body images** without storing 240 rear-view duplicates whose
+only differences would be invisible.
+
+The approved front/rear fighter matrices and a generated eye/shoulder damage
+source sheet are retained in `artwork/boxing-damage/`. The deterministic
+`scripts/build_boxing_damage_matrix.py` generator crops the clean generated
+fighters to their registered runtime body layers, bakes irregular bruising,
+swelling highlights/shadows and two restrained third-stage blood strokes into
+the body pixels, clips every effect to the fighter alpha silhouette, and emits
+WebP assets plus a key-order manifest. The shipped set is 18.48 MiB.
+
+The Python injury state rejects all locations outside those four, advances one
+stage per successful impact and caps at stage three. Head punches select an
+eye and body punches select a shoulder. Since the player is seen from behind,
+opponent impacts are mapped to its visible shoulders. Each API snapshot now
+contains an explicit four-location `damage_matrix` and base-4 `damage_key`.
+
+The Canvas injury-painting routine was removed. The browser selects the full
+baked body for the current key, keeps only 12 recent matrix images in a lazy
+LRU-style cache, preserves the clean body as the loading fallback and
+crossfades completed body images over 180 ms. Arms, gloves, lane movement and
+live pose reactions remain separately animated. The preview harness accepts
+`demo-damage-NNNN` and `demo-player-damage-NN` for exact visual states.
+
+Local validation passed JavaScript syntax checking, **44 focused tests**, and
+the complete **867-test suite with 13 skips**. A 1280x800 production-renderer
+browser check loaded combined opponent key `1232` and player key `13`; both
+fighters showed the baked injuries and the browser console stayed clean.
+
+The complete change was deployed to the Pi after a targeted backup at
+`/home/fuwenxu/AIPI5/.deploy-backups/boxing-damage-matrix-20260816-01`.
+Representative manifest/body SHA-256 values matched across machines, both
+services restarted active, WebP and JSON routes returned their correct MIME
+types, and the service virtual environment passed **867 tests with 1 skip**.
+In the live ready-state check, the Brio held 89.9 camera FPS, Hailo inference
+held 19.9 FPS and motion errors remained zero. No player was visible, so the
+safety gate correctly refused START. After closing Boxing, the assistant
+process reclaimed `/dev/video0`.
+
+### 59. Boxing full-body pose and damage matrix
+
+The approved sports-anime player/opponent artwork now replaces the live
+fighter construction. OpenAI image generation produced 21 paired production
+sheets from the user-supplied design reference and the three approved previews.
+One malformed storyboard-style reaction sheet was rejected and regenerated as
+one clean player/opponent pair. The production set covers idle, high/body
+guards, left/right blocks, head/body straights and hooks, left/right dodges,
+duck, lean-back, left/right parries, head/body reactions and knockouts.
+
+Each sheet uses a flat green background that was removed with the ImageGen
+`remove_chroma_key.py` soft-matte helper. The deterministic
+`scripts/build_boxing_pose_matrix.py` builder splits the registered halves,
+keeps punch reach at a consistent scale, derives pose-specific injury anchors,
+and bakes the approved four-stage damage artwork into every complete fighter.
+The final manifest contains **21 rear-player poses × 16 visible shoulder
+states = 336 images** and **20 front-opponent poses × 256 eye/shoulder states
+= 5,120 images**: **41 clean bases and 5,456 final WebPs**. The production pose
+directory is 201,331,217 bytes including bases and manifest.
+
+`boxing.js` maps every classified player action and AI state to its matching
+base: straights and hooks retain head/body targets, guards and blocks keep their
+side, parries keep the moving hand, defensive movement selects dodge/duck/lean,
+and damage/KO events select their reaction images. One-shot player actions are
+latched briefly so 90 fps camera input produces a readable frame, complete
+images crossfade over 140 ms, and the existing left/middle/right lane easing is
+preserved. The older procedural fighter is now only a first-load/training-dummy
+fallback; normal fight rendering selects complete matrix cells and paints no
+injury overlay.
+
+At 1280×800, browser validation showed separated left/right lanes, a complete
+blue attack pose, the semi-transparent rear guard pose, combined eye/shoulder
+damage and no console warnings or errors. Focused Boxing/UI validation passed
+46 tests. The complete local suite passed **869 tests with 13 skips**.
+
+Deployment used the targeted backup
+`/home/fuwenxu/AIPI5/.deploy-backups/boxing-pose-matrix-20260816-01`. The
+259,115,008-byte transfer archive matched SHA-256 on both machines before
+extraction. The live manifest and representative WebP routes returned the
+expected JSON and `image/webp`; both user services restarted active. The Pi
+virtual environment passed **869 tests with 1 skip**. A live Boxing ready-state
+check measured 91.3 camera fps, 20.1 Hailo pose fps and zero motion errors. No
+player was visible, so the safety gate remained false. Closing the game released
+the motion session and the assistant process reclaimed `/dev/video0`.

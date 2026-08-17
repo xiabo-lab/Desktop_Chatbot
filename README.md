@@ -5,13 +5,14 @@ milliseconds **or** a conversation with GPT — plus weather, local news, bedtim
 stories, a camera that can describe the room, local person detection, and a
 1280×800 touchscreen that gives way to a clock when nobody is there.
 
-**Status: deployed and running on `aipi5.local`.** 412 tests pass on the Pi as
+**Status: deployed and running on `aipi5.local`.** 863 tests pass on the Pi as
 well as off it. Verified on the device: SenseVoice loads, both Piper voices
 speak, the wake model loads, the OpenAI model answers, live weather and local
 news reach the speaker, Kodama-Lite starts by command and answers over MPRIS,
-and the router matches in 9.7–22.7 ms. The Logitech Brio 101 opens on
-`/dev/video0`, the Hailo detector reads it every 500 ms, and “what do you see”
-goes camera → vision model → speaker in about six seconds.
+and the router matches in 9.7–22.7 ms. The Logitech BRIO 4K opens by name on
+its colour capture node, the Hailo detector reads it every 500 ms, and “what do
+you see” goes camera → vision model → speaker in about six seconds. AI Motion
+temporarily switches it to verified 1280×720 MJPEG at 90 fps for gameplay.
 
 Verified in the room, not just in tests:
 
@@ -93,7 +94,7 @@ Microphone → Wake word (小艾同学, AIA's Vosk matcher)
                   ↓
    1280×800 touchscreen ──→ screensaver when the room is empty
         ↑
-   Logitech Brio 101 (USB) → person detection on the AI HAT+ 2 (never uploaded)
+   Logitech BRIO 4K (USB) → person detection on the AI HAT+ 2 (never uploaded)
 
    Main page ─┬─→ Talk     conversation, and only conversation
               ├─→ Call     the remote video call — a phone rings, the Pi answers
@@ -119,7 +120,7 @@ Plus:
 | "what's the weather" | live Open-Meteo for San Jose 95127, cached ten minutes |
 | "what's the local news" | San Jose / Santa Clara feeds, interleaved and de-duplicated, summarised to 3–5 stories |
 | "what time is it" | the device's clock — never the model's guess |
-| "what do you see" | one fresh frame from the Brio 101, described by the vision model |
+| "what do you see" | one fresh frame from the Logitech BRIO, described by the vision model |
 | "tell me a bedtime story about a dragon" | a child-safe story of a length you can ask for |
 | anything else | a conversation, in about 60 words, in the language you asked in |
 
@@ -633,8 +634,8 @@ row beneath it.
 
 ## The camera
 
-A **Logitech Brio 101 on USB**, which replaced the CSI Camera Module 3 this
-project was originally written for. One `cv2.VideoCapture` on a V4L2 node,
+A **Logitech BRIO 4K on USB**, which replaced the Brio 101 that had previously
+replaced the CSI Camera Module 3. One `cv2.VideoCapture` on a V4L2 node,
 opened once at startup and shared under a lock by the two things that want
 frames — the person detector twice a second, and the vision question when
 somebody asks. Opening it twice would fail with a device-busy error at exactly
@@ -643,11 +644,12 @@ the moment somebody spoke to it.
 Two consequences of the change are visible in `config/aipi5.yaml`:
 
 `device: auto` finds the camera **by name**, not by node. `/dev/video0` is not
-a stable identity — the Brio claims more than one node, one of which opens
-cleanly and never yields an image, and the order depends on what else was
-plugged in at boot. This is the same reasoning AIA applies to matching the
-microphone by name rather than by card number. Name an explicit node to
-override the search; a named device is never second-guessed.
+a stable identity — this Brio exposes colour, infrared, and metadata nodes.
+Only the colour node provides the requested 16:9 MJPEG stream, and node numbers
+can change with what else was plugged in at boot. This is the same reasoning
+AIA applies to matching the microphone by name rather than by card number.
+Name an explicit node to override the search; a named device is never
+second-guessed.
 
 Frames are **drained before one is decoded**. V4L2 is a queue and hands back
 the oldest buffer the driver filled, so on a 30 fps stream polled twice a
@@ -660,6 +662,70 @@ The Camera Module's two-stream trick — a full-size still and a small detection
 frame produced from one sensor read — is gone, because UVC gives one stream at
 one size. It cost nothing: the detector resizes to its model's input as its
 first step, so the second stream was only ever pixels it threw away.
+
+Gameplay uses a separate ownership mode: 1280×720 MJPEG at 90 fps with two
+V4L2 buffers. The camera's dynamic-frame-rate exposure control is disabled
+only during a game; otherwise normal room lighting reduced a negotiated 90 fps
+stream to about 38 fps. The Hailo pose loop processes about 30 fps and the
+capture thread replaces any unconsumed frame, so the higher camera cadence
+reduces input age instead of creating a queue. Returning the camera restores
+the assistant's exposure-friendly 720p30 mode. Video calls also stay at 720p30
+to avoid tripling WebRTC encode and uplink cost.
+
+Fruit Ninja is hands-free at both boundaries. Cross both forearms into an X at
+chest height and hold for 650 ms to start or play again. The authoritative
+gesture comes from the same Hailo shoulder–elbow–wrist skeleton as gameplay,
+not a second browser hand model. Brief joint dropouts are tolerated, while a
+new round requires the arms to be lowered before another X can trigger it.
+
+Boxing is the second consumer of that exact service. Choose **Training** or
+**Fight Opponent**, then use the same crossed-arms X to start and replay.
+`aipi5/games/boxing/motion.py` turns the shared head, shoulder, elbow and wrist
+landmarks into scale-normalised punches, hooks, guard, blocks, parries, ducks,
+dodges and lean-back actions. Training is a fixed 90 seconds. Fight mode adds
+100 HP player health, difficulty-scaled opponent health, 2-point face hits,
+1-point body hits, adaptive state-machine AI, per-hit body-attached damage,
+and Perfect Parry slow motion. Damage is restricted to the left eye, right
+eye, left shoulder and right shoulder. Each location has normal, first-hit,
+second-hit and third-hit states. The renderer selects one complete pre-baked
+full-body pose image for the current combination instead of painting a bruise
+over the fighter at runtime. The 20 opponent poses each have 4^4 = 256 damage
+images; the 21 rear-player poses each have the 4^2 = 16 meaningful shoulder
+combinations because its eyes are not visible. That is 41 clean pose bases and
+5,456 final pose/damage images. The first hit shows a bruise, the second a
+darker bruise with swelling, and the third stronger swelling with a small
+stylised bleed.
+Slow motion scales only the game-world clock; pose capture and classification
+continue at full rate.
+
+The fight view uses a fixed third-person 2.5D composition: a selectively
+transparent red rear-view player in the foreground, an expressive blue
+front-facing opponent, and an original anime arena behind both. Complete
+generated sports-anime fighters replace the former separately drawn torso and
+Canvas arms. The player's detected punch, hook, guard, block, parry, dodge,
+duck and lean actions select their corresponding rear-view pose; the AI attack,
+defense and hit state select the matching front-view opponent pose. A 140 ms
+crossfade keeps transitions readable. Each fighter also eases among left,
+middle and right lanes while preserving anatomical left/right mapping,
+body attachment, baked injuries, hit reactions and knockout states.
+
+### Boxing UI development preview
+
+The Pi camera and Hailo accelerator are not required for layout work:
+
+```sh
+python scripts/preview-boxing.py --port 8765
+```
+
+Open `http://127.0.0.1:8765`, then choose Game → Boxing. The script serves the
+production page with deterministic synthetic pose/combat snapshots. It exists
+for browser automation, screenshot review, clipping checks and debug-overlay
+inspection; it is **not** used by the application and is not a second tracker.
+It is project-specific, adds no dependencies, and is validated by loading the
+real renderer at 1280×800. POST `demo-damage-1232` to preview any four-digit
+opponent matrix key or `demo-player-damage-13` for either player shoulder.
+Gesture rules themselves are tested with synthetic `PersonPose` sequences in
+`tests/test_boxing.py`.
 
 ## Person detection
 
