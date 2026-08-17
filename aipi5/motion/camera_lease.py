@@ -1,10 +1,10 @@
-"""Borrowing the Brio for a game, and giving it back.
+"""Borrowing the Logitech BRIO 4K for a game, and giving it back.
 
 The assistant's `Camera` (`aipi5/vision/camera.py`) is tuned for a reader that
 arrives twice a second and wants the freshest possible frame: one V4L2 buffer,
 and every read drains the queue empty and then blocks for the next frame the
 sensor produces. That is exactly right for presence detection and exactly wrong
-here, and the measurements say so plainly — on this device, in this room:
+here. The original Brio 101 measurements established the buffer design:
 
     Camera.frame() as the detector uses it      89 ms      11 FPS
     one buffer, continuous reads                67 ms      15 FPS
@@ -18,7 +18,10 @@ waits for the *following* frame start — one wasted frame period, every frame,
 forever. Two buffers is enough to fix it completely and is also the shallowest
 queue that does, which matters because every extra buffer is another frame of
 hand-to-screen latency (section 49). Three and four measured identically to
-two, so there is nothing to buy above it.
+two, so there is nothing to buy above it. The replacement BRIO 4K adds a
+1280x720 MJPEG mode at 90 fps. Capture deliberately runs ahead of the Hailo
+pose loop and replaces unconsumed frames, cutting sensor-to-inference age
+without ever building a backlog.
 
 **Ownership is `Camera.lend()`/`.reclaim()`, not a second mechanism.** Section
 31 wants one explicit owner at a time, and this project already has that,
@@ -38,19 +41,15 @@ import time
 
 log = logging.getLogger(__name__)
 
-#: Capture size for gameplay. 640x360 is not a compromise here — it is the
-#: *exact* size a 16:9 frame is scaled to when it is letterboxed into the pose
-#: model's 640x640 square, so capturing at it removes the downscale entirely
-#: rather than merely making it cheaper. Section 8: nothing is gained by
-#: pushing 1280x720 through a pipeline that will throw three quarters of it
-#: away before the accelerator sees a pixel.
-GAME_WIDTH, GAME_HEIGHT = 640, 360
+#: Verified on the installed BRIO 4K. MJPEG is essential: uncompressed 720p90
+#: does not fit on USB, while the camera advertises this exact compressed mode.
+GAME_WIDTH, GAME_HEIGHT = 1280, 720
 
 #: Two, for the reason in the module docstring. Not one, which halves the
 #: frame rate; not four, which is three frames of latency for no frame rate.
 GAME_BUFFERS = 2
 
-GAME_FPS = 30
+GAME_FPS = 90
 
 #: How long to wait for the borrowed device to start producing frames before
 #: giving up and telling the player. Generous because a UVC camera coming out
@@ -85,6 +84,7 @@ class CameraLease:
         self._camera = camera
         self._borrower = borrower
         self._width, self._height, self._fps = width, height, fps
+        self._requested_size = (width, height)
         self._capture = None
         self._device = ""
         self._lock = threading.Lock()
@@ -96,6 +96,8 @@ class CameraLease:
         self._new_frame = threading.Event()
         self._held = False
         self._lost = ""
+        self._negotiated_fps = 0.0
+        self._format = ""
         #: Smoothed capture rate, for the debug panel.
         self.fps = 0.0
         self.frames = 0
@@ -151,6 +153,9 @@ class CameraLease:
 
     def _open(self, cv2, device: str):
         """Open the node and configure it for gameplay. Never returns None."""
+        from aipi5.vision.camera import (_negotiated_fourcc, _negotiated_fps,
+                                         _set_dynamic_framerate)
+
         deadline = time.monotonic() + OPEN_TIMEOUT_S
         last = "no camera node to try"
 
@@ -169,6 +174,11 @@ class CameraLease:
                 index = int(node)
             except ValueError:
                 index = None
+            # The BRIO otherwise lengthens exposure in room light and silently
+            # turns a negotiated 90 fps stream into roughly 38 fps. Fixed
+            # cadence lets auto exposure adjust gain instead. The assistant
+            # restores dynamic exposure when it reclaims the camera.
+            _set_dynamic_framerate(node, False)
             capture = cv2.VideoCapture(index if index is not None else node,
                                        cv2.CAP_V4L2)
             if not capture.isOpened():
@@ -185,6 +195,8 @@ class CameraLease:
             capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self._height)
             capture.set(cv2.CAP_PROP_FPS, self._fps)
             capture.set(cv2.CAP_PROP_BUFFERSIZE, GAME_BUFFERS)
+            negotiated_fps = _negotiated_fps(capture, cv2)
+            negotiated_format = _negotiated_fourcc(capture, cv2)
 
             # Proof, not `isOpened()`. The Brio's metadata node opens perfectly
             # and never yields an image — the same trap `vision/camera.py`
@@ -196,13 +208,22 @@ class CameraLease:
                 continue
 
             self._device = str(node)
+            self._negotiated_fps = negotiated_fps
+            self._format = negotiated_format
             height, width = frame.shape[:2]
             if (width, height) != (self._width, self._height):
                 log.info("AI Motion: asked the camera for %dx%d and got %dx%d",
                          self._width, self._height, width, height)
                 self._width, self._height = width, height
-            log.info("AI Motion: capturing %dx%d at %d fps on %s (%d buffers)",
-                     width, height, self._fps, node, GAME_BUFFERS)
+            if negotiated_fps and negotiated_fps + 0.5 < self._fps:
+                log.warning("AI Motion: requested %d fps from %s; the driver "
+                            "negotiated %.1f fps instead", self._fps, node,
+                            negotiated_fps)
+            cadence = negotiated_fps or float(self._fps)
+            log.info("AI Motion: capturing %dx%d %s at %.1f fps on %s "
+                     "(%d buffers)", width, height,
+                     negotiated_format or "unknown format", cadence, node,
+                     GAME_BUFFERS)
             return capture
 
         raise CameraLeaseError(f"the camera would not start — {last}")
@@ -332,6 +353,11 @@ class CameraLease:
             "name": name or "USB camera",
             "device": self._device,
             "size": f"{self._width}x{self._height}",
+            "format": self._format or None,
+            "requested": (f"{self._requested_size[0]}x"
+                          f"{self._requested_size[1]}@{self._fps}"),
+            "negotiated_fps": (round(self._negotiated_fps, 1)
+                               if self._negotiated_fps else None),
             "fps": round(self.fps, 1),
             "frames": self.frames,
             "dropped": self.dropped,

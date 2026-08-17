@@ -959,8 +959,8 @@ class TestCallConfig(unittest.TestCase):
         self.assertFalse(config_mod.CallConfig().enabled)
 
     def test_the_capture_default_is_the_one_the_camera_can_do(self):
-        # 720p30 needs MJPEG on the Brio 101; YUYV at this size is 5 fps.
-        # Measured on the device — REPORT.md section 27a.
+        # Calls stay at 720p30 to bound encoding and uplink cost. The BRIO 4K's
+        # 720p90 mode is reserved for local motion gameplay.
         cfg = config_mod.CallConfig()
         self.assertEqual((cfg.width, cfg.height, cfg.fps), (1280, 720, 30))
 

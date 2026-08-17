@@ -20,11 +20,13 @@ import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
 from aipi5.core.config import GamesConfig, MotionConfig
 from aipi5.games import manager as manager_mod
 from aipi5.games.manager import GameError, GameManager
-from aipi5.motion.pose_types import PoseStats
+from aipi5.motion.pose_types import (KEYPOINT_NAMES, KeyPoint, PersonPose,
+                                     PoseStats)
 from aipi5.motion.service import MotionUnavailable
 
 
@@ -60,7 +62,7 @@ class FakeCamera:
         return bool(self.lent_to)
 
     def describe(self) -> dict:
-        return {"device": "/dev/video0", "name": "Brio 101",
+        return {"device": "/dev/video0", "name": "Logitech BRIO",
                 "running": self.running, "lent_to": self.lent_to or None}
 
 
@@ -190,6 +192,14 @@ class TestCameraOwnership(GameManagerCase):
         self.assertTrue(self.camera.lent)
         self.assertEqual(self.camera.lent_to, "an AI Motion game")
 
+    def test_boxing_uses_the_same_single_pose_and_camera_lease(self):
+        self.manager.open("boxing")
+        self.assertTrue(self.camera.lent)
+        self.assertEqual(self.camera.lent_to, "an AI Motion game")
+        self.assertEqual(len(FakePose.instances), 1)
+        self.manager.close()
+        self.assertFalse(self.camera.lent)
+
     def test_closing_gives_it_back(self):
         self.manager.open("fruit-ninja")
         self.manager.close()
@@ -314,9 +324,24 @@ class TestCatalogueAndCommands(GameManagerCase):
     def test_the_catalogue_lists_four_games(self):
         self.assertEqual(len(self.manager.catalogue()), 4)
 
-    def test_only_fruit_ninja_is_playable(self):
+    def test_fruit_ninja_and_boxing_are_playable(self):
         playable = [g["id"] for g in self.manager.catalogue() if g["playable"]]
-        self.assertEqual(playable, ["fruit-ninja"])
+        self.assertEqual(playable, ["fruit-ninja", "boxing"])
+
+    def test_boxing_requires_and_accepts_mode_selection(self):
+        self.manager.open("boxing")
+        self.assertEqual(self.manager.status()["game"]["mode"], "")
+        self.manager.command("mode-training")
+        status = self.manager.status()
+        self.assertEqual(status["game"]["mode"], "training")
+        self.assertEqual(status["game"]["duration"], 90.0)
+
+    def test_boxing_difficulty_is_configuration_not_a_second_game(self):
+        self.manager.open("boxing")
+        self.manager.command("difficulty-hard")
+        self.manager.command("mode-fight")
+        self.manager.command("restart")
+        self.assertEqual(self.manager.status()["game"]["difficulty"], "hard")
 
     def test_a_coming_soon_game_refuses_to_open(self):
         with self.assertRaises(GameError) as caught:
@@ -356,6 +381,34 @@ class TestCatalogueAndCommands(GameManagerCase):
         self.manager.command("restart")
         self.assertEqual(self.manager.session.state.value, "playing")
 
+    def test_crossed_arms_automatically_start_the_round(self):
+        points = {name: KeyPoint(0.5, 0.5, 0.0)
+                  for name in KEYPOINT_NAMES}
+        for name, value in {
+            "left_shoulder": (0.35, 0.30, 0.9),
+            "right_shoulder": (0.65, 0.30, 0.9),
+            "left_elbow": (0.27, 0.53, 0.9),
+            "right_elbow": (0.73, 0.53, 0.9),
+            "left_wrist": (0.62, 0.39, 0.9),
+            "right_wrist": (0.38, 0.39, 0.9),
+        }.items():
+            points[name] = KeyPoint(*value)
+        snapshot = SimpleNamespace(
+            person=PersonPose(confidence=0.9, keypoints=points), hands={})
+
+        self.manager.open("fruit-ninja")
+        self.manager._start_gesture.hold_s = 0.0
+        self.manager._on_pose_frame(snapshot, None)
+        self.manager._on_pose_frame(snapshot, None)
+
+        self.assertEqual(self.manager.session.state.value, "playing")
+
+    def test_status_describes_the_crossed_arms_control(self):
+        self.manager.open("fruit-ninja")
+        gesture = self.manager.status()["gesture"]
+        self.assertEqual(gesture["name"], "arms-crossed-x")
+        self.assertEqual(gesture["hold_ms"], 650)
+
     def test_an_unknown_command_is_refused(self):
         self.manager.open("fruit-ninja")
         with self.assertRaises(GameError):
@@ -374,6 +427,49 @@ class TestCatalogueAndCommands(GameManagerCase):
         self.assertEqual(status["active"], "fruit-ninja")
         self.assertIn("game", status)
         self.assertIn("games", status)
+
+
+class TestRoundDuration(GameManagerCase):
+
+    def test_all_five_play_times_are_available(self):
+        settings = self.manager.settings()
+        self.assertEqual(settings["round_seconds"], 120)
+        self.assertEqual([item["seconds"] for item in settings["choices"]],
+                         [60, 120, 180, 240, 300])
+
+    def test_selection_is_saved_and_restored(self):
+        self.manager.set_round_seconds(300)
+        restored = GameManager(
+            GamesConfig(scores=Path(self._dir.name) / "scores.json"),
+            motion_cfg=MotionConfig(), camera=FakeCamera(),
+            audio=FakeAudio(), screen=FakeScreen())
+        self.addCleanup(restored.close)
+        self.assertEqual(restored.round_seconds, 300)
+
+    def test_invalid_play_time_is_refused(self):
+        for invalid in (0, 121, 301, "forever", None):
+            with self.subTest(invalid=invalid), self.assertRaises(GameError):
+                self.manager.set_round_seconds(invalid)
+
+    def test_play_time_cannot_change_while_a_game_is_open(self):
+        self.manager.open("fruit-ninja")
+        with self.assertRaises(GameError):
+            self.manager.set_round_seconds(180)
+        self.assertEqual(self.manager.round_seconds, 120)
+
+    def test_selected_play_time_sets_the_round_clock(self):
+        self.manager.set_round_seconds(180)
+        self.manager.open("fruit-ninja")
+        self.assertEqual(self.manager.session.duration, 180.0)
+        self.assertEqual(self.manager.session.time_left, 180.0)
+
+    def test_each_play_time_has_its_own_best_score(self):
+        self.manager.scores.record("fruit-ninja", 80)
+        self.manager.scores.record("fruit-ninja:60", 25)
+        choices = {item["seconds"]: item["best"]
+                   for item in self.manager.settings()["choices"]}
+        self.assertEqual(choices[120], 80)
+        self.assertEqual(choices[60], 25)
 
 
 class TestAcceleratorFailure(GameManagerCase):

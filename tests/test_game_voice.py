@@ -301,7 +301,7 @@ class FakeCamera:
         return bool(self.lent_to)
 
     def describe(self) -> dict:
-        return {"device": "/dev/video0", "name": "Brio 101",
+        return {"device": "/dev/video0", "name": "Logitech BRIO",
                 "running": not self.lent_to, "lent_to": self.lent_to or None}
 
 

@@ -58,23 +58,22 @@ WRISTS: tuple[str, str] = ("left_wrist", "right_wrist")
 #: than from a segmentation mask, because the accelerator is already running
 #: one model and a second one would cost the pose rate the game is built on.
 #:
-#: Upper body only, plus hips to close the torso. Fruit Ninja is played from
-#: about the waist up and the requirement says so — showing head, shoulders,
-#: arms and hands accurately matters and fine lower-body detail does not — but
-#: the real reason to stop at the hips is that knees and ankles are the joints
-#: most often *outside the frame* at the distance this game is played from, and
-#: a silhouette with a confidently wrong leg on it is worse than one with no
-#: legs at all.
+#: The upper body is the minimum useful figure, while knees and ankles are sent
+#: opportunistically. They are often outside the frame at the distance this
+#: game is played from, so the renderer never requires them; when they *are*
+#: believable they let the ninja wear the loose, tapered trousers in the visual
+#: reference instead of ending abruptly at the hips.
 #:
-#: Eleven points at three numbers each is about 250 bytes a frame, which is
-#: what makes this affordable on the same stream as everything else — the full
-#: seventeen-joint skeleton stays debug-only.
+#: Fifteen points at two rounded numbers each is still only a few hundred bytes
+#: a frame. Eyes stay debug-only because the hood asset does not need them.
 SILHOUETTE: tuple[str, ...] = (
     "nose",
     "left_shoulder", "right_shoulder",
     "left_elbow", "right_elbow",
     "left_wrist", "right_wrist",
     "left_hip", "right_hip",
+    "left_knee", "right_knee",
+    "left_ankle", "right_ankle",
     "left_ear", "right_ear",
 )
 
@@ -152,7 +151,7 @@ class PersonPose:
         return all(self.visible(name, threshold) for name in UPPER_BODY)
 
     def silhouette(self, threshold: float) -> dict:
-        """The eleven joints a body outline is drawn from, filtered.
+        """The joints a body outline is drawn from, filtered.
 
         Joints below `threshold` are **omitted rather than sent with a low
         confidence**, which is the opposite of what `as_dict` does and is

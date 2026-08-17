@@ -146,7 +146,12 @@ class PoseService:
                 raise MotionUnavailable("AI Motion is turned off in the "
                                         "configuration")
 
-            lease = CameraLease(self._camera)
+            lease = CameraLease(
+                self._camera,
+                width=self.cfg.capture_width,
+                height=self.cfg.capture_height,
+                fps=self.cfg.capture_fps,
+            )
             try:
                 lease.acquire()
             except CameraLeaseError as exc:

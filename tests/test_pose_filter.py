@@ -29,6 +29,23 @@ def person(confidence: float = 0.9, box=(0.3, 0.2, 0.4, 0.7), **points):
     return PersonPose(confidence=confidence, keypoints=keypoints, box=box)
 
 
+class TestNinjaSilhouette(unittest.TestCase):
+
+    def test_confident_legs_are_available_to_the_artwork(self):
+        subject = person(left_knee=(0.42, 0.70, 0.9),
+                         left_ankle=(0.38, 0.94, 0.9))
+        body = subject.silhouette(0.5)
+        self.assertEqual(body["left_knee"], (0.42, 0.7))
+        self.assertEqual(body["left_ankle"], (0.38, 0.94))
+
+    def test_uncertain_legs_are_omitted_instead_of_guessed(self):
+        subject = person(right_knee=(0.60, 0.70, 0.2),
+                         right_ankle=(0.64, 0.94, 0.1))
+        body = subject.silhouette(0.5)
+        self.assertNotIn("right_knee", body)
+        self.assertNotIn("right_ankle", body)
+
+
 class TestConfidenceGate(unittest.TestCase):
     """Section 15, and section 46's "must not generate false cuts"."""
 

@@ -27,11 +27,14 @@ same failure the video call had and fixed with a liveness poll.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
 
-from aipi5.games.fruit_ninja.game import HighScores, Session, State
+from aipi5.games.boxing.game import BoxingSession
+from aipi5.games.fruit_ninja.game import HighScores, Session as FruitSession, State
+from aipi5.motion.gestures import CrossedArmsGesture
 from aipi5.motion.service import MotionUnavailable, PoseService
 
 log = logging.getLogger(__name__)
@@ -47,7 +50,8 @@ CATALOGUE: tuple[dict, ...] = (
     {"id": "yoga", "name": "Yoga Coach", "glyph": "🧘",
      "blurb": "Hold the pose. Get it checked.", "playable": False},
     {"id": "boxing", "name": "Boxing", "glyph": "🥊",
-     "blurb": "Punch the pads as they appear.", "playable": False},
+     "blurb": "Train your reactions or fight an adaptive opponent.",
+     "playable": True},
     {"id": "workout", "name": "Workout", "glyph": "🏋",
      "blurb": "Counted reps, called out loud.", "playable": False},
 )
@@ -76,6 +80,12 @@ PLAYER_POLL_S = 0.066
 #: How often the watchdog looks.
 WATCHDOG_S = 5.0
 
+# The complete set the touchscreen offers. Keeping the allow-list beside the
+# decision means a crafted request cannot create a zero-second round or one
+# that holds the camera all afternoon.
+ROUND_SECONDS_OPTIONS: tuple[int, ...] = (60, 120, 180, 240, 300)
+DEFAULT_ROUND_SECONDS = 120
+
 
 class GameError(RuntimeError):
     """A game could not start. The message is written to go on screen."""
@@ -102,7 +112,7 @@ class GameManager:
 
         self._lock = threading.RLock()
         self.scores = HighScores(cfg.scores)
-        self.session: Session | None = None
+        self.session: FruitSession | BoxingSession | None = None
         self.active: str = ""
         self._pose: PoseService | None = None
         self._held_audio = False
@@ -112,6 +122,14 @@ class GameManager:
         self._watchdog_thread: threading.Thread | None = None
         self._watchdog_stop = threading.Event()
         self.debug = bool(cfg.debug)
+        # Tests commonly override only the score path; deriving the preference
+        # path from it keeps those tests inside their temporary directory.
+        self.settings_path = (getattr(cfg, "settings", None)
+                              or cfg.scores.with_name("game-settings.json"))
+        self.round_seconds = self._load_round_seconds(
+            getattr(cfg, "round_seconds", DEFAULT_ROUND_SECONDS))
+        self._start_gesture = CrossedArmsGesture(
+            confidence=min(0.4, motion_cfg.keypoint_confidence))
 
     # ── the library ──────────────────────────────────────────────────
 
@@ -120,10 +138,101 @@ class GameManager:
         games = []
         for entry in CATALOGUE:
             item = dict(entry)
-            item["best"] = self.scores.best(entry["id"])
+            if entry["id"] == "boxing":
+                item["best"] = max(
+                    self.scores.best(f"boxing:{mode}:{difficulty}")
+                    for mode in ("training", "fight")
+                    for difficulty in ("easy", "normal", "hard"))
+            else:
+                item["best"] = self.scores.best(self._score_key(entry["id"]))
             item["active"] = (self.active == entry["id"])
+            if entry["id"] == "fruit-ninja":
+                item["round_seconds"] = self.round_seconds
             games.append(item)
         return games
+
+    def _load_round_seconds(self, fallback) -> int:
+        try:
+            configured = int(fallback)
+        except (TypeError, ValueError):
+            configured = DEFAULT_ROUND_SECONDS
+        if configured not in ROUND_SECONDS_OPTIONS:
+            log.warning("games.round_seconds=%r is not one of %s; using %d",
+                        fallback, ROUND_SECONDS_OPTIONS, DEFAULT_ROUND_SECONDS)
+            configured = DEFAULT_ROUND_SECONDS
+
+        try:
+            saved = json.loads(self.settings_path.read_text(encoding="utf-8"))
+            seconds = int(saved.get("round_seconds", configured))
+            if seconds not in ROUND_SECONDS_OPTIONS:
+                raise ValueError(f"unsupported duration {seconds}")
+            return seconds
+        except FileNotFoundError:
+            return configured
+        except (AttributeError, OSError, TypeError, ValueError) as exc:
+            log.warning("could not read the game settings at %s: %s",
+                        self.settings_path, exc)
+            return configured
+
+    def _score_key(self, game_id: str, seconds: int | float | None = None) -> str:
+        """A fair high-score table for each round length.
+
+        The original 120-second table keeps its original key, so every score
+        already on the deployed device remains visible after this upgrade.
+        """
+        duration = int(self.round_seconds if seconds is None else seconds)
+        return game_id if duration == DEFAULT_ROUND_SECONDS else f"{game_id}:{duration}"
+
+    def _session_score_key(self, game_id: str, session=None) -> str:
+        """Keep records comparable within a game mode and difficulty."""
+        if game_id == "boxing" and isinstance(session, BoxingSession):
+            if not session.mode:
+                return "boxing"
+            return f"boxing:{session.mode}:{session.difficulty}"
+        seconds = getattr(session, "duration", None)
+        return self._score_key(game_id, seconds)
+
+    def settings(self) -> dict:
+        """The touchscreen-selectable game settings and per-length records."""
+        with self._lock:
+            selected = self.round_seconds
+            active = bool(self.active)
+        return {
+            "round_seconds": selected,
+            "choices": [
+                {"seconds": seconds,
+                 "best": self.scores.best(self._score_key("fruit-ninja", seconds))}
+                for seconds in ROUND_SECONDS_OPTIONS
+            ],
+            "locked": active,
+        }
+
+    def set_round_seconds(self, value) -> dict:
+        """Persist one allowed duration, for the next Fruit Ninja round."""
+        try:
+            seconds = int(value)
+        except (TypeError, ValueError) as exc:
+            raise GameError("choose 60, 120, 180, 240 or 300 seconds") from exc
+        if seconds not in ROUND_SECONDS_OPTIONS:
+            raise GameError("choose 60, 120, 180, 240 or 300 seconds")
+
+        with self._lock:
+            if self.active:
+                raise GameError("leave the current game before changing its play time")
+            self.round_seconds = seconds
+
+        try:
+            self.settings_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.settings_path.with_suffix(self.settings_path.suffix + ".tmp")
+            temporary.write_text(json.dumps({"round_seconds": seconds}, indent=2),
+                                 encoding="utf-8")
+            temporary.replace(self.settings_path)
+        except OSError as exc:
+            log.warning("could not save the game settings at %s: %s",
+                        self.settings_path, exc)
+        log.info("Game: Fruit Ninja round set to %d seconds", seconds)
+        self._on_change()
+        return self.settings()
 
     # ── starting and stopping ────────────────────────────────────────
 
@@ -178,7 +287,18 @@ class GameManager:
             self.active = game_id
             self._error = ""
             self._last_seen = time.monotonic()
-            self.session = Session(best=self.scores.best(game_id))
+            if game_id == "boxing":
+                self.session = BoxingSession(
+                    best=max(self.scores.best(f"boxing:{mode}:{difficulty}")
+                             for mode in ("training", "fight")
+                             for difficulty in ("easy", "normal", "hard")))
+            else:
+                duration = float(self.round_seconds)
+                self.session = FruitSession(
+                    duration=duration,
+                    time_left=duration,
+                    best=self.scores.best(self._score_key(game_id, duration)))
+            self._start_gesture.reset()
 
             # The screensaver first, because a player standing still while the
             # start screen tells them to raise their hands is exactly the
@@ -243,7 +363,8 @@ class GameManager:
 
         with self._lock:
             if session is not None and session.score and game_id:
-                self.scores.record(game_id, session.score)
+                self.scores.record(self._session_score_key(game_id, session),
+                                   session.score)
             if self._held_audio:
                 self._held_audio = False
                 if self._audio is not None:
@@ -253,6 +374,7 @@ class GameManager:
                 if self._screen is not None:
                     self._screen.release("a game")
             self.session = None
+            self._start_gesture.reset()
 
         thread, self._watchdog_thread = self._watchdog_thread, None
         if thread is not None and thread.is_alive() and thread is not threading.current_thread():
@@ -269,7 +391,24 @@ class GameManager:
             if session is None:
                 raise GameError("no game is open")
 
-            if action in ("start", "restart"):
+            if action.startswith("mode-"):
+                if not isinstance(session, BoxingSession):
+                    raise GameError("mode selection is only available in Boxing")
+                try:
+                    session.select_mode(action.removeprefix("mode-"))
+                except ValueError as exc:
+                    raise GameError(str(exc)) from exc
+                self._start_gesture.reset()
+                log.info("Game: Boxing mode set to %s", session.mode)
+            elif action.startswith("difficulty-"):
+                if not isinstance(session, BoxingSession):
+                    raise GameError("difficulty is only available in Boxing")
+                try:
+                    session.select_difficulty(action.removeprefix("difficulty-"))
+                except ValueError as exc:
+                    raise GameError(str(exc)) from exc
+                log.info("Game: Boxing difficulty set to %s", session.difficulty)
+            elif action in ("start", "restart"):
                 if not self._ready_to_start() and action == "start":
                     raise GameError("no player is in front of the camera")
                 # Bank the finished round before `start` zeroes it. The pose
@@ -280,8 +419,12 @@ class GameManager:
                 # A high score that survives only if the timing is right is a
                 # high score somebody will one day watch disappear.
                 if session.state is State.OVER and session.score:
-                    self.scores.record(self.active, session.score)
-                session.start(now)
+                    self.scores.record(
+                        self._session_score_key(self.active, session), session.score)
+                try:
+                    session.start(now)
+                except ValueError as exc:
+                    raise GameError(str(exc)) from exc
                 log.info("Game: round started")
             elif action == "pause":
                 session.pause(now)
@@ -289,7 +432,8 @@ class GameManager:
                 session.resume(now)
             elif action == "end":
                 session.finish(now)
-                self.scores.record(self.active, session.score)
+                self.scores.record(self._session_score_key(self.active, session),
+                                   session.score)
             else:
                 raise GameError(f"{action!r} is not a game command")
 
@@ -432,11 +576,17 @@ class GameManager:
         spent in here is a millisecond the pose loop is not reading the next
         camera frame, so it does exactly two things.
         """
+        changed = False
         with self._lock:
             session = self.session
             if session is None:
                 return
-            session.tick(time.monotonic(), snapshot.hands.values())
+            now = time.monotonic()
+            if isinstance(session, BoxingSession):
+                session.tick_pose(now, snapshot.person, snapshot.hands,
+                                  snapshot.timestamp)
+            else:
+                session.tick(now, snapshot.hands.values())
             # `self.active` is checked, not assumed. `_teardown` clears it
             # under this lock and then stops the pose service *outside* it, so
             # a frame already in flight arrives here with a live session and no
@@ -444,7 +594,22 @@ class GameManager:
             # in the wild: a scores file with both `"fruit-ninja": 283` and
             # `"": 283` in it.
             if self.active and session.state is State.OVER and session.score:
-                self.scores.record(self.active, session.score)
+                self.scores.record(self._session_score_key(self.active, session),
+                                   session.score)
+
+            phase = getattr(session, "gesture_phase", session.state)
+            if self._start_gesture.update(snapshot.person, phase, now):
+                if session.state is State.OVER and session.score:
+                    self.scores.record(
+                        self._session_score_key(self.active, session), session.score)
+                action = "Play Again" if session.state is State.OVER else "Start"
+                session.start(now)
+                self._last_seen = now
+                changed = True
+                log.info("Game: %s triggered by crossed arms", action)
+
+        if changed:
+            self._on_change()
 
     # ── what the page reads ──────────────────────────────────────────
 
@@ -470,6 +635,7 @@ class GameManager:
             }
             if session is not None:
                 payload["game"] = session.snapshot(now)
+                payload["gesture"] = self._start_gesture.describe(now)
                 # `events` rather than the `sounds` this used to be called.
                 # They were only ever sounds when they were bare strings; each
                 # one now carries where it happened and what colour it was,
