@@ -1,87 +1,61 @@
 # Asset licences
 
-Every visual and every sound in AIPI5 is generated at runtime by code in this
-repository. **No third-party artwork, audio, font or texture is bundled,
-downloaded or referenced.** This file exists to record that, and to record the
-one thing that *is* borrowed, which is an idea rather than a file.
+Most Fruit Ninja visuals and every sound are still generated at runtime by
+code in this repository. The exceptions are the ninja-head art and a retained
+copy of the MediaPipe runtime/model used by the former palm-click control.
+They are recorded here so their provenance remains clear while deployed
+devices transition to the Hailo arms-crossed gesture.
 
-If that changes — if a sprite sheet or an `.ogg` is ever added — every entry
-belongs in the table at the bottom, filled in per file, before the file is
-committed.
+## Bundled files
 
-## Why there are no asset files
+| File(s) | Author / source | Licence | Use and modifications |
+|---|---|---|---|
+| `aipi5/ui/web/assets/fruit-ninja/ninja-head.png` | Original output generated with OpenAI image generation for this project. The user-supplied Freepik picture was a style reference only. | Generated project artwork; no third-party pixels are embedded. | Chroma-key background removed, transparent bounds cropped, and resized to 512 px. Drawn over the live pose-driven neck; the body remains procedural. |
+| `aipi5/ui/web/assets/boxing/arena-anime-v2.png` | Original output generated with OpenAI image generation for this project. The user-supplied boxing screenshots were composition references only. | Generated project artwork; no third-party pixels are embedded. | Empty 2.5D anime boxing arena background. Fighters, animation, impacts, lighting changes and HUD remain live Canvas/DOM layers. |
+| `aipi5/ui/web/assets/boxing/player-red-torso.png`, `opponent-blue-torso.png` | Original outputs generated with OpenAI image generation for this project from the user-supplied red-player / blue-opponent design sheet. | Generated project artwork; no source-sheet pixels are embedded. | Chroma-key backgrounds removed with a soft alpha matte. Used as the clean sources for the baked damage bodies; live arms, gloves, motion and reactions remain Canvas-driven. |
+| `artwork/boxing-damage/*.png` | Original damage progression and source artwork generated with OpenAI image generation for this project using the approved generated fighters as style references. | Generated project artwork; no third-party pixels are embedded. | Project-bound source sheets for the four-location damage matrix. |
+| `aipi5/ui/web/assets/boxing/damage/{opponent,player}/*.webp` | Deterministic derivatives of the generated transparent fighter bodies and generated damage art direction. | Generated project artwork. | 256 complete opponent bodies and 16 meaningful rear-player bodies. Bruising, swelling and restrained stage-three bleeding are baked into the body pixels; runtime Canvas overlays are not used. |
+| `artwork/boxing-poses/{previews,sheets,transparent-sheets}/*.png` | Original outputs generated with OpenAI image generation for this project from the user-supplied red-player / blue-opponent design sheet and approved preview direction. | Generated project artwork; no source-sheet pixels are embedded. | Project-bound sources for 21 paired action/reaction sheets. Flat chroma backgrounds were removed with the ImageGen soft-matte helper before deterministic splitting and registration. |
+| `aipi5/ui/web/assets/boxing/poses/**` | Deterministic derivatives of the generated full-body pose sheets and approved damage progression. | Generated project artwork. | 41 clean full-body pose bases and 5,456 complete pose/damage WebPs: 21 rear-player poses × 16 visible shoulder states, plus 20 front-opponent poses × 256 four-location states. Runtime selects whole images and does not overlay bruises or construct fighter arms. |
+| `aipi5/ui/web/assets/mediapipe/vision_bundle.mjs`, `wasm/*` | Google MediaPipe, npm package [`@mediapipe/tasks-vision@1.0.0`](https://www.npmjs.com/package/@mediapipe/tasks-vision) | Apache-2.0; bundled text in `aipi5/ui/web/assets/mediapipe/LICENSE` | Unmodified browser runtime, retained for provenance but no longer loaded by the game. |
+| `aipi5/ui/web/assets/mediapipe/gesture_recognizer.task` | Google MediaPipe [Gesture Recognizer model bundle](https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task) | Apache-2.0 (MediaPipe model bundle) | Unmodified float16 model from the former `Open_Palm` / `Closed_Fist` control; no longer loaded. |
 
-The upgrade plan for the Fruit Ninja game recommended several CC0 packs
-(OpenGameArt fruit sprites, the Kenney splat and particle packs, a swish
-sound pack, a Freesound squelch recording, OpenGameArt background music). None
-of them were used, for two reasons.
+The replacement crossed-arms detector uses only the local Hailo pose skeleton.
+No browser hand model runs and camera frames are not sent to any service.
 
-**The UI server has no static directory.** `aipi5/ui/server.py` serves exactly
-one file from one fixed path and says so in its own comments — there is no
-static route, no MIME table and no path-traversal defence, because it has never
-needed any. Adding assets would mean building all three, plus a preloader, plus
-about fifteen megabytes on a deploy that is an `scp` of source files onto a
-Raspberry Pi. That is a lot of new surface for artwork the canvas can draw for
-nothing.
-
-**The project already had this decision, and it was deliberate.** The original
-game shipped no artwork on purpose. Keeping that through the ten-fruit
-expansion means the repository still has no licence to argue about and no
-attribution that can drift out of date.
-
-The requirements the packs were suggested for are met without them:
+## Runtime-generated assets
 
 | Requirement | How it is met | Where |
 |---|---|---|
-| Wood / dojo background | Painted procedurally into an offscreen canvas once per session: radial base gradient, ~2600 grain strokes, four panel boards, a 64 px lattice and a vignette. Blitted with one `drawImage` per frame. | `buildWood()` in `aipi5/ui/web/index.html` |
-| Ten distinct fruit | One canvas path routine per shape — crescent, cluster, cone, rind-and-stripe, and so on. Not ten tints of one disc. | `SHAPES` in `aipi5/ui/web/index.html` |
-| Sliced halves | Half-disc of flesh with a rind arc on the curved side only, thrown apart perpendicular to the cut with independent velocity, spin and gravity. | `spawnHalves()`, `drawHalves()` |
-| Per-fruit juice and splash | One parameterised splash system: colour, size, particle count, speed and lifetime all vary per fruit, from a table in the Python. | `splash()` / `FruitKind.juice`, `.wetness` |
-| Particles, sparks, glow | Circles and additive blending. | `sparks()`, `drawDrops()` |
-| Ultimate aura, cracks, particle ring | Radial gradient, golden-angle crack strokes, orbiting points. | `drawDragon()` |
-| The player's ninja silhouette | Torso polygon, limb strokes, hood ellipse, sash rectangle and ribbon curves, all built from eleven live pose keypoints. No sprite, no rig, no traced outline. | `drawPlayerShadow()` |
-| Per-fruit slice sounds | Web Audio: band-passed noise swept between two frequencies, plus a pitched body, per fruit, with per-hit pitch and level variation. This is exactly what the plan permitted in place of recordings — "swish + fruit impact/squelch + pitch variation + volume variation". | `SLICE_VOICES`, `sweptNoise()`, `playSliceSound()` |
-| Bomb, combo, warning, completion sounds | The same synthesiser, different figures. | `playGameSound()` |
-| Music | None. The game plays over whatever the assistant's audio system is doing, and `AudioPriority` ducks it. Adding a music bed would fight the thing it ducked. | `aipi5/games/manager.py` |
+| Wood / dojo background | Offscreen canvas with gradients, grain strokes, panels, lattice, and vignette | `buildWood()` in `aipi5/ui/web/index.html` |
+| Ten distinct fruit and sliced halves | Canvas paths parameterized by the authoritative Python fruit state | `SHAPES`, `drawFruit()`, `spawnHalves()` |
+| Juice, particles, Ultimate aura, cracks | Canvas particle and compositing systems | `splash()`, `drawDrops()`, `drawDragon()` |
+| Ninja body animation | Curved torso, tapered sleeves and trousers, wrapped hands, red sash, all fitted to live pose joints | `drawPlayerShadow()` |
+| Slice, bomb, combo, warning, and completion sounds | Web Audio oscillators and filtered noise; no recordings | `playGameSound()`, `playSliceSound()` |
+| Boxing three-lane pose selection/crossfades, parallax, crowd lights, training targets and impacts | Original Canvas 2D transforms, gradients and bounded particles; no third-party pixels | `aipi5/ui/web/assets/boxing/boxing.js` |
+| Boxing bell, punch, body/head hit, block, parry, dodge, heartbeat, crowd reaction, KO, win and lose sounds | Web Audio oscillators and filtered noise; no recordings | `playSound()` in `aipi5/ui/web/assets/boxing/boxing.js` |
 
-Because nothing is loaded from disk, the plan's asset-preloading requirement is
-satisfied by there being nothing to preload: the first fruit of a round is
-drawn and sounded by code that is already parsed.
-
-## Emoji glyphs
-
-Each `FruitKind` carries an emoji (`🍉`, `🍌`, …). It is **a garnish drawn on
-top of the procedural shape, never the thing that identifies the fruit** — on a
-device without a colour-emoji font the glyph draws nothing and the fruit is
-still the right shape, the right size and the right colour.
-
-Emoji are rendered from whichever font the system provides (on the Pi, Noto
-Color Emoji, from Debian's `fonts-noto-color-emoji`, SIL Open Font License
-1.1). Nothing is bundled; the characters themselves are Unicode code points,
-which are not copyrightable.
-
-## What is borrowed
+## References that are not bundled
 
 | What | Source | Licence | How it is used |
 |---|---|---|---|
-| The *idea* of the player's silhouette being a hooded ninja — black cloth, red waist sash, trailing red headband ribbons | A stock illustration supplied by the user as a visual reference, credited on its face to Freepik | Unknown; **not relied on** | Looked at, and not used. The figure in `drawPlayerShadow` is constructed from eleven live pose keypoints — torso polygon, limb strokes, hood ellipse, sash rectangle, ribbon curves — and shares no pixels, path data or proportions with the reference. A costume convention (ninjas wear black and a red sash) is not protectable; the drawing of one is, which is why none of it was traced, copied or embedded. |
-| Gameplay shape: fruit thrown on arcs, sliced by tracked wrists, bombs to avoid, points per fruit; the original five fruit colours and the launch-speed range as a starting point | [`hailo-ai/hailo-rpi5-examples`](https://github.com/hailo-ai/hailo-rpi5-examples) | MIT | Design reference only. No code was copied: that project ties physics to the frame rate and tests collision against a single wrist sample, and both were reimplemented — see `fruit.Fruit.advance` and `collision.slash_hits_fruit`. |
-| Constants for decoding the YOLOv8-pose output tensors | `/usr/include/hailo/tappas/pose_estimation/yolov8pose_postprocess.cpp` | LGPL | **Read, not copied.** The decode in `aipi5/motion/yolov8_pose.py` is an independent numpy implementation; the reference was consulted for anchor strides and channel layout. |
-| `yolov8s_pose_h10.hef` | Debian package `hailo-models`, installed on the device | Vendor licence, as installed | Loaded from `/usr/share/hailo-models/` at runtime. Not vendored into this repository. |
+| Ninja costume and friendly flat-cartoon direction: black cloth, warm eye opening, red sash, trailing headband ribbons | Stock illustration supplied by the user, credited on its face to Freepik | Unknown; not relied on for redistribution | Style reference only. The file is not copied into the repository. The head asset was newly generated and the animated body is built from live pose geometry. |
+| Third-person boxing composition: rear player, centered front-facing opponent, ring depth and audience hierarchy | Four boxing screenshots supplied by the user | Reference provenance only; not redistributed | Composition reference only. The screenshots are not copied into the repository. The shipped arena is newly generated and the characters, HUD and effects are independently drawn in code. |
+| Red rear-view player and blue front-view opponent character design | Character reference sheet supplied by the user as `box game player opponent.png` | Reference provenance only; not redistributed | Character-design reference. The sheet is not bundled. Two new modular torso layers were generated from it; no labels, panels or original pixels are copied. |
+| Fruit-slicing gameplay shape and the original launch-speed range | [`hailo-ai/hailo-rpi5-examples`](https://github.com/hailo-ai/hailo-rpi5-examples) | MIT | Design reference only. Physics and swept collision were independently implemented. |
+| Constants for decoding YOLOv8-pose output tensors | `/usr/include/hailo/tappas/pose_estimation/yolov8pose_postprocess.cpp` | LGPL | Consulted for anchor strides and channel layout; the NumPy decoder is independent. |
+| `yolov8s_pose_h10.hef` | Debian package `hailo-models` on the device | Vendor licence, as installed | Loaded from `/usr/share/hailo-models/`; not vendored here. |
 
-## Trademark
+## Emoji and trademark note
 
-The Game library tile reads "Fruit Ninja" because that is what a person in the
-room calls this kind of game. The code, the module names and this document call
-it Fruit Slice. **Nothing from the commercial game of that name is used or
-imitated** — not its art, its sounds, its music, its UI, its fonts or its
-wording. If the name is a problem, it is one string in
-`CATALOGUE` in `aipi5/games/manager.py`.
+Fruit emoji are optional garnish rendered from the system font (Noto Color
+Emoji on the Pi, SIL Open Font License 1.1); no font is bundled.
 
-## Bundled asset files
+The library tile says “Fruit Ninja” because that is the familiar name for the
+activity. No artwork, audio, music, UI, font, or code from the commercial game
+is used.
 
-None.
-
-| File | Pack | Author | Source | Licence | Modifications |
-|---|---|---|---|---|---|
-| _(none)_ | | | | | |
+The Boxing game likewise contains no art, audio, characters, code, or other
+assets from the linked reference games. Those links informed only broad
+interaction goals (motion training and timed parry/counter play); all shipped
+visuals and sounds are original procedural work in this repository.

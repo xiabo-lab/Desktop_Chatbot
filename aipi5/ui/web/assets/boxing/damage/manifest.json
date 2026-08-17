@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "states_per_location": 4,
+  "levels": {
+    "0": "normal",
+    "1": "first-punch",
+    "2": "second-punch",
+    "3": "third-punch"
+  },
+  "opponent": {
+    "key_order": [
+      "left_eye",
+      "right_eye",
+      "left_shoulder",
+      "right_shoulder"
+    ],
+    "pattern": "opponent/{key}.webp",
+    "count": 256,
+    "size": [
+      488,
+      768
+    ]
+  },
+  "player": {
+    "key_order": [
+      "left_shoulder",
+      "right_shoulder"
+    ],
+    "hidden_locations": [
+      "left_eye",
+      "right_eye"
+    ],
+    "pattern": "player/{key}.webp",
+    "count": 16,
+    "size": [
+      510,
+      540
+    ]
+  },
+  "total": 272
+}

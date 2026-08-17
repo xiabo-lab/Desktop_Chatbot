@@ -1,0 +1,909 @@
+{
+  "version": 2,
+  "states_per_location": 4,
+  "levels": {
+    "0": "normal",
+    "1": "first-punch",
+    "2": "second-punch",
+    "3": "third-punch"
+  },
+  "player": {
+    "key_order": [
+      "left_shoulder",
+      "right_shoulder"
+    ],
+    "hidden_locations": [
+      "left_eye",
+      "right_eye"
+    ],
+    "poses": [
+      "idle",
+      "high_guard",
+      "left_block",
+      "right_block",
+      "left_straight_head",
+      "left_straight_body",
+      "right_straight_head",
+      "right_straight_body",
+      "left_hook_head",
+      "left_hook_body",
+      "right_hook_head",
+      "right_hook_body",
+      "dodge_left",
+      "dodge_right",
+      "duck",
+      "lean_back",
+      "left_parry",
+      "right_parry",
+      "head_hit",
+      "body_hit",
+      "knockout"
+    ],
+    "pose_count": 21,
+    "count_per_pose": 16,
+    "count": 336,
+    "size": [
+      480,
+      640
+    ],
+    "pattern": "matrix/player/{pose}/{key}.webp",
+    "anchors": {
+      "idle": {
+        "left_shoulder": [
+          196,
+          178,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          336,
+          178,
+          25,
+          19
+        ]
+      },
+      "high_guard": {
+        "left_shoulder": [
+          185,
+          192,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          325,
+          192,
+          25,
+          19
+        ]
+      },
+      "left_block": {
+        "left_shoulder": [
+          201,
+          181,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          341,
+          181,
+          25,
+          19
+        ]
+      },
+      "right_block": {
+        "left_shoulder": [
+          200,
+          193,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          340,
+          193,
+          25,
+          19
+        ]
+      },
+      "left_straight_head": {
+        "left_shoulder": [
+          176,
+          193,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          316,
+          193,
+          25,
+          19
+        ]
+      },
+      "left_straight_body": {
+        "left_shoulder": [
+          206,
+          205,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          346,
+          205,
+          25,
+          19
+        ]
+      },
+      "right_straight_head": {
+        "left_shoulder": [
+          171,
+          186,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          311,
+          186,
+          25,
+          19
+        ]
+      },
+      "right_straight_body": {
+        "left_shoulder": [
+          262,
+          235,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          402,
+          235,
+          25,
+          19
+        ]
+      },
+      "left_hook_head": {
+        "left_shoulder": [
+          210,
+          193,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          350,
+          193,
+          25,
+          19
+        ]
+      },
+      "left_hook_body": {
+        "left_shoulder": [
+          232,
+          258,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          372,
+          258,
+          25,
+          19
+        ]
+      },
+      "right_hook_head": {
+        "left_shoulder": [
+          190,
+          181,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          330,
+          181,
+          25,
+          19
+        ]
+      },
+      "right_hook_body": {
+        "left_shoulder": [
+          214,
+          224,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          354,
+          224,
+          25,
+          19
+        ]
+      },
+      "dodge_left": {
+        "left_shoulder": [
+          294,
+          261,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          434,
+          261,
+          25,
+          19
+        ]
+      },
+      "dodge_right": {
+        "left_shoulder": [
+          243,
+          266,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          383,
+          266,
+          25,
+          19
+        ]
+      },
+      "duck": {
+        "left_shoulder": [
+          210,
+          306,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          350,
+          306,
+          25,
+          19
+        ]
+      },
+      "lean_back": {
+        "left_shoulder": [
+          62,
+          201,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          202,
+          201,
+          25,
+          19
+        ]
+      },
+      "left_parry": {
+        "left_shoulder": [
+          199,
+          181,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          339,
+          181,
+          25,
+          19
+        ]
+      },
+      "right_parry": {
+        "left_shoulder": [
+          192,
+          184,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          332,
+          184,
+          25,
+          19
+        ]
+      },
+      "head_hit": {
+        "left_shoulder": [
+          106,
+          205,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          246,
+          205,
+          25,
+          19
+        ]
+      },
+      "body_hit": {
+        "left_shoulder": [
+          191,
+          281,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          331,
+          281,
+          25,
+          19
+        ]
+      },
+      "knockout": {
+        "left_shoulder": [
+          163,
+          269,
+          25,
+          19
+        ],
+        "right_shoulder": [
+          221,
+          301,
+          25,
+          19
+        ]
+      }
+    }
+  },
+  "opponent": {
+    "key_order": [
+      "left_eye",
+      "right_eye",
+      "left_shoulder",
+      "right_shoulder"
+    ],
+    "poses": [
+      "idle",
+      "high_guard",
+      "body_guard",
+      "head_hit_left",
+      "left_jab_head",
+      "left_jab_body",
+      "right_cross_head",
+      "right_cross_body",
+      "left_hook_head",
+      "left_hook_body",
+      "right_hook_head",
+      "right_hook_body",
+      "dodge_left",
+      "dodge_right",
+      "duck",
+      "lean_back",
+      "head_hit_right",
+      "parried",
+      "body_hit",
+      "knockout"
+    ],
+    "pose_count": 20,
+    "count_per_pose": 256,
+    "count": 5120,
+    "size": [
+      360,
+      480
+    ],
+    "pattern": "matrix/opponent/{pose}/{key}.webp",
+    "anchors": {
+      "idle": {
+        "left_eye": [
+          150,
+          92,
+          12,
+          9
+        ],
+        "right_eye": [
+          132,
+          92,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          193,
+          136,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          89,
+          136,
+          18,
+          14
+        ]
+      },
+      "high_guard": {
+        "left_eye": [
+          165,
+          99,
+          12,
+          9
+        ],
+        "right_eye": [
+          147,
+          99,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          208,
+          143,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          104,
+          143,
+          18,
+          14
+        ]
+      },
+      "body_guard": {
+        "left_eye": [
+          173,
+          114,
+          12,
+          9
+        ],
+        "right_eye": [
+          155,
+          114,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          216,
+          158,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          112,
+          158,
+          18,
+          14
+        ]
+      },
+      "head_hit_left": {
+        "left_eye": [
+          222,
+          106,
+          12,
+          9
+        ],
+        "right_eye": [
+          204,
+          106,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          265,
+          150,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          161,
+          150,
+          18,
+          14
+        ]
+      },
+      "left_jab_head": {
+        "left_eye": [
+          180,
+          102,
+          12,
+          9
+        ],
+        "right_eye": [
+          162,
+          102,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          223,
+          146,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          119,
+          146,
+          18,
+          14
+        ]
+      },
+      "left_jab_body": {
+        "left_eye": [
+          223,
+          106,
+          12,
+          9
+        ],
+        "right_eye": [
+          205,
+          106,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          266,
+          150,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          162,
+          150,
+          18,
+          14
+        ]
+      },
+      "right_cross_head": {
+        "left_eye": [
+          227,
+          88,
+          12,
+          9
+        ],
+        "right_eye": [
+          209,
+          88,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          270,
+          132,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          166,
+          132,
+          18,
+          14
+        ]
+      },
+      "right_cross_body": {
+        "left_eye": [
+          235,
+          131,
+          12,
+          9
+        ],
+        "right_eye": [
+          217,
+          131,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          278,
+          175,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          174,
+          175,
+          18,
+          14
+        ]
+      },
+      "left_hook_head": {
+        "left_eye": [
+          235,
+          99,
+          12,
+          9
+        ],
+        "right_eye": [
+          217,
+          99,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          278,
+          143,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          174,
+          143,
+          18,
+          14
+        ]
+      },
+      "left_hook_body": {
+        "left_eye": [
+          235,
+          143,
+          12,
+          9
+        ],
+        "right_eye": [
+          217,
+          143,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          278,
+          187,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          174,
+          187,
+          18,
+          14
+        ]
+      },
+      "right_hook_head": {
+        "left_eye": [
+          213,
+          93,
+          12,
+          9
+        ],
+        "right_eye": [
+          195,
+          93,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          256,
+          137,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          152,
+          137,
+          18,
+          14
+        ]
+      },
+      "right_hook_body": {
+        "left_eye": [
+          230,
+          127,
+          12,
+          9
+        ],
+        "right_eye": [
+          212,
+          127,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          273,
+          171,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          169,
+          171,
+          18,
+          14
+        ]
+      },
+      "dodge_left": {
+        "left_eye": [
+          240,
+          151,
+          12,
+          9
+        ],
+        "right_eye": [
+          222,
+          151,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          283,
+          195,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          179,
+          195,
+          18,
+          14
+        ]
+      },
+      "dodge_right": {
+        "left_eye": [
+          224,
+          151,
+          12,
+          9
+        ],
+        "right_eye": [
+          206,
+          151,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          267,
+          195,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          163,
+          195,
+          18,
+          14
+        ]
+      },
+      "duck": {
+        "left_eye": [
+          184,
+          177,
+          12,
+          9
+        ],
+        "right_eye": [
+          166,
+          177,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          227,
+          221,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          123,
+          221,
+          18,
+          14
+        ]
+      },
+      "lean_back": {
+        "left_eye": [
+          271,
+          105,
+          12,
+          9
+        ],
+        "right_eye": [
+          253,
+          105,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          314,
+          149,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          210,
+          149,
+          18,
+          14
+        ]
+      },
+      "head_hit_right": {
+        "left_eye": [
+          268,
+          98,
+          12,
+          9
+        ],
+        "right_eye": [
+          250,
+          98,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          311,
+          142,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          207,
+          142,
+          18,
+          14
+        ]
+      },
+      "parried": {
+        "left_eye": [
+          242,
+          89,
+          12,
+          9
+        ],
+        "right_eye": [
+          224,
+          89,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          285,
+          133,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          181,
+          133,
+          18,
+          14
+        ]
+      },
+      "body_hit": {
+        "left_eye": [
+          221,
+          116,
+          12,
+          9
+        ],
+        "right_eye": [
+          203,
+          116,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          264,
+          160,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          160,
+          160,
+          18,
+          14
+        ]
+      },
+      "knockout": {
+        "left_eye": [
+          303,
+          214,
+          12,
+          9
+        ],
+        "right_eye": [
+          285,
+          214,
+          12,
+          9
+        ],
+        "left_shoulder": [
+          245,
+          211,
+          18,
+          14
+        ],
+        "right_shoulder": [
+          209,
+          235,
+          18,
+          14
+        ]
+      }
+    }
+  },
+  "clean_pose_bases": 41,
+  "total": 5456
+}
