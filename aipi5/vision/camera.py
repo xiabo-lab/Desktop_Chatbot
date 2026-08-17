@@ -1,4 +1,4 @@
-"""The Logitech Brio 101, opened once and shared by both readers.
+"""The Logitech BRIO 4K, opened once and shared by both readers.
 
 The camera allows exactly one owner, the same way the microphone does. Two
 things in this assistant want frames from it — the person detector, twice a
@@ -9,7 +9,7 @@ handle inside it, and a lock. That is the whole reason the class exists rather
 than a pair of functions.
 
 **This is a USB camera now, not the CSI one.** The Camera Module 3 was replaced
-with a Brio 101, and the difference is not only which library opens it:
+with a USB Logitech Brio, and the difference is not only which library opens it:
 
 * *No two streams.* picamera2 could be configured with a `main` still stream
   and a `lores` detection stream that libcamera produced from one sensor read,
@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -97,6 +98,64 @@ LOST_SLOW_RETRY_S = 30.0
 PREVIEW_QUALITY = 70
 
 
+def _device_path(device: str) -> str:
+    """Turn OpenCV's accepted bare index into a path `v4l2-ctl` accepts."""
+    value = str(device).strip()
+    return f"/dev/video{value}" if value.isdigit() else value
+
+
+def _set_dynamic_framerate(device: str, enabled: bool) -> bool:
+    """Best-effort UVC exposure policy for the current camera owner.
+
+    The BRIO 4K advertises 720p90 while its dynamic-frame-rate control can
+    silently lengthen exposure and deliver far less. On the installed camera
+    that was about 38 fps in room light. Games disable the control so the
+    sensor holds the requested cadence; the assistant enables it again for
+    better low-light stills. Cameras without this UVC control simply ignore
+    the optimisation and continue with their negotiated fallback mode.
+    """
+    node = _device_path(device)
+    if not node:
+        return False
+    value = 1 if enabled else 0
+    try:
+        result = subprocess.run(
+            ["v4l2-ctl", "-d", node,
+             f"--set-ctrl=exposure_dynamic_framerate={value}"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.debug("could not set dynamic frame rate on %s: %s", node, exc)
+        return False
+    if result.returncode:
+        detail = (result.stderr or result.stdout or "unsupported").strip()
+        log.debug("dynamic frame rate is unavailable on %s: %s", node, detail)
+        return False
+    return True
+
+
+def _negotiated_fps(capture, cv2) -> float:
+    """The driver's accepted cadence, or 0 when the backend cannot report it."""
+    try:
+        value = float(capture.get(cv2.CAP_PROP_FPS))
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
+    return value if value > 0 else 0.0
+
+
+def _negotiated_fourcc(capture, cv2) -> str:
+    """The driver's accepted fourcc as readable text."""
+    try:
+        value = int(capture.get(cv2.CAP_PROP_FOURCC))
+    except (AttributeError, TypeError, ValueError):
+        return ""
+    text = "".join(chr((value >> (8 * index)) & 0xff) for index in range(4))
+    return text.strip("\x00 ")
+
+
 @dataclass(frozen=True)
 class Capture:
     """One still, on disk and ready to send."""
@@ -130,7 +189,7 @@ def _attribute(node: Path, name: str) -> str:
 
 
 def _sysfs_name(node: Path) -> str:
-    """What the kernel calls this video node, e.g. "Brio 101"."""
+    """What the kernel calls this video node, e.g. "Logitech BRIO"."""
     return _attribute(node, "name")
 
 
@@ -156,9 +215,8 @@ def _rank(node: Path, hint: str) -> tuple:
         # Then the configured product name, which is what tells two webcams
         # apart once somebody plugs in a second one.
         0 if hint and hint in _sysfs_name(node).lower() else 1,
-        # Then the node's own index within its device: UVC gives 0 to the
-        # capture node and 1 to the metadata node, and the metadata node opens
-        # perfectly while never producing an image.
+        # Then the node's own index within its device. The BRIO 4K uses 0 for
+        # colour capture, 1 for its metadata, 2 for IR, and 3 for IR metadata.
         _to_int(_attribute(node, "index"), 99),
         _to_int(node.name[len("video"):], 999),
     )
@@ -179,12 +237,12 @@ def _candidates(cfg) -> list[str]:
     the failure that is discovered from a description of the wrong room.
 
     Otherwise the nodes are ranked, because `/dev/video0` is not an identity.
-    This Pi has twenty video nodes: two are the Brio's, and the other eighteen
-    are the ISP and the HEVC decoder, which are always present and are never
-    the camera. The Brio's own two are a capture node and a metadata node, and
-    the metadata node opens cleanly and never yields an image. Which is which
-    moves with what else was plugged in at boot, so this ranks on the driver,
-    the product name and the UVC node index rather than trusting the number.
+    The BRIO 4K exposes colour capture, infrared capture, and two metadata
+    nodes under the same product name. Only UVC interface index 0 is an
+    automatic colour-camera candidate. The other Pi video nodes belong to the
+    ISP and decoders and cannot produce a camera frame. Node numbers move with
+    what else was plugged in at boot, so this uses driver, product name, and
+    UVC interface index rather than trusting the number.
 
     The ISP and decoder nodes are then dropped rather than merely ranked last,
     and that is a measurement rather than a preference: refusing a node that is
@@ -193,10 +251,11 @@ def _candidates(cfg) -> list[str]:
     Nothing is lost by dropping them, because a memory-to-memory ISP node
     cannot produce a camera frame however long it is asked.
 
-    A node is worth trying if its driver is `uvcvideo` — every USB webcam and
-    nothing else here — or if its name matches the hint, which is what keeps a
-    camera on some other driver reachable by naming it in the configuration.
-    Neither test involves opening anything.
+    A node is worth trying if it is a UVC device's primary interface (index 0),
+    or if it is on another driver and its name matches the hint. A missing
+    sysfs index is accepted for compatibility. An explicit `device` above is
+    still never second-guessed, including if somebody intentionally names IR.
+    None of these tests opens the device.
     """
     wanted = str(cfg.device or "").strip()
     if wanted and wanted.lower() != "auto":
@@ -209,9 +268,15 @@ def _candidates(cfg) -> list[str]:
         return []
 
     hint = str(cfg.name_hint or "").strip().lower()
-    worth_trying = [node for node in nodes
-                    if _driver(node) == "uvcvideo"
-                    or (hint and hint in _sysfs_name(node).lower())]
+    worth_trying = []
+    for node in nodes:
+        driver = _driver(node)
+        index = _attribute(node, "index")
+        if driver == "uvcvideo":
+            if index in ("", "0"):
+                worth_trying.append(node)
+        elif hint and hint in _sysfs_name(node).lower():
+            worth_trying.append(node)
     if not worth_trying:
         # The whole list, because this is the message somebody debugs from and
         # the answer is usually either a USB cable or a `name_hint` that no
@@ -240,10 +305,16 @@ class Camera:
         self._device = ""
         self._name = ""
         self._size = (cfg.capture_width, cfg.capture_height)
+        self._fps = 0.0
+        self._format = ""
         self._drain = DEFAULT_DRAIN
         #: Who currently has the device instead of us, or "". While this is
         #: set, `open()` refuses — see `lend`.
         self._lent = ""
+        #: Why the device was let go on purpose, or "". Unlike `_lent` this does
+        #: *not* refuse a reopen: it means "nothing needs this right now", and
+        #: the next reader takes it back automatically. See `sleep`.
+        self._asleep = ""
         #: Who we are trying to take it back from, or "". See `reclaim`.
         self._reclaiming = ""
         self._reclaim_until = 0.0
@@ -317,10 +388,18 @@ class Camera:
                     self._capture = capture
                     self._started = True
                     self._error = None
+                    # Whatever the reason it was let go, it is open now. Clearing
+                    # it here rather than in `wake` covers every other way back
+                    # in — a reclaim after a call, a replug — so the two flags
+                    # can never disagree about whether there is a handle.
+                    self._asleep = ""
                     self._device = device
                     self._name = _sysfs_name(Path(device)) or "USB camera"
-                    log.info("camera ready: %s on %s at %dx%d, %d grabs a frame",
-                             self._name, device, *self._size, self._drain)
+                    cadence = f"{self._fps:g} fps" if self._fps else "unknown fps"
+                    log.info("camera ready: %s on %s at %dx%d %s, %s, "
+                             "%d grabs a frame", self._name, device,
+                             *self._size, self._format or "unknown format",
+                             cadence, self._drain)
                     return True
 
             # Named, not listed. This goes across the top of a 1280 px screen
@@ -348,6 +427,10 @@ class Camera:
             index = None
 
         try:
+            # Presence detection and vision stills favour exposure quality.
+            # CameraLease changes this to fixed cadence for 90 fps gameplay,
+            # and reclaiming the camera restores it here.
+            _set_dynamic_framerate(device, True)
             # CAP_V4L2 explicitly rather than CAP_ANY. Every property set below
             # — the fourcc, the buffer count, the frame size — is honoured by
             # the V4L2 backend and silently ignored by the GStreamer one, which
@@ -374,6 +457,8 @@ class Camera:
             # back rather than assumed — see `_read` for what it is used for.
             capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             self._drain = self._drain_for(capture.get(cv2.CAP_PROP_BUFFERSIZE))
+            self._fps = _negotiated_fps(capture, cv2)
+            self._format = _negotiated_fourcc(capture, cv2)
 
             frame = self._warm_up(capture)
             if frame is None:
@@ -529,6 +614,10 @@ class Camera:
         see" asked twice, five minutes apart, in a room where something has
         changed, has two different right answers.
         """
+        # Before the lock, because `wake` takes it. Somebody asking what the
+        # camera sees while the screen is asleep is exactly the case this is
+        # for: the question is proof that the device is wanted.
+        self.wake()
         with self._lock:
             if not self._started or self._capture is None:
                 log.info("no camera to capture from (%s)", self._error or "not started")
@@ -579,6 +668,7 @@ class Camera:
         Returned full size. The detector resizes to its model's input as its
         first step, so a downscale here would be a resample thrown away.
         """
+        self.wake()
         with self._lock:
             if not self._started or self._capture is None:
                 return None
@@ -609,6 +699,9 @@ class Camera:
         stream is rate-limited in `aipi5/ui/server.py` rather than here is that
         the limit is a property of who is watching, not of the camera.
         """
+        # Somebody is looking at the camera page, so the camera is wanted even
+        # if the idle policy had let it go.
+        self.wake()
         with self._lock:
             if not self._started or self._capture is None:
                 return None
@@ -660,6 +753,66 @@ class Camera:
     # state machine says the call is over — which may be because the *phone*
     # hung up, on a thread that knows nothing about whoever released it.
 
+    # ── letting the device go while nothing needs it ─────────────────
+    #
+    # Lending above answers "somebody else must have this device". These two
+    # answer a different question: "nobody needs it at all". A UVC camera that
+    # is open is a camera being read — the detector polls it twice a second —
+    # and on this device that is a USB transfer, a JPEG decode and an
+    # accelerator inference every 500 ms, for a room with nobody in it.
+    #
+    # **The difference from `lend` is that a sleeping camera reopens itself.**
+    # Lending refuses `open()` until the borrower gives it back, because opening
+    # it would take a call's picture away. Nothing owns a sleeping camera, so
+    # every reader below wakes it instead of failing — which is what keeps
+    # "what do you see?" working while the screen is asleep, and keeps this from
+    # becoming a flag that every caller has to remember to clear.
+
+    def sleep(self, why: str = "nobody is there") -> bool:
+        """Close the handle, and reopen it when something next reads. Idempotent.
+
+        Returns True if the camera is asleep afterwards — including when it was
+        never running, so a caller does not have to distinguish "released it"
+        from "there was nothing to release".
+        """
+        if not self.cfg.enabled:
+            return False
+        with self._lock:
+            if self._lent:
+                # Somebody else already has it, which achieves the same thing
+                # and must not be quietly overwritten: their `reclaim` is what
+                # decides when the device comes back.
+                return False
+            if self._asleep:
+                return True
+            self._asleep = why
+            was_running = self._started
+        self.close()
+        log.info("camera asleep: %s%s", why,
+                 "" if was_running else " (it was not running)")
+        return True
+
+    def wake(self) -> bool:
+        """Reopen a sleeping camera. True when there is one running afterwards.
+
+        A no-op with no lock contention on the overwhelmingly common path, which
+        matters because every read calls it: the check is one string compare.
+        """
+        if not self._asleep:
+            return self._started
+        with self._lock:
+            why, self._asleep = self._asleep, ""
+            if self._lent:
+                return False
+        ok = self.open()
+        log.info("camera woken (was asleep: %s)%s", why,
+                 "" if ok else f" — but it would not open: {self._error}")
+        return ok
+
+    @property
+    def asleep(self) -> bool:
+        return bool(self._asleep)
+
     def lend(self, to: str = "a call") -> bool:
         """Close the handle and refuse to reopen until `reclaim`. True if lent.
 
@@ -671,6 +824,11 @@ class Camera:
             if self._lent:
                 return True
             self._lent = to
+            # Exactly one of "lent" and "asleep" at a time. A borrower's
+            # `reclaim` is what decides when this comes back, and leaving the
+            # sleep flag set would have `describe()` reporting both — and the
+            # next reader waking a device a call is using.
+            self._asleep = ""
         # Closed outside the lock, because `close` takes it. The window between
         # these two lines is harmless: `_lent` is already set, so nothing can
         # reopen into it.
@@ -799,7 +957,17 @@ class Camera:
             "device": self._device or str(self.cfg.device),
             "name": self._name,
             "still": f"{self._size[0]}x{self._size[1]}",
+            "mode": {
+                "format": self._format or None,
+                "fps": round(self._fps, 1) if self._fps else None,
+                "requested": (f"{self.cfg.capture_width}x"
+                              f"{self.cfg.capture_height}@{self.cfg.fps}"),
+            },
             "lent_to": self._lent or None,
+            # Not an error and not the same thing as `running: false` with a
+            # reason — the settings page must be able to say "asleep because
+            # nobody is there" rather than implying the Brio is broken.
+            "asleep": self._asleep or None,
             # Distinguishes "no camera was ever found" from "the camera was
             # working and the cable came out", which want different actions.
             "lost": bool(self._lost_since),

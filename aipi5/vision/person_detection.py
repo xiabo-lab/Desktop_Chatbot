@@ -420,7 +420,19 @@ class PresenceWatcher:
 
     `on_change` is called from this thread with a `PresenceEvent`. It must not
     block: it publishes to the UI state, which is a dictionary swap.
+
+    **It can be parked.** `pause`/`resume` exist because this loop is the only
+    thing on the device that reads the camera continuously, and a room with
+    nobody in it does not need watching once the screen has already gone away —
+    see `Assistant._reconcile_camera`. Parking rather than stopping keeps the
+    detector configured: the Hailo HEF costs about a second to load and the
+    thread must be able to come back on a touch without that showing.
     """
+
+    #: How often a parked loop looks up to see whether it has been resumed or
+    #: stopped. An `Event.wait` on a timeout, so it is not a spin — the cost is
+    #: one wakeup a second on a thread that is otherwise doing nothing.
+    PAUSED_POLL_S = 1.0
 
     def __init__(self, camera, detector: Detector, tracker, interval_ms: int,
                  on_change=None):
@@ -431,6 +443,16 @@ class PresenceWatcher:
         self.on_change = on_change
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        #: Set while the loop should be looking. Starts set, so a watcher that
+        #: is never paused behaves exactly as it did before this existed.
+        self._awake = threading.Event()
+        self._awake.set()
+        #: Held for the duration of one look. `pause` takes it, which is how it
+        #: can promise that no read is in flight by the time it returns — and
+        #: that promise is the whole point: without it the frame already being
+        #: fetched would reopen the camera a moment after it was released.
+        self._cycle = threading.Lock()
+        self._paused_because = ""
         self._last_confidence = 0.0
         self._frames = 0
 
@@ -447,16 +469,18 @@ class PresenceWatcher:
 
     def _run(self) -> None:
         while not self._stop.is_set():
+            if not self._awake.is_set():
+                self._awake.wait(self.PAUSED_POLL_S)
+                continue
             started = time.monotonic()
             try:
-                frame = self.camera.frame()
-                if frame is not None:
-                    seen, confidence = self.detector.detect(frame)
-                    self._last_confidence = confidence
-                    self._frames += 1
-                    event = self.tracker.observe(seen)
-                    if event is not None and self.on_change is not None:
-                        self.on_change(event)
+                with self._cycle:
+                    # Re-checked inside the lock. `pause` clears the event and
+                    # then waits here, so a loop that got this far before it was
+                    # asked to stop must not read one more frame — that frame is
+                    # the one that would wake the camera again.
+                    if self._awake.is_set():
+                        self._look()
             except Exception:
                 # This thread must outlive anything that goes wrong in it.
                 # A detector that throws every frame is a log full of traces
@@ -471,10 +495,66 @@ class PresenceWatcher:
             elapsed = time.monotonic() - started
             self._stop.wait(max(0.0, self.interval - elapsed))
 
+    def _look(self) -> None:
+        """One frame, detected and reported. Caller holds `_cycle`."""
+        frame = self.camera.frame()
+        if frame is None:
+            return
+        seen, confidence = self.detector.detect(frame)
+        self._last_confidence = confidence
+        self._frames += 1
+        event = self.tracker.observe(seen)
+        if event is not None and self.on_change is not None:
+            self.on_change(event)
+
+    # ── parking ──────────────────────────────────────────────────────
+
+    def pause(self, why: str = "nothing needs the camera") -> None:
+        """Stop looking, and do not return until any read in flight is done.
+
+        Idempotent, and safe to call from any thread that is not this one. The
+        block is bounded by one detector cycle — a camera read plus an
+        inference, about a tenth of a second on this device.
+        """
+        if not self._awake.is_set():
+            return
+        self._awake.clear()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            with self._cycle:
+                pass
+        self._paused_because = why
+        log.info("person detection parked: %s", why)
+
+    def resume(self) -> None:
+        """Look again, from a clean slate.
+
+        The tracker is reset rather than carried over, and that is the same
+        argument `PresenceTracker.reset` makes for going back to UNKNOWN: a
+        detector that has just been unparked has not observed an empty room, it
+        has observed nothing. Carrying the old state over would mean an empty
+        room's `PERSON_NOT_PRESENT` still standing, so the first person to walk
+        up would produce no *change* and nothing would react to their arrival.
+        """
+        if self._awake.is_set():
+            return
+        self.tracker.reset()
+        self._paused_because = ""
+        self._awake.set()
+        log.info("person detection looking again")
+
+    @property
+    def paused(self) -> bool:
+        return not self._awake.is_set()
+
     def describe(self) -> dict:
         return {
             "backend": self.detector.name,
             "running": self._thread is not None and self._thread.is_alive(),
+            # Parked is not stopped and not broken. Reported separately so the
+            # settings page can say "asleep, waiting for a touch" rather than
+            # showing a running detector that has not seen a frame in an hour.
+            "paused": self.paused,
+            "paused_because": self._paused_because or None,
             "state": self.tracker.state.value,
             "streak": self.tracker.streak,
             "confidence": round(self._last_confidence, 3),
@@ -483,6 +563,9 @@ class PresenceWatcher:
 
     def stop(self) -> None:
         self._stop.set()
+        # A parked loop is waiting on this, so stopping has to release it or the
+        # join below waits out the poll interval on every shutdown.
+        self._awake.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
         self.detector.close()

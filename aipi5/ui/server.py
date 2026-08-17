@@ -1,7 +1,8 @@
 """The HTTP server behind the touchscreen.
 
-One static page and four small JSON routes, served from a daemon thread inside
-the assistant process. Same shape as AIA's, and for the same reasons: this
+One static page, a small local asset tree, and JSON routes, served from a
+daemon thread inside the assistant process. Same shape as AIA's, and for the
+same reasons: this
 shares a Pi 5 with a wake recogniser, a speech recogniser, a person detector
 and a music player, all of which want the same four cores, so the display costs
 one thread and a poll.
@@ -31,7 +32,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from aipi5.call import signaling as call_signaling
 from aipi5.files import web as files_web
@@ -42,6 +43,40 @@ from aipi5.tools.advice import should_go_outside
 log = logging.getLogger(__name__)
 
 PAGE = Path(__file__).resolve().parent / "web" / "index.html"
+ASSET_ROOT = PAGE.parent / "assets"
+
+# The generated ninja head is active. The MediaPipe files are retained from
+# the former palm-click control for provenance but are no longer loaded; the
+# replacement crossed-arms gesture comes from the Hailo pose stream. Keep this
+# deliberately small rather than growing a general static server here.
+ASSET_TYPES = {
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".task": "application/octet-stream",
+    ".wasm": "application/wasm",
+}
+
+
+def asset_file(request_path: str) -> Path | None:
+    """Resolve one ``/assets/`` URL without allowing it to leave the folder.
+
+    URL decoding happens before the containment check, so both literal and
+    percent-encoded ``..`` are refused.  Backslashes are separators on the
+    development machine and ordinary filename characters on the Pi; resolving
+    through ``Path`` makes the safe answer correct on both.
+    """
+    if not request_path.startswith("/assets/"):
+        return None
+    relative = unquote(request_path.removeprefix("/assets/"))
+    try:
+        candidate = (ASSET_ROOT / relative).resolve()
+        candidate.relative_to(ASSET_ROOT.resolve())
+    except (OSError, ValueError):
+        return None
+    return candidate if candidate.is_file() else None
 
 # The most a client can pull in one request. The page asks again immediately
 # when it gets a full page, so a browser that has been closed for hours
@@ -141,6 +176,8 @@ class _Handler(BaseHTTPRequestHandler):
 
         if route.path in ("/", "/index.html"):
             self._page()
+        elif route.path.startswith("/assets/"):
+            self._asset(route.path)
         elif route.path == "/api/state":
             self._state()
         elif route.path == "/api/feed":
@@ -173,12 +210,28 @@ class _Handler(BaseHTTPRequestHandler):
             self._game_stream()
         elif route.path == "/api/game/hardware":
             self._game_hardware()
+        elif route.path == "/api/game/settings":
+            self._game_settings()
         elif route.path == "/api/game/preview":
             self._game_preview()
         elif route.path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         else:
             self._json({"error": "not found"}, 404)
+
+    def _asset(self, request_path: str) -> None:
+        """Serve a fixed local game asset; never a file outside ``assets``."""
+        path = asset_file(request_path)
+        kind = ASSET_TYPES.get(path.suffix.lower(), "") if path else ""
+        if path is None or not kind:
+            self._json({"error": "not found"}, 404)
+            return
+        try:
+            body = path.read_bytes()
+        except OSError:
+            self._json({"error": "not found"}, 404)
+            return
+        self._send(200, body, kind)
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
@@ -199,7 +252,8 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path not in ("/api/action", "/api/shutdown", "/api/files/delete",
                         "/api/photos", "/api/game/open", "/api/game/close",
-                        "/api/game/command", "/api/game/debug"):
+                        "/api/game/command", "/api/game/debug",
+                        "/api/game/settings"):
             self._json({"error": "not found"}, 404)
             return
 
@@ -241,6 +295,17 @@ class _Handler(BaseHTTPRequestHandler):
         # one place decides what an action is, and it is the same place that
         # holds the list.
         if self.ui.state.request(action):
+            if action == "wake":
+                # Here rather than only where the voice loop consumes the queued
+                # action, and the reason is the camera. The screensaver now takes
+                # the Brio with it, so a touch is the only thing that can bring
+                # either back — and the voice loop only reaches its queue when a
+                # microphone frame arrives. A dead microphone used to cost the
+                # assistant its ears; it must not also cost it its screen.
+                #
+                # Idempotent with the voice loop's own `suppress`, which still
+                # runs when the action is dequeued.
+                self.ui.on_wake("a touch")
             self._json({"ok": True, "action": action})
         else:
             self._json({"ok": False, "error": "not accepted"}, 400)
@@ -360,6 +425,13 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._json(games.hardware())
 
+    def _game_settings(self) -> None:
+        """The small, persistent set of choices shown under Settings."""
+        games = self._game()
+        if games is None:
+            return
+        self._json(games.settings())
+
     def _game_post(self, path: str, payload: dict) -> None:
         games = self._game()
         if games is None:
@@ -377,6 +449,8 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/api/game/debug":
                 games.set_debug(bool(payload.get("on")))
                 self._json({"ok": True, "debug": games.debug})
+            elif path == "/api/game/settings":
+                self._json(games.set_round_seconds(payload.get("round_seconds")))
             else:
                 self._json({"error": "not found"}, 404)
         except GameError as exc:
@@ -952,9 +1026,13 @@ class WebUI:
     def __init__(self, cfg, *, state, history, info,
                  weather=None, news=None, camera=None, call=None,
                  on_call_change=lambda: None, countdown=None, files=None,
-                 photos=None, screen=None, games=None):
+                 photos=None, screen=None, games=None, on_wake=lambda why: None):
         self.cfg = cfg
         self.state = state
+        # Called the moment a `wake` arrives, before it is queued for the voice
+        # loop. See `_post`: with the camera released while the screen is away, a
+        # touch is the only way back, and it must not wait on the microphone.
+        self.on_wake = on_wake
         # The AI Motion game manager, or None when games are off. This module
         # knows only that it can be asked to open, close and describe a game;
         # everything about cameras, accelerators and screensavers is the
@@ -992,11 +1070,10 @@ class WebUI:
         self._page: bytes | None = None
 
     def page(self) -> bytes | None:
-        """The single page, read once and held.
+        """Read the single application page once and hold it.
 
-        One file at a fixed path. There is no static directory and no path
-        joining anywhere in this module, so there is nothing for a crafted URL
-        to traverse into.
+        Game assets use the separate, containment-checked ``asset_file`` path;
+        this method never resolves a request URL.
         """
         if self._page is None:
             try:

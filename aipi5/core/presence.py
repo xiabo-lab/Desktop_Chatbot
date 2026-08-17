@@ -136,12 +136,34 @@ class ScreensaverPolicy:
     by whatever is already looping — the UI state publisher — so there is no
     second schedule to reason about, and the answer is a pure function of the
     last presence change and the current time.
+
+    **Two countdowns, not one, and they answer different questions.**
+    `timeout_seconds` is for a room somebody has just walked out of: the camera
+    watched them leave, so it is certain, and being quick about it is what keeps
+    the camera and a core from running for an empty room.
+
+    `wake_grace_seconds` is for the other case, which only exists now that the
+    camera is released along with the screen: somebody touched the screen and
+    the camera has just started looking again. Presence is UNKNOWN, not absent —
+    nothing has been observed yet — and the person who tapped may be standing to
+    one side reading it, out of the camera's view. Taking the screen away from
+    them after a minute because a detector has not agreed with itself yet is the
+    failure this number prevents, so it is minutes rather than seconds.
     """
 
-    def __init__(self, timeout_seconds: float = 60.0, enabled: bool = True):
+    def __init__(self, timeout_seconds: float = 60.0, enabled: bool = True,
+                 wake_grace_seconds: float | None = None):
         self.timeout_seconds = timeout_seconds
+        #: Defaults to `timeout_seconds`, so a deployment that never sets it
+        #: behaves exactly as this class did before there were two.
+        self.wake_grace_seconds = (timeout_seconds if wake_grace_seconds is None
+                                   else wake_grace_seconds)
         self.enabled = enabled
         self._empty_since: float | None = None
+        #: How long the countdown that is currently running is for. Held rather
+        #: than chosen inside `should_show`, because by the time that is asked
+        #: the reason the countdown started is gone.
+        self._countdown_s = timeout_seconds
         self._showing = False
 
     @property
@@ -166,7 +188,28 @@ class ScreensaverPolicy:
                 log.info("person returned; leaving the screensaver")
             self._showing = False
         elif event.left:
-            self._empty_since = event.at
+            # **Two ways to arrive at "nobody", and only one of them is a person
+            # leaving.** `previous` is what tells them apart, and getting this
+            # wrong is what made the grace period useless in the first version:
+            # a touch wakes the screen, the detector is unparked and reset to
+            # UNKNOWN, and four seconds later it reports its first opinion —
+            # "nobody" — which looked exactly like somebody walking out and
+            # replaced the five-minute grace with the sixty-second timeout. The
+            # screen then went dark a minute after being touched, in front of
+            # whoever touched it.
+            if event.previous is Presence.PERSON_PRESENT:
+                # The camera watched them go. The certain case: short countdown,
+                # timed from the moment they left.
+                self._empty_since = event.at
+                self._countdown_s = self.timeout_seconds
+            elif self._empty_since is None:
+                # A detector forming its first opinion, and no countdown running
+                # — a boot into an empty room. Ordinary timeout, because nothing
+                # has been touched and nobody is waiting on this screen.
+                self._empty_since = event.at
+                self._countdown_s = self.timeout_seconds
+            # Otherwise: a first opinion while a countdown is already running.
+            # Whoever started that countdown knew more than this event does.
 
     def should_show(self, now: float | None = None) -> bool:
         now = time.monotonic() if now is None else now
@@ -178,7 +221,7 @@ class ScreensaverPolicy:
             return False
         if self._empty_since is None:
             return self._showing
-        if not self._showing and now - self._empty_since >= self.timeout_seconds:
+        if not self._showing and now - self._empty_since >= self._countdown_s:
             log.info("no person for %.0fs; showing the screensaver",
                      now - self._empty_since)
             self._showing = True
@@ -207,11 +250,17 @@ class ScreensaverPolicy:
         front of the camera should not have a countdown running at all — their
         arrival already cleared it — while activity with nobody in view means
         the room is still empty and the clock should come back on schedule.
+
+        **The restarted countdown is the grace one, not the timeout.** This is
+        the touch that woke the screen, and the camera it is about to reopen has
+        not seen anything yet. See `wake_grace_seconds`.
         """
         now = time.monotonic() if now is None else now
         if self._showing:
-            log.info("activity while the screensaver was up; taking it down")
+            log.info("activity while the screensaver was up; taking it down "
+                     "for at least %.0fs", self.wake_grace_seconds)
         self._showing = False
         # Restart from this moment when the room is empty; stop entirely when
         # somebody is actually there.
         self._empty_since = None if person_present else now
+        self._countdown_s = self.wake_grace_seconds

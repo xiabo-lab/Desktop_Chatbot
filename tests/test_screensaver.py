@@ -16,6 +16,7 @@ from datetime import datetime
 
 from aipi5.core.presence import Presence, PresenceEvent, ScreensaverPolicy
 from aipi5.screensaver.manager import Mode, ScreensaverManager
+from aipi5.screensaver.power import IdleHardware
 from aipi5.screensaver.schedule import (ScheduleManager, Window, format_hhmm,
                                         parse_hhmm)
 
@@ -247,6 +248,100 @@ class TestTheScreensaverIsVisualOnly(unittest.TestCase):
                         if not name.startswith("_"))
         self.assertEqual(public, ["describe", "held_by", "hold", "log_startup",
                                   "mode", "release", "snapshot"])
+
+
+class TestIdleHardware(unittest.TestCase):
+    """What the idle screen switches off, and in what order.
+
+    The order is the whole of it. Every read the detector makes wakes a sleeping
+    camera — `Camera.frame` is built that way so nothing else on the device has
+    to know the state exists — so releasing the camera before parking the
+    detector reopens the node a moment later and saves nothing at all. These
+    tests are the only place that ordering is written down as a requirement
+    rather than as a comment.
+    """
+
+    def make(self, enabled: bool = True):
+        calls: list[str] = []
+
+        class FakeWatcher:
+            def pause(self, why=""):
+                calls.append("park the detector")
+
+            def resume(self):
+                calls.append("look again")
+
+        class FakeCamera:
+            def sleep(self, why=""):
+                calls.append("release the camera")
+                return True
+
+            def wake(self):
+                calls.append("open the camera")
+                return True
+
+        watcher = FakeWatcher()
+        idle = IdleHardware(FakeCamera(), lambda: watcher, enabled=enabled)
+        return idle, calls
+
+    def test_the_detector_parks_before_the_camera_is_released(self):
+        idle, calls = self.make()
+        idle.screen_changed(True)
+        self.assertEqual(calls, ["park the detector", "release the camera"])
+
+    def test_the_camera_opens_before_the_detector_looks_again(self):
+        idle, calls = self.make()
+        idle.screen_changed(True)
+        calls.clear()
+        idle.screen_changed(False)
+        self.assertEqual(calls, ["open the camera", "look again"])
+
+    def test_only_the_edges_cost_anything(self):
+        # `Assistant.publish` calls this several times a second, and both sides
+        # are hundreds of milliseconds of UVC open/close.
+        idle, calls = self.make()
+        for _ in range(20):
+            idle.screen_changed(True)
+        for _ in range(20):
+            idle.screen_changed(False)
+        self.assertEqual(calls, ["park the detector", "release the camera",
+                                 "open the camera", "look again"])
+
+    def test_it_can_be_turned_off_entirely(self):
+        # `screensaver.release_camera: false` puts section 26 back: presence
+        # takes the screensaver down by itself, at the cost of a camera that
+        # runs all day.
+        idle, calls = self.make(enabled=False)
+        idle.screen_changed(True)
+        idle.screen_changed(False)
+        self.assertEqual(calls, [])
+        self.assertFalse(idle.asleep)
+
+    def test_a_device_with_no_detector_still_releases_the_camera(self):
+        # No accelerator, or a camera that was missing at boot: `Assistant`
+        # never builds a watcher, and the camera must still be let go.
+        calls: list[str] = []
+
+        class FakeCamera:
+            def sleep(self, why=""):
+                calls.append("release the camera")
+                return True
+
+            def wake(self):
+                calls.append("open the camera")
+                return True
+
+        idle = IdleHardware(FakeCamera(), lambda: None)
+        idle.screen_changed(True)
+        idle.screen_changed(False)
+        self.assertEqual(calls, ["release the camera", "open the camera"])
+
+    def test_it_reports_what_it_has_done(self):
+        idle, _ = self.make()
+        self.assertFalse(idle.describe()["camera_released"])
+        idle.screen_changed(True)
+        self.assertTrue(idle.describe()["camera_released"])
+        self.assertTrue(idle.describe()["enabled"])
 
 
 class TestReboot(unittest.TestCase):

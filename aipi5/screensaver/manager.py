@@ -200,6 +200,11 @@ class ScreensaverManager:
         payload = {
             "enabled": self.policy.enabled,
             "timeout_s": self.policy.timeout_seconds,
+            # The second countdown: how long the screen stays up after a touch
+            # woke it and the camera has not found anybody yet. Reported because
+            # "it went dark while I was reading it" is a question about this
+            # number and nothing else. See `ScreensaverPolicy`.
+            "wake_grace_s": self.policy.wake_grace_seconds,
             "showing": self._mode.is_screensaver,
             "mode": WIRE[self._mode],
             "day_mode": self.day_mode,

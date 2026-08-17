@@ -86,7 +86,8 @@ from aipi5.llm.client import OpenAIClient
 from aipi5.llm.conversation import Conversation
 from aipi5.llm.tools import ToolBox
 from aipi5.photos.service import GooglePhotosService
-from aipi5.screensaver import ScheduleManager, ScreensaverManager
+from aipi5.screensaver import (IdleHardware, ScheduleManager,
+                               ScreensaverManager)
 from aipi5.tools.clock import Clock
 from aipi5.tools.news import NewsService
 from aipi5.tools.story import instructions as story_instructions
@@ -273,8 +274,10 @@ class Assistant:
         # ── presence and the screen ──────────────────────────────────
         self.tracker = PresenceTracker(settings.person.frames_to_appear,
                                        settings.person.frames_to_disappear)
-        self.screensaver = ScreensaverPolicy(settings.screensaver.timeout_seconds,
-                                             settings.screensaver.enabled)
+        self.screensaver = ScreensaverPolicy(
+            settings.screensaver.timeout_seconds,
+            settings.screensaver.enabled,
+            wake_grace_seconds=settings.screensaver.wake_grace_seconds)
         # The daytime slideshow's photographs. Built unconditionally, started
         # only when it is on, and never fatal — the same shape as the call
         # server, and for the same reason: a settings page that can say "no
@@ -292,6 +295,14 @@ class Assistant:
             night_mode=settings.screensaver.night_mode,
             timezone=settings.location.timezone)
         self.watcher: PresenceWatcher | None = None
+        # What the idle screen switches off. The camera goes away with the
+        # screensaver and comes back with a touch — the whole of that handoff,
+        # including why it is worth the trade, is in `screensaver/power.py`. The
+        # watcher is passed as a callable because it does not exist yet: it is
+        # built in `start()`, after the camera has been opened.
+        self.idle_hardware = IdleHardware(
+            self.camera, lambda: self.watcher,
+            enabled=settings.screensaver.release_camera)
 
         # ── AI Motion games ──────────────────────────────────────────
         #
@@ -323,7 +334,10 @@ class Assistant:
                          call=self.call, on_call_change=self.on_call_change,
                          countdown=self.countdown, files=self.files,
                          photos=self.photos, screen=self.screen,
-                         games=self.games)
+                         games=self.games,
+                         # A touch on the screensaver has to reopen the camera,
+                         # and it cannot wait for the voice loop to notice.
+                         on_wake=self.wake_screen)
         self.report: preflight.Report | None = None
         # Filled in by `start()`; defaulted here so `verify()` and the settings
         # page are safe to call against an assistant that failed to finish
@@ -549,6 +563,22 @@ class Assistant:
         self.screensaver.presence_changed(event)
         self.publish()
 
+    def wake_screen(self, why: str = "a touch") -> None:
+        """Somebody is here. Take the screen back and start looking again.
+
+        Called from the HTTP thread a touch arrives on, and safe to call from
+        anywhere: everything it does is idempotent. `publish` is what actually
+        reopens the camera — see `_reconcile_camera` — so this stays one line of
+        policy and one of publication rather than a second copy of the handoff.
+        """
+        if self.screensaver.showing:
+            # Only on the edge. This runs on every turn as well as every touch,
+            # and a line per wake word would bury the journal.
+            log.info("waking the screen: %s", why)
+        self.screensaver.suppress(
+            person_present=self.tracker.state is Presence.PERSON_PRESENT)
+        self.publish()
+
     def on_call_change(self) -> None:
         """The call state moved. Called from an HTTP handler; must not block.
 
@@ -673,6 +703,8 @@ class Assistant:
             self.screen.release("choosing photos")
 
         screen = self.screen.snapshot()
+        # The camera goes away with the screen and comes back with it.
+        self.idle_hardware.screen_changed(screen["showing"])
         self.ui_state.update(
             assistant=self.machine.state.value,
             presence=self.tracker.state.value,
@@ -716,6 +748,11 @@ class Assistant:
             "presence": self.watcher.describe() if self.watcher
             else {"backend": "not running", "state": self.tracker.state.value},
             "screensaver": self.screen.describe(),
+            # Whether the camera is released right now, and whether it is
+            # supposed to be. Beside the camera and the detector it moves, so a
+            # dark camera light and a parked detector have one explanation to
+            # read rather than three to correlate.
+            "idle_hardware": self.idle_hardware.describe(),
             "photos": self.photos.describe(),
             # Visible because a stalled housekeeping thread is exactly the
             # kind of failure that otherwise shows up only as "the camera
@@ -1020,8 +1057,13 @@ def main() -> int:
                 # stop: a command spoken from the next room does not put a
                 # person in front of the camera, and the screen has to go back
                 # to sleep afterwards. See `ScreensaverPolicy.suppress`.
-                assistant.screensaver.suppress(
-                    person_present=assistant.tracker.state is Presence.PERSON_PRESENT)
+                #
+                # Through `wake_screen` rather than straight into the policy,
+                # because the screensaver now takes the camera with it and a
+                # wake word has to bring both back — the microphone is never
+                # released, so this is what keeps section 26's promise alive for
+                # anybody who would rather speak than touch.
+                assistant.wake_screen("the wake word")
 
                 turn = machine.begin_turn()
                 machine.to(State.LISTENING)

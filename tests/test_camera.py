@@ -1,6 +1,6 @@
 """Which video node the camera picks, decided without a camera.
 
-The Brio 101 replaced the Camera Module 3 and brought the one problem CSI never
+The Logitech BRIO replaced the Camera Module 3 and brought one problem CSI never
 had: `/dev/video0` is not an identity. A USB camera claims more than one node,
 one of them metadata that opens cleanly and never yields an image, and the
 order they enumerate in depends on what else was plugged in at boot. Getting
@@ -21,6 +21,7 @@ from pathlib import Path
 from unittest import mock
 
 from aipi5.core.config import CameraConfig
+from aipi5.motion.camera_lease import CameraLease
 from aipi5.vision import camera as camera_mod
 
 
@@ -66,8 +67,10 @@ class TestDeviceSelection(unittest.TestCase):
     # decoder always occupy. The camera is not video0 and its nodes are not
     # adjacent to the ones anybody would guess.
     LAYOUT = {
-        "video0": ("Brio 101", "uvcvideo", 0),
-        "video1": ("Brio 101", "uvcvideo", 1),
+        "video0": ("Logitech BRIO", "uvcvideo", 0),
+        "video1": ("Logitech BRIO", "uvcvideo", 1),
+        "video2": ("Logitech BRIO", "uvcvideo", 2),
+        "video3": ("Logitech BRIO", "uvcvideo", 3),
         "video19": ("rpi-hevc-dec", "rpi-hevc-dec", 0),
         "video20": ("pispbe-input", "pispbe", 0),
         "video9": ("pispbe-config", "pispbe", 0),
@@ -76,10 +79,11 @@ class TestDeviceSelection(unittest.TestCase):
     def test_the_webcam_comes_first(self):
         self.assertEqual(self.candidates(self.LAYOUT)[0], "video0")
 
-    def test_the_capture_node_beats_the_metadata_node(self):
-        # Both are the Brio and both open cleanly. Only index 0 ever produces
-        # an image, and trying index 1 first costs a warm-up before failing.
-        self.assertEqual(self.candidates(self.LAYOUT)[:2], ["video0", "video1"])
+    def test_only_the_colour_interface_is_an_automatic_candidate(self):
+        # All four interfaces have the same name. Index 2 produces a real IR
+        # frame, so proving that a node yields pixels is not enough to keep the
+        # game from silently switching away from colour.
+        self.assertEqual(self.candidates(self.LAYOUT), ["video0"])
 
     def test_the_isp_is_never_tried(self):
         # Eighteen of this Pi's twenty nodes are the ISP and the HEVC decoder.
@@ -87,14 +91,14 @@ class TestDeviceSelection(unittest.TestCase):
         # to refuse, which is why they are dropped rather than ranked last:
         # with them in, a camera that was merely busy measured at 81 s of
         # startup during which the assistant could not hear.
-        self.assertEqual(self.candidates(self.LAYOUT), ["video0", "video1"])
+        self.assertEqual(self.candidates(self.LAYOUT), ["video0"])
 
     def test_a_renamed_camera_is_still_found(self):
         # A hint that no longer matches anything — a renamed product, a kernel
         # that reports it differently — must not cost the camera, because the
         # driver is the thing that actually says what the node is.
         self.assertEqual(self.candidates(self.LAYOUT, name_hint="Kinect"),
-                         ["video0", "video1"])
+                         ["video0"])
 
     def test_a_camera_on_another_driver_is_reachable_by_name(self):
         # The escape hatch for hardware that is not UVC — a CSI camera, a
@@ -113,7 +117,7 @@ class TestDeviceSelection(unittest.TestCase):
     def test_the_name_decides_between_two_webcams(self):
         layout = {
             "video0": ("HD Pro Webcam C920", "uvcvideo", 0),
-            "video2": ("Brio 101", "uvcvideo", 0),
+            "video2": ("Logitech BRIO", "uvcvideo", 0),
         }
         self.assertEqual(self.candidates(layout)[0], "video2")
 
@@ -156,6 +160,108 @@ class TestDrainDepth(unittest.TestCase):
     def test_an_absurd_depth_is_capped(self):
         # A capture that blocks for 64 frames is a turn that has already lost.
         self.assertEqual(camera_mod.Camera._drain_for(64), camera_mod.MAX_DRAIN)
+
+
+class TestBrio4KGameplayMode(unittest.TestCase):
+
+    class Frame:
+        shape = (720, 1280, 3)
+        size = 720 * 1280 * 3
+
+    class Capture:
+        def __init__(self, cv2, fps=90.0):
+            self.cv2 = cv2
+            self.fps = fps
+            self.sets = []
+            self.released = False
+
+        def isOpened(self):
+            return True
+
+        def set(self, prop, value):
+            self.sets.append((prop, value))
+            return True
+
+        def get(self, prop):
+            if prop == self.cv2.CAP_PROP_FPS:
+                return self.fps
+            if prop == self.cv2.CAP_PROP_FOURCC:
+                return self.cv2.VideoWriter_fourcc(*"MJPG")
+            return 0.0
+
+        def read(self):
+            return True, TestBrio4KGameplayMode.Frame()
+
+        def release(self):
+            self.released = True
+
+    class Cv2:
+        CAP_V4L2 = 200
+        CAP_PROP_FOURCC = 6
+        CAP_PROP_FRAME_WIDTH = 3
+        CAP_PROP_FRAME_HEIGHT = 4
+        CAP_PROP_FPS = 5
+        CAP_PROP_BUFFERSIZE = 38
+
+        def __init__(self, fps=90.0):
+            self.capture = TestBrio4KGameplayMode.Capture(self, fps)
+
+        @staticmethod
+        def VideoWriter_fourcc(*letters):
+            return sum(ord(letter) << (8 * index)
+                       for index, letter in enumerate(letters))
+
+        def VideoCapture(self, device, backend):
+            self.opened = (device, backend)
+            return self.capture
+
+    @staticmethod
+    def camera():
+        return mock.Mock(cfg=CameraConfig(), describe=lambda: {})
+
+    def test_game_capture_requests_720p90_mjpeg_and_fixed_exposure(self):
+        cv2 = self.Cv2()
+        lease = CameraLease(self.camera())
+        with mock.patch.object(camera_mod, "_set_dynamic_framerate",
+                               return_value=True) as fixed:
+            capture = lease._open(cv2, "/dev/video0")
+
+        fixed.assert_called_once_with("/dev/video0", False)
+        self.assertEqual(cv2.opened, ("/dev/video0", cv2.CAP_V4L2))
+        self.assertEqual(capture.sets[:4], [
+            (cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG")),
+            (cv2.CAP_PROP_FRAME_WIDTH, 1280),
+            (cv2.CAP_PROP_FRAME_HEIGHT, 720),
+            (cv2.CAP_PROP_FPS, 90),
+        ])
+        self.assertEqual(lease.describe()["requested"], "1280x720@90")
+        self.assertEqual(lease.describe()["negotiated_fps"], 90.0)
+        self.assertEqual(lease.describe()["format"], "MJPG")
+
+    def test_a_lower_driver_fallback_is_reported_and_still_usable(self):
+        cv2 = self.Cv2(fps=60.0)
+        lease = CameraLease(self.camera())
+        with mock.patch.object(camera_mod, "_set_dynamic_framerate",
+                               return_value=False):
+            capture = lease._open(cv2, "/dev/video0")
+
+        self.assertIs(capture, cv2.capture)
+        self.assertEqual(lease.describe()["negotiated_fps"], 60.0)
+
+    def test_dynamic_frame_rate_control_is_best_effort(self):
+        complete = mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch.object(camera_mod.subprocess, "run",
+                               return_value=complete) as run:
+            self.assertTrue(camera_mod._set_dynamic_framerate("0", False))
+        self.assertEqual(run.call_args.args[0], [
+            "v4l2-ctl", "-d", "/dev/video0",
+            "--set-ctrl=exposure_dynamic_framerate=0",
+        ])
+
+        with mock.patch.object(camera_mod.subprocess, "run",
+                               side_effect=FileNotFoundError):
+            self.assertFalse(camera_mod._set_dynamic_framerate(
+                "/dev/video0", False))
 
 
 class TestCapture(unittest.TestCase):
@@ -308,6 +414,108 @@ class TestLendingTheCameraToACall(unittest.TestCase):
     def test_describe_says_who_has_it(self):
         self.camera.lend("a video call")
         self.assertEqual(self.camera.describe()["lent_to"], "a video call")
+
+
+class TestReleasingTheCameraWhileNobodyIsThere(unittest.TestCase):
+    """`sleep` and `wake`: the idle-power half of the screensaver.
+
+    The distinction that matters, and the reason this is not `lend`: a *lent*
+    camera refuses to open, because opening it would take a call's picture away.
+    A *sleeping* camera has no owner, so anything that reads it takes it back
+    automatically — which is what keeps "what do you see?" answerable while the
+    screen is asleep, and what stops this from becoming a flag every caller has
+    to remember to clear.
+    """
+
+    def setUp(self):
+        from aipi5.core.config import CameraConfig
+        from aipi5.vision.camera import Camera
+        self.camera = Camera(CameraConfig(enabled=True))
+        self.opens = 0
+        self.releases = 0
+
+        def fake_open():
+            self.opens += 1
+            self.camera._started = True
+            self.camera._error = None
+            self.camera._asleep = ""
+            return True
+
+        class FakeCapture:
+            def release(inner):
+                self.releases += 1
+
+        self.camera.open = fake_open
+        self.camera._started = True
+        self.camera._capture = FakeCapture()
+
+    def test_sleeping_releases_the_device(self):
+        self.assertTrue(self.camera.sleep("nobody is there"))
+        self.assertTrue(self.camera.asleep)
+        self.assertFalse(self.camera.available())
+        self.assertEqual(self.releases, 1, "the handle has to actually be let go")
+
+    def test_sleeping_twice_releases_once(self):
+        self.camera.sleep()
+        self.camera.sleep()
+        self.assertEqual(self.releases, 1)
+
+    def test_waking_reopens_it(self):
+        self.camera.sleep()
+        self.assertTrue(self.camera.wake())
+        self.assertFalse(self.camera.asleep)
+        self.assertTrue(self.camera.available())
+        self.assertEqual(self.opens, 1)
+
+    def test_waking_a_camera_that_never_slept_costs_nothing(self):
+        # Every read calls this, on every frame, forever.
+        for _ in range(100):
+            self.camera.wake()
+        self.assertEqual(self.opens, 0)
+
+    def test_a_reader_wakes_it_by_itself(self):
+        """The whole point: nothing else on the device knows about this state."""
+        self.camera.sleep()
+        self.camera.frame()
+        self.assertEqual(self.opens, 1, "reading a sleeping camera must reopen it")
+
+    def test_a_sleeping_camera_is_not_a_broken_one(self):
+        self.camera.sleep("the screen is asleep and nobody is there")
+        described = self.camera.describe()
+        self.assertEqual(described["asleep"],
+                         "the screen is asleep and nobody is there")
+        self.assertIsNone(described["error"], "asleep is not an error")
+
+    def test_a_lent_camera_is_not_put_to_sleep_underneath_the_borrower(self):
+        # Both mean "we do not have it", and they end differently: a reclaim is
+        # what decides when a lent camera comes back, and a sleeping one comes
+        # back on the next read. Letting `sleep` overwrite `lend` would lose the
+        # reclaim and hand a call's device to the next reader.
+        self.camera.lend("a video call")
+        self.assertFalse(self.camera.sleep())
+        self.assertFalse(self.camera.asleep)
+        self.assertTrue(self.camera.lent)
+
+    def test_lending_takes_over_from_the_sleep(self):
+        # Exactly one of the two at a time: a borrower's reclaim is what decides
+        # when a lent camera comes back, and a leftover sleep flag would have the
+        # next reader waking a device a call is using.
+        self.camera.sleep()
+        self.camera.lend("a video call")
+        self.assertFalse(self.camera.asleep)
+        self.assertEqual(self.camera.describe()["lent_to"], "a video call")
+        self.camera.frame()
+        self.assertEqual(self.opens, 0, "a read must not reopen a lent camera")
+
+    def test_the_idle_retry_leaves_a_sleeping_camera_alone(self):
+        # `retry_reclaim` runs on every housekeeping tick. A sleeping camera is
+        # neither lost nor lent, so it must look like nothing to do — otherwise
+        # the camera would be reopened a second after the screensaver released it.
+        self.camera.sleep()
+        for _ in range(20):
+            self.camera.retry_reclaim()
+        self.assertEqual(self.opens, 0)
+        self.assertTrue(self.camera.asleep)
 
 
 class TestTheCameraBeingUnplugged(unittest.TestCase):

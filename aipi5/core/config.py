@@ -144,7 +144,7 @@ class CameraConfig:
     enabled: bool = True
     #: A V4L2 node, an index, or "auto" to find the webcam by name.
     device: str = "auto"
-    #: What that search matches on. The camera is a Logitech Brio 101.
+    #: What that search matches on. Both Logitech Brio generations use it.
     name_hint: str = "Brio"
     capture_width: int = 1280
     capture_height: int = 720
@@ -200,8 +200,14 @@ class MotionConfig:
     #: How long a wrist may coast on its last known position once confidence
     #: drops, before the hand is declared gone. Section 15.
     stale_ms: int = 250
-    #: Frames per second the pose loop aims for. The camera gives 30; asking
-    #: for more only spins.
+    #: The Brio 4K's low-latency gameplay mode. Capture runs ahead of the
+    #: roughly 30 fps pose model; CameraLease keeps only the newest frame, so
+    #: those extra camera frames reduce age instead of becoming a queue.
+    capture_width: int = 1280
+    capture_height: int = 720
+    capture_fps: int = 90
+    #: Frames per second the pose loop aims for. The Hailo model, rather than
+    #: the camera, is the limiting stage at this value.
     target_fps: int = 30
 
 
@@ -213,6 +219,12 @@ class GamesConfig:
     #: High scores, one small JSON file. Local by design — section 28 says
     #: game over must not need the network.
     scores: Path = Path.home() / ".config" / "aipi5" / "game-scores.json"
+    #: Touchscreen choices that survive a restart. Separate from scores so a
+    #: damaged preference can never take a high score with it.
+    settings: Path | None = None
+    #: The default until the touchscreen has saved a choice. GameManager
+    #: validates it against the five durations the UI offers.
+    round_seconds: int = 120
     #: Draw the skeleton, the raw wrist coordinates and the frame timings over
     #: the game. Section 45: off by default.
     debug: bool = False
@@ -234,6 +246,20 @@ class ScreensaverConfig:
 
     enabled: bool = True
     timeout_seconds: float = 60.0
+    #: How long the screen stays up after a touch has woken it, before the
+    #: camera's silence is allowed to take it away again. Longer than
+    #: `timeout_seconds` on purpose — see `ScreensaverPolicy` for why the two
+    #: cases are not the same question.
+    wake_grace_seconds: float = 300.0
+    #: Release the camera while the screensaver is up. The point of the feature:
+    #: an idle screen should not cost a USB transfer and an inference every
+    #: 500 ms for a room with nobody in it.
+    #:
+    #: **It is what makes a touch necessary to wake the screen.** With the camera
+    #: closed nothing can notice somebody walking up, so waking is a touch or a
+    #: wake word rather than presence — the trade the deployment asked for, and a
+    #: setting rather than a rewrite so it can be taken back in one line.
+    release_camera: bool = True
     #: The specification's schedule. Inclusive start, and the night begins at
     #: 21:01 because section 24 puts 21:00 itself in the day.
     day_start: str = "07:00"
@@ -346,10 +372,9 @@ class CallConfig:
     #: Empty on a LAN. Phase 3 of the procedure fills these in.
     stun_servers: tuple[str, ...] = ()
     turn_servers: tuple[dict, ...] = ()
-    #: What the Brio is asked for during a call. 1280x720 at 30 needs MJPEG on
-    #: this camera — YUYV at 720p is capped at 5 fps by USB bandwidth, measured
-    #: on the device. Chromium picks the format, and asking for 30 fps at 720p
-    #: is what makes it pick MJPEG.
+    #: Calls intentionally remain at 720p30. The BRIO 4K can capture 720p90,
+    #: but WebRTC encoding and the home uplink gain little from tripling call
+    #: cadence; the fast mode is reserved for local motion gameplay.
     width: int = 1280
     height: int = 720
     fps: int = 30
@@ -559,6 +584,20 @@ def _one_of(value: Any, allowed: tuple[str, ...], fallback: str,
     return fallback
 
 
+def _int_one_of(value: Any, allowed: tuple[int, ...], fallback: int,
+                where: str) -> int:
+    """An integer from a fixed list, or a safe default with a warning."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = -1
+    if number in allowed:
+        return number
+    log.warning("%s is %r, which is not one of %s; using %s",
+                where, value, ", ".join(map(str, allowed)), fallback)
+    return fallback
+
+
 def load(path: Path | str | None = None) -> Settings:
     """Read the configuration. A missing file is defaults, not an error.
 
@@ -701,6 +740,12 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
             # look like broken tracking rather than a bad number in a file.
             smoothing=min(0.95, max(0.05, float(motion.get("smoothing", 0.55)))),
             stale_ms=max(0, int(motion.get("stale_ms", 250))),
+            capture_width=int(_positive(motion.get("capture_width", 1280), 1280,
+                                        "motion.capture_width")),
+            capture_height=int(_positive(motion.get("capture_height", 720), 720,
+                                         "motion.capture_height")),
+            capture_fps=int(_positive(motion.get("capture_fps", 90), 90,
+                                      "motion.capture_fps")),
             target_fps=int(_positive(motion.get("target_fps", 30), 30,
                                      "motion.target_fps")),
         ),
@@ -708,6 +753,11 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
             enabled=bool(games.get("enabled", True)),
             scores=_path(games.get("scores"),
                          Path.home() / ".config" / "aipi5" / "game-scores.json"),
+            settings=_path(games.get("settings"),
+                           Path.home() / ".config" / "aipi5" / "game-settings.json"),
+            round_seconds=_int_one_of(
+                games.get("round_seconds", 120),
+                (60, 120, 180, 240, 300), 120, "games.round_seconds"),
             debug=bool(games.get("debug", False)),
             sound=bool(games.get("sound", True)),
         ),
@@ -715,6 +765,10 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
             enabled=bool(screensaver.get("enabled", True)),
             timeout_seconds=_positive(screensaver.get("timeout_seconds", 60.0), 60.0,
                                       "screensaver.timeout_seconds"),
+            wake_grace_seconds=_positive(
+                screensaver.get("wake_grace_seconds", 300.0), 300.0,
+                "screensaver.wake_grace_seconds"),
+            release_camera=bool(screensaver.get("release_camera", True)),
             # Not validated here. `ScheduleManager` parses these and falls back
             # to the specification's times with a warning if they are not
             # HH:MM, which keeps one module responsible for what a time means.
