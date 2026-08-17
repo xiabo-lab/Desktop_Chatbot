@@ -70,6 +70,19 @@ ROUND_SECONDS = 120.0
 ULTIMATE_WARNING_AT = 22.0
 ULTIMATE_START_AT = 20.0
 
+#: How long the warning is owed, once it has started.
+#:
+#: The same two seconds the two constants above describe, but as a *duration*
+#: rather than as the distance between two clock positions — and that is the
+#: whole point of it. A bomb takes five seconds off, so a bomb sliced with 24
+#: seconds left moves the clock straight from above the warning to below the
+#: start in one frame, and the version of this that reads the clock alone
+#: skipped the warning entirely: no sound, no banner, and a dragon fruit
+#: arriving unannounced on the frame the bomb went off. Counting the warning
+#: down in seconds of play means the clock can jump past the window and the
+#: player still gets the notice the screen promised them.
+ULTIMATE_WARNING_S = ULTIMATE_WARNING_AT - ULTIMATE_START_AT
+
 #: What slicing a bomb costs, in seconds off the clock. Section 26's bomb
 #: cannot cost a life any more, and it has to cost *something* or it is a free
 #: extra target.
@@ -205,6 +218,12 @@ class Session:
     #: a second dragon fruit in one round would be a much worse bug than a
     #: redundant boolean.
     ultimate_spawned: bool = False
+    #: Seconds of warning still owed, counted down by `tick` like the clock is.
+    #: In seconds rather than as a deadline so that a pause does not spend it —
+    #: `tick` does not run while paused, so nothing here can tick away under the
+    #: pause sheet, which is the same reason the round's own clock is a quantity
+    #: and not a function of the wall clock. See `ULTIMATE_WARNING_S`.
+    _warning_left: float = 0.0
 
     started_at: float = 0.0
     ended_at: float = 0.0
@@ -262,6 +281,7 @@ class Session:
         self.ultimate_hits = self.ultimate_points = 0
         self.ultimate_done = False
         self.ultimate_spawned = False
+        self._warning_left = 0.0
 
     def pause(self, now: float) -> bool:
         if self.state is not State.PLAYING:
@@ -325,6 +345,11 @@ class Session:
         # never charged, and a stalled frame cannot take ten seconds off the
         # player at once.
         self.time_left = max(0.0, self.time_left - dt)
+        # Off the same `dt`, and for the same reason: what the warning owes the
+        # player is two seconds of *play*, not two seconds of the clock reading
+        # a particular pair of numbers. See `ULTIMATE_WARNING_S`.
+        if self._warning_left > 0:
+            self._warning_left = max(0.0, self._warning_left - dt)
 
         # Before anything moves, so that the frame the dragon fruit appears on
         # is a frame it can already be hit on, and so that the spawn
@@ -422,6 +447,15 @@ class Session:
         phase — a two-second warning and a `MAX_STEP_S` of 0.1 s means it takes
         twenty stalled frames, but the version that cannot go wrong costs
         nothing over the version that can.
+
+        **The warning's length is a duration, not a pair of clock readings.**
+        The clock can move by five seconds in one frame, because a bomb takes
+        five seconds off it, and reading the phase off the clock alone meant a
+        bomb sliced between 20 s and 25 s left jumped `NORMAL` straight to
+        `ULTIMATE` — the one transition in the round that the player is
+        explicitly promised advance notice of, skipped by the one event that
+        makes them least ready for it. So the window below is entered on the
+        clock and left on `_warning_left`.
         """
         previous = self.phase
         left = self.time_left
@@ -430,16 +464,19 @@ class Session:
             return
         if left > ULTIMATE_WARNING_AT:
             wanted = Phase.NORMAL
-        elif left > ULTIMATE_START_AT:
-            wanted = Phase.WARNING
         elif self.dragon is not None and not self.dragon.expired:
             wanted = Phase.ULTIMATE
-        elif not self.ultimate_spawned:
-            # The clock is inside the Ultimate window and no dragon fruit has
-            # ever been made. This is the frame it appears on.
-            wanted = Phase.ULTIMATE
-        else:
+        elif self.ultimate_spawned:
+            # There has been a dragon fruit and it is gone. The coda.
             wanted = Phase.FINAL
+        elif previous is Phase.WARNING:
+            # The warning is up. It gives way to the dragon fruit when it has
+            # had its full two seconds of play, whatever the clock says by then.
+            wanted = Phase.ULTIMATE if self._warning_left <= 0 else Phase.WARNING
+        else:
+            # The first frame inside the window, however the clock got here —
+            # counted down to it, or dropped past it by a bomb.
+            wanted = Phase.WARNING
 
         if wanted is previous:
             return
@@ -448,6 +485,7 @@ class Session:
         if wanted is Phase.WARNING:
             # Section 17. The sound and the banner, and nothing else — the
             # player keeps full control through the warning.
+            self._warning_left = ULTIMATE_WARNING_S
             self.events.append({"name": "ultimate-warning"})
             log.info("Game: ultimate warning")
         elif wanted is Phase.ULTIMATE:
@@ -556,8 +594,12 @@ class Session:
             self.bombs_hit += 1
             self.time_left = max(0.0, self.time_left - BOMB_PENALTY_S)
             self.streak = 0
-            self.events.append({"name": "bomb", "x": round(item.x, 1),
-                                "y": round(item.y, 1)})
+            # The penalty travels with the event so the page can say how much
+            # time went and animate the clock losing exactly that — a five
+            # second drop with no reaction from the clock itself reads as the
+            # countdown being broken rather than as the bomb costing something.
+            self.events.append({"name": "bomb", "seconds": BOMB_PENALTY_S,
+                                "x": round(item.x, 1), "y": round(item.y, 1)})
             log.info("Game: bomb sliced — %.0fs off the clock, %.0fs left",
                      BOMB_PENALTY_S, self.time_left)
             return

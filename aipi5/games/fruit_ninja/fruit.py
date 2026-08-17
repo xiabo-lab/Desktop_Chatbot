@@ -303,8 +303,19 @@ class Spawner:
     #: Seconds between throws at the start of a round, and the floor it ramps
     #: down to by the end. The floor is a third of the opening interval, so the
     #: closing stretch throws roughly three times as much fruit.
-    interval: float = 1.15
-    floor: float = 0.38
+    #:
+    #: **Both divided by three, for three times the fruit.** The rate is the
+    #: lever rather than the number thrown per throw: the doubles and triples
+    #: below are chances *per throw*, so tripling the throws triples the count
+    #: exactly, everywhere in the round, without touching the ramp's shape or
+    #: making the clumps three times bigger. Nine fruit arriving together would
+    #: be a different game; the same nine spread across the second they were
+    #: always going to occupy is this one, three times as busy.
+    #:
+    #: The ratio between the two is kept at a third, because that is what makes
+    #: the closing stretch read as a climb rather than as a constant.
+    interval: float = 0.383
+    floor: float = 0.127
     #: Seconds of play by which the floor is reached. Chosen against the
     #: Ultimate rather than against the round: full tilt should arrive shortly
     #: before the warning, so the player is at their busiest when the screen
