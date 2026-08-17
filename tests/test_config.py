@@ -26,6 +26,12 @@ class TestDefaults(unittest.TestCase):
                          (1280, 800))
         self.assertEqual(settings.location.zip, "95127")
         self.assertEqual(settings.screensaver.timeout_seconds, 60.0)
+        self.assertEqual(settings.games.round_seconds, 120)
+        self.assertEqual(
+            (settings.motion.capture_width, settings.motion.capture_height,
+             settings.motion.capture_fps),
+            (1280, 720, 90),
+        )
         self.assertTrue(settings.news.feeds, "news needs somewhere to read from")
 
     def test_the_shipped_file_loads(self):
@@ -96,6 +102,108 @@ class TestParsing(unittest.TestCase):
         settings = load(self.write(
             "openai:\n  model: some-model\n  vision_model: other-model\n"))
         self.assertEqual(settings.openai.vision, "other-model")
+
+    def test_game_round_duration_accepts_only_the_five_menu_choices(self):
+        self.assertEqual(load(self.write(
+            "games:\n  round_seconds: 300\n")).games.round_seconds, 300)
+        self.assertEqual(load(self.write(
+            "games:\n  round_seconds: 90\n")).games.round_seconds, 120)
+        self.assertEqual(load(self.write(
+            "games:\n  round_seconds: forever\n")).games.round_seconds, 120)
+
+    def test_motion_camera_mode_is_configurable_and_positive(self):
+        settings = load(self.write(
+            "motion:\n"
+            "  capture_width: 1920\n"
+            "  capture_height: 1080\n"
+            "  capture_fps: 60\n"))
+        self.assertEqual(
+            (settings.motion.capture_width, settings.motion.capture_height,
+             settings.motion.capture_fps),
+            (1920, 1080, 60),
+        )
+
+        fallback = load(self.write(
+            "motion:\n"
+            "  capture_width: 0\n"
+            "  capture_height: -1\n"
+            "  capture_fps: 0\n"))
+        self.assertEqual(
+            (fallback.motion.capture_width, fallback.motion.capture_height,
+             fallback.motion.capture_fps),
+            (1280, 720, 90),
+        )
+
+
+class TestTheShippedConfigMatchesTheCamera(unittest.TestCase):
+    """Every mode `config/aipi5.yaml` asks for is one the BRIO 4K can do.
+
+    Read off the installed camera on 2026-08-17 with `v4l2-ctl -d /dev/video0
+    --list-formats-ext`, and kept here because a resolution the camera does not
+    advertise does not fail: V4L2 quietly gives you the nearest one it has, and
+    the first sign is a game that feels slow or a still that is the wrong shape.
+
+    Two facts changed with the camera itself and are the reason this table is
+    written down rather than remembered. The Brio 101 this replaced offered only
+    YUYV and MJPG and capped **YUYV 720p at 5 fps** — so the old rule was "ask
+    for MJPEG at 720p or silently get 5 fps". This camera adds NV12 and does
+    YUYV 720p at a full 30. MJPEG is still what the high rates need.
+    """
+
+    #: (format, width, height) -> the highest frame rate the device advertises.
+    MODES = {
+        ("MJPG", 640, 480): 120,
+        ("MJPG", 1280, 720): 90,
+        ("MJPG", 1920, 1080): 60,
+        ("MJPG", 3840, 2160): 30,
+        ("MJPG", 640, 360): 30,
+        ("YUYV", 1280, 720): 30,
+        ("YUYV", 640, 480): 30,
+        ("NV12", 1280, 720): 30,
+        ("NV12", 640, 360): 30,
+    }
+
+    def setUp(self):
+        if not (config_mod.ROOT / ".git").exists():
+            self.skipTest("a deployment, not a checkout — the YAML is a local file")
+        self.settings = load()
+
+    def assert_reachable(self, what, width, height, fps):
+        best = self.MODES.get(("MJPG", width, height))
+        self.assertIsNotNone(
+            best, f"{what}: the camera advertises no {width}x{height} MJPEG mode")
+        self.assertLessEqual(
+            fps, best,
+            f"{what}: {width}x{height} tops out at {best} fps on this camera")
+
+    def test_the_assistants_still_capture_is_a_real_mode(self):
+        camera = self.settings.camera
+        self.assert_reachable("camera", camera.capture_width,
+                              camera.capture_height, camera.fps)
+
+    def test_the_gameplay_capture_is_a_real_mode(self):
+        # The one that motivated the new camera: 720p90 is what lets the pose
+        # loop have a fresh frame every time it asks. See `motion/camera_lease`.
+        motion = self.settings.motion
+        self.assert_reachable("motion", motion.capture_width,
+                              motion.capture_height, motion.capture_fps)
+        self.assertEqual((motion.capture_width, motion.capture_height,
+                          motion.capture_fps), (1280, 720, 90))
+
+    def test_the_call_capture_is_a_real_mode(self):
+        call = self.settings.call
+        self.assert_reachable("call", call.width, call.height, call.fps)
+
+    def test_the_pose_loop_is_not_asked_for_more_than_the_accelerator_gives(self):
+        # 90 is the camera's number, 30 is the Hailo's. Asking the pose loop for
+        # the camera's rate would be asking for frames nothing can infer.
+        self.assertLessEqual(self.settings.motion.target_fps,
+                             self.settings.motion.capture_fps)
+
+    def test_the_name_hint_still_matches_the_installed_camera(self):
+        # Card name "Logitech BRIO"; the search lowercases both sides.
+        self.assertIn(self.settings.camera.name_hint.lower(),
+                      "logitech brio")
 
 
 class TestAiaConfig(unittest.TestCase):

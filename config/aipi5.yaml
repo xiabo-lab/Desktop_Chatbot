@@ -122,27 +122,55 @@ story:
 
 camera:
   enabled: true
-  # A Logitech Brio 101 on USB, not the CSI Camera Module 3 this was built for.
+  # A **Logitech BRIO 4K** on USB, not the CSI Camera Module 3 this was built
+  # for, and not the Brio 101 that came before it. Card name "Logitech BRIO",
+  # serial C26FB3A8 — `name_hint` is matched case-insensitively, so `Brio`
+  # matches it.
+  #
   # `auto` finds it by name and is the right answer on this device: /dev/video0
-  # is not a stable identity — the Brio claims two nodes, one of them metadata
-  # that opens fine and never yields an image, and the order they enumerate in
-  # depends on what else was plugged in at boot. The same reasoning AIA applies
-  # to matching the microphone by name rather than by card number.
+  # is not a stable identity — this Brio claims **four** nodes (two capture, two
+  # metadata: /dev/video0-3, every one of them named "Logitech BRIO"), and their
+  # numbers change with what else was plugged in at boot. The search keeps only
+  # uvcvideo nodes whose sysfs `index` is 0, which on this camera is exactly
+  # /dev/video0 — that filter is why a failed open costs 0.8 s instead of 81 s
+  # on a Pi that enumerates twenty-two video nodes, eighteen of them the ISP and
+  # the HEVC decoder. The same reasoning AIA applies to matching the microphone
+  # by name rather than by card number.
   #
   # Put an explicit node here (/dev/video2, or a bare 2) to override the search
   # entirely; a named device is never second-guessed.
   device: auto
   name_hint: Brio
   # What the vision request is sent. Larger costs upload time on a domestic
-  # connection and buys very little description quality. The Brio 101 offers
-  # 1920x1080, 1280x720 and 640x480 over MJPEG.
+  # connection and buys very little description quality.
+  #
+  # Modes this camera actually advertises, read off the device with
+  # `v4l2-ctl --list-formats-ext` on 2026-08-17. **Three pixel formats: MJPG,
+  # YUYV and NV12. No H.264.** Maximum frame rate per mode:
+  #
+  #            MJPG        YUYV / NV12
+  #   640x480   120 fps      30 fps
+  #   1280x720   90 fps      30 fps      <- the mode below, and AI Motion's
+  #   1920x1080  60 fps      30 fps
+  #   3840x2160  30 fps      —
+  #
+  # Two changes from the Brio 101 this replaced, both worth knowing because the
+  # old notes say otherwise: **YUYV 720p is no longer capped at 5 fps** (it does
+  # a full 30 here — this camera is on a USB 3 port, so the uncompressed
+  # bandwidth fits), and NV12 is new. MJPEG is still what the high frame rates
+  # need, and `Camera._try_open` still asks for it explicitly.
   capture_width: 1280
   capture_height: 720
   # The stream rate, not the rate anything is looked at — the detector reads
   # twice a second and the vision question once when asked. It matters because
   # every read waits for one fresh frame rather than accepting a queued one, so
-  # this is what a read costs: 35 ms at 30 fps. See `Camera._read`. Note that
-  # the camera drops its own rate in a dim room, whatever is asked for here.
+  # this is what a read costs: about 35 ms at 30 fps. See `Camera._read`.
+  #
+  # The assistant keeps 30 fps here for better low-light stills; the sensor
+  # halves its own rate in a dim room whatever is asked for. AI Motion switches
+  # the device to fixed 720p90 with two buffers while a game is open and puts
+  # this mode back afterwards — see `aipi5/motion/camera_lease.py`, where 90 is
+  # the camera's number and 30 is the Hailo pose loop's.
   fps: 30
   jpeg_quality: 80
   # tmpfs. The Pi boots from flash and a capture-per-question write cycle is
@@ -215,12 +243,23 @@ motion:
   # How long a wrist coasts on its last position once confidence drops, before
   # the hand is declared gone.
   stale_ms: 250
+  # Logitech BRIO 4K gameplay capture. The camera was verified to advertise
+  # 1280x720 MJPEG at 90 fps. The Hailo pose model still runs at about 30 fps;
+  # superseded camera frames are discarded so inference always gets the newest
+  # image instead of accumulating latency.
+  capture_width: 1280
+  capture_height: 720
+  capture_fps: 90
   target_fps: 30
 
 games:
   enabled: true
   # Local, because game over must not need the network.
   scores: ~/.config/aipi5/game-scores.json
+  # Touchscreen choices live separately from high scores. The five choices
+  # are 60, 120, 180, 240 and 300 seconds; this is the first-run default.
+  settings: ~/.config/aipi5/game-settings.json
+  round_seconds: 120
   # The skeleton, the raw wrist coordinates and the frame timings, drawn over
   # the game. Off by default; the Settings page turns it on.
   debug: false
@@ -231,7 +270,38 @@ screensaver:
   # From the moment presence is lost, not from the last frame seen. 60 s is
   # the specification's number and it is a config value because the right one
   # depends on the room.
+  #
+  # This is the *certain* case: the camera watched somebody leave. The other
+  # case has its own number below.
   timeout_seconds: 60
+
+  # Give the camera back while the screen is away, and take it again when the
+  # screen comes back.
+  #
+  #     screensaver up   -> the detector parks, the Brio is released
+  #     touch the screen -> the Brio reopens, the detector looks again
+  #     nobody found in `wake_grace_seconds` -> screensaver, camera off again
+  #
+  # The reason is cost, not tidiness. Person detection is the only thing on this
+  # device that reads the camera continuously — every 500 ms it is a USB
+  # transfer, a JPEG decode and a Hailo inference — and none of that is worth
+  # paying for a room with nobody in it and a screen nobody is looking at.
+  #
+  # **The trade: waking is a touch or a wake word, not walking up.** A closed
+  # camera cannot see somebody arrive. The wake word still works, because the
+  # microphone is never released, so "小艾同学" from across the room wakes the
+  # screen exactly as a touch does. Set this to false to have presence take the
+  # screensaver down by itself again, at the cost of the camera running all day.
+  release_camera: true
+
+  # How long the screen stays up after a touch woke it, before the camera not
+  # having found anybody is allowed to take it away again. Five minutes, and
+  # deliberately much longer than `timeout_seconds`: presence is UNKNOWN at that
+  # moment rather than absent — the detector has observed nothing yet — and the
+  # person who tapped may well be standing to one side of the panel, reading it,
+  # outside the Brio's 78 degrees. A minute here would blank the screen in front
+  # of somebody using it.
+  wake_grace_seconds: 300
 
   # What the idle screen shows, and when. **This is the only place the
   # schedule is written down** — `aipi5/screensaver/schedule.py` reads it and
@@ -346,6 +416,21 @@ photos:
   # the photograph.
   show_info: false
 
+  # The Google account, named rather than embedded. **Neither file belongs in
+  # this repository and neither is written by it in a readable place**: the OAuth
+  # client and the refresh token are 0600 under ~/.config/aipi5, put there by
+  # ./scripts/link-google-photos.sh. These are the defaults; they are here to be
+  # found, not to be changed:
+  #
+  #   client_file: ~/.config/aipi5/google-photos-client.json
+  #   token_file:  ~/.config/aipi5/google-photos-token.json
+  #
+  # The consent screen must be published "In production" — left in "Testing",
+  # Google expires the refresh token after seven days and the slideshow dies
+  # with `invalid_grant`. Only the Photos **Picker** API is enabled; the library
+  # read scopes were withdrawn in March 2025, which is why what this remembers
+  # is a picked set rather than an album.
+
 kodama:
   enabled: true
   # How Kodama-Lite is started. Its own README is explicit that the systemd
@@ -360,30 +445,49 @@ kodama:
 
 # The remote video call — a phone calling this device over WebRTC.
 #
-# OFF BY DEFAULT, and that is the one setting here worth thinking about before
-# changing. Everything else in this file fails towards a feature not working;
-# this one fails towards a camera and a microphone in your home being reachable
-# from the network. Two things have to be true before anything listens: this
-# flag, and at least one paired phone (./scripts/pair-phone.sh).
+# **OFF in the committed file, and on the device — that difference is deliberate
+# and is asserted by a test** (`test_the_shipped_configuration_does_not_enable
+# _calling`, which skips itself when there is no `.git` beside it). Everything
+# else in this file fails towards a feature not working; this one flag decides
+# whether anything listens at all, so a checkout must never turn it on for
+# somebody who has not chosen it. Enabling it is the one local edit the deployed
+# copy carries.
 #
-# Nothing in this block is a secret. The tokens, the certificate and the
-# private key all live under ~/.config/aipi5/, outside this repository, and are
-# generated on the device — see aipi5/call/tokens.py for why only hashes are
-# kept.
+# **How it is actually reached, as deployed: Tailscale, not this process.**
+# `tailscale serve` publishes
+#
+#     https://aipi5.tail250c52.ts.net  ->  http://127.0.0.1:8443   (tailnet only)
+#
+# so TLS, the certificate and the identity of who may connect are all Tailscale's,
+# and this process binds **loopback** with `tls: false` — the values below. That
+# is why the old warning about a listener on 0.0.0.0 no longer applies to this
+# device: nothing on the LAN can reach the port at all.
+#
+# Two things still have to be true before a phone can ring: this flag, and at
+# least one paired phone (./scripts/pair-phone.sh). Every route authenticates
+# regardless of who is in front of it.
+#
+# Nothing in this block is a secret. The tokens live under ~/.config/aipi5/,
+# outside this repository, and are generated on the device — see
+# aipi5/call/tokens.py for why only hashes are kept.
 call:
   enabled: false
-  # The one listener in this project that is not loopback, which is why every
-  # route on it authenticates. 8443 rather than 443 so it needs no privilege.
-  host: 0.0.0.0
+  # Loopback, because Tailscale Serve is what the phone actually talks to. Set
+  # `host: 0.0.0.0` and `tls: true` instead to have this process terminate TLS
+  # itself with the certificate under ~/.config/aipi5 — the original
+  # arrangement, still supported, and the one that needs thinking about before
+  # it is chosen. 8443 rather than 443 so it needs no privilege either way.
+  host: 127.0.0.1
+  # False because the proxy in front of it has already done TLS, and doing it
+  # twice would mean Tailscale speaking HTTP to an HTTPS socket. **This is only
+  # safe behind that proxy or on loopback**: the token a phone presents is on
+  # the wire otherwise.
+  tls: false
   port: 8443
 
-  # What the Brio is asked for during a call.
-  #
-  # 1280x720 at 30 is not a preference — it is the only configuration this
-  # camera can actually deliver. Measured on the device: the Brio 101 exposes
-  # YUYV and MJPG and no H.264, and YUYV at 720p is capped at 5 fps by USB
-  # bandwidth. Asking for 30 fps at this size is what makes Chromium choose
-  # MJPEG. REPORT.md section 27a has the full format table.
+  # Calls intentionally remain at 720p30. The BRIO 4K can capture 720p90, but
+  # tripling the WebRTC encode and home-uplink load does not improve gesture
+  # play; the fast mode is reserved for the local AI Motion pipeline.
   width: 1280
   height: 720
   fps: 30
@@ -417,6 +521,39 @@ call:
   #   secret_file: turn-secret
   #   ttl: 3600
 
+  # **Nothing secret is in this file, and these are why it does not need to be.**
+  # The list of phones allowed to call, and the certificate and key for the
+  # `tls: true` arrangement above, all live under ~/.config/aipi5 — outside the
+  # repository. These are only where to look, commented out because the defaults
+  # are already the right answers and a path written twice is a path that can
+  # disagree with itself:
+  #
+  #   certificate: ~/.config/aipi5/call-cert.pem
+  #   private_key:  ~/.config/aipi5/call-key.pem
+  #   devices:      ~/.config/aipi5/call-devices.json
+
+# The folder the phone can put things in, and the limits around it. Section 37.
+#
+# **Outside the repository, deliberately.** Uploads are somebody's photos and
+# videos, not source, and a transfer directory inside a git checkout is one
+# `git status` away from being confusing and one `git clean` away from being gone.
+files:
+  enabled: true
+  # `~` is expanded when the store is built, so the same line works whichever
+  # user the service runs as.
+  root: ~/Downloads/AIPI5
+  # One upload's ceiling, in gigabytes. `AIPI5_FILE_MAX_UPLOAD_GB` in the
+  # environment overrides it — the opposite precedence to everything else here,
+  # and the whole point of that variable: a one-off large transfer without
+  # editing YAML on a device that has no keyboard.
+  max_upload_gb: 2.0
+  # Never fill the root filesystem. The assistant writes a conversation
+  # database, Chromium writes a profile and systemd writes a journal, and none
+  # of the three fail gracefully at zero bytes free.
+  reserve_gb: 2.0
+  # The Pi has four cores and one uplink; two at once is already generous.
+  max_concurrent: 2
+
 assistant:
   # Everything the router does not recognise goes to the model. Turning this
   # off makes AIPI5 behave exactly like AIA: known commands work, everything
@@ -425,3 +562,10 @@ assistant:
   # Where the conversation and the recordings are kept, and for how long. Same
   # promise AIA makes, and the same 24 hours.
   retention_hours: 24.0
+  # A short rising chime the instant the wake word fires, before anything slower
+  # happens. On by default: without it the only acknowledgement is a line on the
+  # screen, which is no use to somebody across the room, outside the camera's
+  # view, or standing back from the panel with their hands up playing a motion
+  # game — and the only way to find out whether the wake word fired is to say
+  # the whole command and see.
+  wake_chime: true

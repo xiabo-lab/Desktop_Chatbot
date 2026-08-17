@@ -7,7 +7,7 @@
      back on a screen with no keyboard, and every layout here is already sized
      for the display rather than reflowed to it. -->
 <meta name="viewport" content="width=1280, height=800, initial-scale=1.0, user-scalable=no">
-<title>AI Assistant</title>
+<title>小爱同学</title>
 <style>
   /* 1280 x 800. Sizes below are in px against that panel deliberately — this
      is not a responsive page, it is one screen, and a rem-based scale would
@@ -315,6 +315,36 @@
     0%, 100% { transform: scale(1); }
     50% { transform: scale(1.09); }
   }
+  /* What a bomb costs, said where the cost lands. The explosion already floats
+     a "-5s" over the fruit, in the middle of the screen, and that turned out
+     not to be enough: the clock drops five seconds in one frame and a player
+     watching the fruit reads it afterwards as a countdown that skipped. So the
+     clock itself flinches, and the number it lost flies off it.
+
+     On the column rather than on `#game-clock`, because the clock already owns
+     an `animation` for the under-five-seconds pulse and an element has only one
+     of those — a second rule here would silently cancel the first. */
+  #game-clock-col { position: relative; }
+  #game-clock-col.penalty { animation: clock-penalty 0.55s ease-out; }
+  @keyframes clock-penalty {
+    0%   { transform: translateX(0) scale(1); filter: none; }
+    12%  { transform: translateX(-7px) scale(1.06); filter: brightness(1.7) saturate(0.4); }
+    28%  { transform: translateX(6px) scale(1.04); }
+    46%  { transform: translateX(-3px) scale(1.02); }
+    100% { transform: translateX(0) scale(1); filter: none; }
+  }
+  #game-clock-penalty {
+    position: absolute; right: 0; top: 0; pointer-events: none;
+    font-size: 34px; font-weight: 700; color: var(--danger);
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+    opacity: 0; font-variant-numeric: tabular-nums;
+  }
+  #game-clock-penalty.on { animation: clock-penalty-float 1.1s ease-out; }
+  @keyframes clock-penalty-float {
+    0%   { opacity: 0; transform: translateY(6px) scale(0.8); }
+    18%  { opacity: 1; transform: translateY(-6px) scale(1.15); }
+    100% { opacity: 0; transform: translateY(-52px) scale(1); }
+  }
   /* A thin bar under the clock, because a number has to be read and a bar can
      be seen. Width is set from the script. */
   #game-clock-bar {
@@ -411,7 +441,7 @@
     position: absolute; inset: 0; display: none;
     flex-direction: column; align-items: center; justify-content: center;
     gap: 18px; background: rgba(8, 11, 16, 0.86); text-align: center;
-    padding: 40px;
+    padding: 40px; z-index: 10;
   }
   .game-sheet.on { display: flex; }
   .game-sheet h2 {
@@ -429,6 +459,25 @@
   }
   .game-sheet .primary { background: var(--accent); color: #06121f; border-color: var(--accent); }
   .game-sheet .primary[disabled] { background: var(--panel); color: var(--ink-dim); border-color: var(--panel-edge); }
+  /* Start and Play Again are the two hands-free targets.  Their green is
+     intentionally distinct from the cyan used elsewhere: from several feet
+     away the player should be able to identify the button before their hand
+     cursor has even reached it. */
+  .game-sheet .gesture-primary:not([disabled]) {
+    background: #35d47d; border-color: #35d47d; color: #04140c;
+    box-shadow: 0 0 0 1px rgba(117,255,173,0.20),
+                0 10px 28px rgba(20,184,95,0.22);
+    transition: transform 100ms ease, box-shadow 100ms ease, filter 100ms ease;
+  }
+  .game-sheet .gesture-primary.gesture-hover:not([disabled]) {
+    transform: scale(1.065);
+    filter: brightness(1.12);
+    box-shadow: 0 0 0 7px rgba(85,255,155,0.24),
+                0 0 34px rgba(53,212,125,0.72);
+  }
+  .game-sheet .gesture-primary.gesture-press:not([disabled]) {
+    transform: scale(0.96); filter: brightness(1.25);
+  }
   .sheet-rows { display: flex; gap: 60px; align-items: flex-end; margin: 6px 0 10px; }
   .sheet-rows div { display: flex; flex-direction: column; gap: 4px; }
 
@@ -444,6 +493,39 @@
   #game-detected.yes { color: #6ee7a0; }
   #game-detected.no { color: var(--ink-dim); }
 
+  /* Kept hidden for compatibility with a page already loaded during an
+     upgrade. Start and Play Again now use the Hailo whole-body X gesture. */
+  #game-gesture-cursor {
+    position: absolute; left: 0; top: 0; z-index: 30;
+    width: 76px; height: 76px; display: none; place-items: center;
+    transform: translate(-50%, -50%); pointer-events: none;
+    border: 4px solid #72ffad; border-radius: 50%;
+    background: rgba(5, 30, 18, 0.70);
+    box-shadow: 0 0 0 7px rgba(76,255,148,0.14),
+                0 0 30px rgba(52,224,122,0.65);
+    transition: left 110ms linear, top 110ms linear,
+                transform 100ms ease, border-radius 100ms ease;
+  }
+  #game-gesture-cursor.on { display: grid; }
+  #game-gesture-cursor.closed {
+    border-radius: 22px; transform: translate(-50%, -50%) scale(0.82);
+    background: rgba(27, 80, 47, 0.88);
+  }
+  #game-gesture-cursor span {
+    font-size: 38px; line-height: 1;
+    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.7));
+  }
+  .gesture-help {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    min-height: 30px; max-width: 680px;
+    color: #b9f8d1; font-size: 18px; letter-spacing: 0.015em;
+  }
+  .gesture-help .step {
+    display: inline-grid; place-items: center; min-width: 28px; height: 28px;
+    border: 1px solid rgba(115,255,174,0.5); border-radius: 50%;
+    color: #72ffad; font-size: 15px; font-weight: 700;
+  }
+
   /* Section 45's debug overlay. Off unless asked for, and drawn in a corner
      where it cannot be mistaken for part of the game. */
   #game-debug {
@@ -455,6 +537,113 @@
   }
   #game-debug.on { display: block; }
   #game-debug b { color: var(--ink); font-weight: 600; }
+
+  /* Boxing is rendered by the same canvas and state stream as Fruit Ninja,
+     but its persistent HUD follows fight-game conventions. */
+  #boxing-hud { display: none; position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+  #game-stage.boxing-active { background: #05070b; }
+  #game-stage.boxing-active .game-hud,
+  #game-stage.boxing-active #game-banner { display: none; }
+  #game-stage.boxing-active #boxing-hud { display: block; }
+  #game-stage.boxing-active #sheet-over .sheet-rows,
+  #game-stage.boxing-active #over-detail { display: none; }
+  #game-stage:not(.boxing-active) .boxing-results { display: none; }
+  .boxing-health {
+    position: absolute; width: 370px; padding: 13px 20px 14px;
+    border: 2px solid rgba(217,236,248,.38);
+    clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 22px 100%, 0 calc(100% - 22px));
+    background: linear-gradient(110deg, rgba(4,8,15,.94), rgba(21,38,55,.78));
+    box-shadow: 0 14px 38px rgba(0,0,0,.46), inset 0 0 24px rgba(67,181,224,.08);
+    text-shadow: 0 2px 5px #000;
+  }
+  #boxing-opponent-health { left: 26px; top: 22px; border-left: 7px solid #2f70dc; }
+  #boxing-player-health { right: 26px; bottom: 24px; border-right: 7px solid #ee3f50; }
+  .boxing-health-row { display: flex; justify-content: space-between; align-items: baseline; }
+  .boxing-health-name { font-size: 17px; font-weight: 900; letter-spacing: .16em; font-style: italic; }
+  .boxing-health-value { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; color: #eaf2fb; }
+  .boxing-health-track {
+    height: 20px; margin-top: 8px; overflow: hidden;
+    transform: skewX(-8deg); background: rgba(255,255,255,.09);
+    border: 2px solid rgba(0,0,0,.5); position: relative;
+  }
+  .boxing-health-delay, .boxing-health-main {
+    position: absolute; inset: 0 auto 0 0; width: 100%; transform-origin: left;
+    transition: transform 130ms linear;
+  }
+  .boxing-health-delay { background: #f1c75b; }
+  .boxing-health-main { background: linear-gradient(90deg, #174aa5, #3e8eff); }
+  #boxing-player-health .boxing-health-main { background: linear-gradient(90deg, #b51f3b, #f24d57); }
+  #boxing-timer {
+    position: absolute; top: 24px; left: 50%; transform: translateX(-50%);
+    font-size: 38px; font-weight: 900; font-style: italic; font-variant-numeric: tabular-nums;
+    padding: 7px 24px; background: linear-gradient(180deg, rgba(24,39,56,.9), rgba(4,8,14,.9));
+    border: 2px solid rgba(224,238,247,.38); border-bottom: 5px solid #f1bd4d;
+    clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 12px 100%, 0 50%);
+    text-shadow: 0 2px 6px #000;
+  }
+  #boxing-score {
+    position: absolute; left: 28px; top: 126px; font-size: 28px;
+    font-weight: 900; font-style: italic; color: #ffd36b; text-shadow: 0 2px 7px #000;
+  }
+  #boxing-combo {
+    position: absolute; right: 28px; top: 126px; font-size: 8.4px;
+    font-weight: 900; font-style: italic; letter-spacing: .07em;
+    color: #ffd36b; text-align: right; text-shadow: 0 2px 7px #000;
+  }
+  #boxing-prompt {
+    position: absolute; top: 124px; left: 50%; transform: translateX(-50%);
+    min-width: 360px; padding: 12px 24px; border-radius: 999px;
+    background: linear-gradient(90deg, rgba(7,13,20,.2), rgba(7,13,20,.84), rgba(7,13,20,.2));
+    border-top: 2px solid rgba(79,220,255,.62); border-bottom: 2px solid rgba(79,220,255,.62);
+    font-size: 27px; font-weight: 900; font-style: italic; letter-spacing: .07em; text-align: center;
+    text-shadow: 0 2px 8px #000; opacity: 0; transition: opacity 150ms ease;
+  }
+  #boxing-prompt.on { opacity: 1; }
+  #boxing-message {
+    position: absolute; left: 50%; top: 43%; transform: translate(-50%,-50%);
+    font-size: 68px; font-weight: 900; letter-spacing: .08em; white-space: nowrap;
+    color: #fff; text-shadow: 0 0 25px rgba(45,210,255,.9), 0 4px 10px #000;
+    opacity: 0; transition: opacity 140ms ease, transform 180ms ease;
+  }
+  #boxing-message.on { opacity: 1; transform: translate(-50%,-50%) scale(1.05); }
+  #boxing-message.action {
+    top: auto; bottom: 42px; font-size: 20.4px;
+    transform: translateX(-50%);
+  }
+  #boxing-message.action.on { transform: translateX(-50%) scale(1.05); }
+  #boxing-message.parry { color: #70f7ff; text-shadow: 0 0 34px #13dff5, 0 4px 10px #000; }
+  #boxing-message.ko { color: #ffcf58; font-size: 94px; text-shadow: 0 0 36px #ff6b27, 0 4px 10px #000; }
+  #boxing-slow {
+    display: none; position: absolute; inset: 0; border: 9px solid rgba(67,228,255,.72);
+    box-shadow: inset 0 0 90px rgba(21,178,255,.26); animation: boxing-pulse 1s ease-in-out infinite;
+  }
+  #boxing-slow.on { display: block; }
+  @keyframes boxing-pulse { 50% { opacity: .48; } }
+  .boxing-mode-grid { display: flex; gap: 22px; margin: 10px 0 4px; }
+  .game-sheet .boxing-mode {
+    width: 360px; height: 220px; padding: 24px; display: flex;
+    flex-direction: column; gap: 10px; border-color: rgba(84,214,255,.4);
+    background: linear-gradient(145deg, rgba(22,37,52,.96), rgba(10,14,22,.96));
+  }
+  .boxing-mode .glyph { font-size: 48px; }
+  .boxing-mode strong { font-size: 28px; }
+  .boxing-mode small { font-size: 17px; line-height: 1.35; color: var(--ink-dim); }
+  .boxing-difficulty { display: flex; align-items: center; gap: 12px; }
+  .boxing-difficulty span { font-size: 16px; letter-spacing: .11em; color: var(--ink-dim); }
+  .game-sheet .boxing-difficulty button { width: 112px; height: 54px; font-size: 18px; }
+  .game-sheet .boxing-difficulty button.selected { color: #06121f; background: #5bdef5; border-color: #5bdef5; }
+  .boxing-results {
+    display: grid; grid-template-columns: repeat(5, minmax(105px, 1fr));
+    gap: 10px; width: min(900px, 90vw); margin: 2px 0;
+  }
+  .boxing-stat { padding: 10px 8px; border-radius: 10px; background: rgba(255,255,255,.06); }
+  .boxing-stat b { display: block; font-size: 24px; color: #fff; }
+  .boxing-stat span { font-size: 13px; letter-spacing: .06em; color: var(--ink-dim); }
+  #sheet-mode { background: radial-gradient(circle at 50% 35%, rgba(28,71,94,.5), rgba(5,8,13,.95) 65%); }
+  #sheet-mode h2 { font-size: 52px; }
+  #game-stage.boxing-active #game-debug {
+    top: 112px; right: 20px; bottom: auto; z-index: 8; max-width: 570px;
+  }
 
   /* ── the camera page ─────────────────────────────────────────── */
 
@@ -485,6 +674,151 @@
   #camera-answer .who {
     display: block; font-size: 16px; color: var(--accent);
     letter-spacing: 0.1em; margin-bottom: 10px;
+  }
+
+  /* ── the call page ───────────────────────────────────────────── */
+  /*
+     The remote caller fills the panel and everything else is drawn over the
+     top of them. No header and no Back button here: leaving this page means
+     ending a call, which is a decision rather than navigation, so the only
+     way out is the End Call button — a chevron in the corner would hang up on
+     somebody by looking like the chevron on every other page.
+  */
+  #call-stage {
+    flex: 1; position: relative; background: #05070a;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  /* `contain`, never `cover`. A phone held in portrait into a 1280x800
+     landscape panel is the normal case here, and `cover` would crop the
+     caller's face to fill the corners. Letterboxing is the correct answer to
+     "must not be stretched". */
+  #call-remote {
+    width: 100%; height: 100%; object-fit: contain;
+    display: none; background: #05070a;
+  }
+  #call-remote.on { display: block; }
+
+  #call-placeholder {
+    position: absolute; text-align: center; padding: 0 80px;
+    color: var(--ink-dim); font-size: 26px; line-height: 1.5;
+  }
+  #call-placeholder .glyph {
+    display: block; font-size: 84px; line-height: 1; margin-bottom: 24px;
+    font-family: "Noto Color Emoji", "Noto Emoji", sans-serif;
+  }
+  #call-placeholder b { display: block; color: var(--ink); font-size: 34px;
+                        font-weight: 500; margin-bottom: 14px; }
+  /* The one control on this page that starts something rather than ending it.
+     Sized for a thumb like everything else on this panel, and hidden entirely
+     when no phone has registered to be rung — a button that cannot work is
+     worse than no button. */
+  #call-out {
+    display: block; margin: 28px auto 0; padding: 0 34px; height: 78px;
+    border-radius: 14px; border: 1px solid var(--panel-edge);
+    background: #1d7a44; color: #fff; font-size: 24px; font-family: inherit;
+    cursor: pointer;
+  }
+  #call-out[hidden] { display: none; }
+  #call-out:active { background: #249854; }
+  #call-out:disabled { background: #2a3240; color: var(--ink-dim); }
+
+  /* The Brio's own picture, small and in the corner, so whoever is standing
+     here can see what they are sending. Mirrored, because a self-view that is
+     not mirrored makes people reach the wrong way. */
+  #call-self {
+    position: absolute; right: 28px; bottom: 150px;
+    width: 288px; height: 162px;           /* 16:9, the capture aspect */
+    object-fit: cover; transform: scaleX(-1);
+    border-radius: 14px; border: 1px solid var(--panel-edge);
+    background: #05070a; display: none;
+  }
+  #call-self.on { display: block; }
+
+  /* Section "Privacy and Security": whenever the camera and microphone are
+     live for a remote party, the panel says so, in the one place a person
+     glances at first and without having to read it. Never suppressed, and
+     never shown when there is no call. */
+  #call-banner {
+    position: absolute; top: 24px; left: 28px;
+    display: none; align-items: center; gap: 12px;
+    padding: 10px 20px; border-radius: 999px;
+    background: rgba(255,107,107,0.16); border: 1px solid var(--danger);
+    color: var(--danger); font-size: 20px; letter-spacing: 0.08em;
+  }
+  #call-banner.on { display: flex; }
+  #call-banner .live {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--danger); animation: pulse 1.1s infinite;
+  }
+
+  #call-who {
+    position: absolute; top: 24px; right: 28px;
+    font-size: 20px; color: var(--ink-dim);
+  }
+
+  /* On a gradient rather than a bar, so the controls are legible over a light
+     picture without taking a strip of the caller away from them. */
+  #call-controls {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    padding: 80px 28px 24px;
+    background: linear-gradient(to top, rgba(4,7,11,0.92) 35%, rgba(4,7,11,0));
+    display: flex; align-items: center; justify-content: center; gap: 20px;
+  }
+  /* Overrides the `flex: 1` on `button`, for the same reason `.back` does:
+     these are three controls of deliberately different importance, not a row
+     that shares the width equally.
+
+     Mic and camera are circles carrying only an icon — a round target reads as
+     a toggle, and the slash inside says which way it is set. End Call is the
+     odd one out and keeps its word, because it is the only irreversible thing
+     on this screen. */
+  .call-control {
+    flex: 0 0 auto; width: 86px; height: 86px;
+    border-radius: 50%; font-size: 19px; padding: 0;
+  }
+  .call-control svg {
+    width: 38px; height: 38px;
+    /* `currentColor` throughout, so the off state is one colour change here
+       rather than a second copy of every path. */
+    fill: none; stroke: currentColor; color: var(--ink);
+  }
+  .call-control svg .fill { fill: currentColor; stroke: none; }
+  .call-control svg .line {
+    stroke-width: 2; stroke-linecap: round; fill: none;
+  }
+  /* The slash, and the gap around it. Two strokes on the same line: the wider
+     one in the button's own background colour cuts a channel through the
+     glyph, which is what makes a struck-through icon legible rather than a
+     smudge. Both hidden until the control is off. */
+  .call-control svg .cut,
+  .call-control svg .slash { display: none; stroke-linecap: round; }
+  .call-control svg .cut { stroke: var(--panel); stroke-width: 5; }
+  .call-control svg .slash { stroke-width: 2.2; }
+  .call-control.off svg .cut,
+  .call-control.off svg .slash { display: block; }
+
+  /* End Call is the one control somebody reaches for in a hurry, so it is the
+     widest, the reddest, and in the middle where a thumb lands. */
+  #call-end {
+    width: 190px; height: 86px; border-radius: 43px;
+    background: #3a1a1e; border-color: var(--danger);
+    color: #ffd9d9; font-size: 22px; gap: 2px;
+  }
+  #call-end svg { width: 30px; height: 30px; color: #ffd9d9; }
+  #call-end:active { background: #55232a; border-color: var(--danger); }
+  /* A muted microphone or a stopped camera has to read as *off* at a glance
+     from across a room, not as a button that happens to be pressed. The slash
+     carries it; the colour is the second signal, for the same glance. */
+  .call-control.off {
+    background: #3a1a1e; border-color: var(--danger);
+  }
+  .call-control.off svg { color: #ffd9d9; }
+  .call-control.off svg .cut { stroke: #3a1a1e; }
+
+  #call-status {
+    position: absolute; left: 0; right: 0; bottom: 128px;
+    text-align: center; font-size: 22px; color: var(--ink-dim);
   }
 
   /* ── the weather page ────────────────────────────────────────── */
@@ -1014,6 +1348,11 @@
   }
   .set-button.danger { color: #e08c8c; }
   .set-button[disabled] { opacity: 0.4; }
+  .set-button.selected {
+    background: #35d47d; border-color: #35d47d; color: #04140c;
+    box-shadow: 0 0 0 1px rgba(117,255,173,0.18),
+                0 8px 22px rgba(20,184,95,0.20);
+  }
   /* Each picked set, with the one in use marked. Tapping one switches to it,
      which is what "Change Album" means when the sets are already on the
      device — no phone needed unless you want a different selection. */
@@ -1128,7 +1467,7 @@
 <!-- ── main ────────────────────────────────────────────────────── -->
 <div id="page-main" class="page on">
   <header>
-    <h1>AI ASSISTANT</h1>
+    <h1>小爱同学</h1>
     <div class="headline-weather" data-weather-headline></div>
   </header>
 
@@ -1282,12 +1621,15 @@
           <div id="game-combo"></div>
           <div id="game-streak"></div>
         </div>
-        <div>
+        <div id="game-clock-col">
           <!-- `2:00` at the start of a round. The unit span the seconds-only
                clock had is gone: "2:00 s" is wrong and the colon already says
                what the number is. -->
           <div id="game-clock">2:00</div>
           <div id="game-clock-bar"><div></div></div>
+          <!-- The seconds a bomb just took, thrown off the clock. Empty and
+               invisible the rest of the round. -->
+          <div id="game-clock-penalty"></div>
         </div>
       </div>
     </div>
@@ -1300,14 +1642,47 @@
 
     <button id="game-pause"><span class="glyph">⏸</span><span>Pause</span></button>
 
+    <div id="boxing-hud" aria-live="polite">
+      <div class="boxing-health" id="boxing-opponent-health">
+        <div class="boxing-health-row"><span class="boxing-health-name">OPPONENT</span><span class="boxing-health-value" id="boxing-opponent-value">100 / 100</span></div>
+        <div class="boxing-health-track"><div class="boxing-health-delay"></div><div class="boxing-health-main"></div></div>
+      </div>
+      <div id="boxing-timer">1:30</div>
+      <div id="boxing-score">SCORE 0</div>
+      <div id="boxing-combo"></div>
+      <div id="boxing-prompt"></div>
+      <div id="boxing-message"></div>
+      <div id="boxing-slow"></div>
+      <div class="boxing-health" id="boxing-player-health">
+        <div class="boxing-health-row"><span class="boxing-health-name">PLAYER</span><span class="boxing-health-value" id="boxing-player-value">100 / 100</span></div>
+        <div class="boxing-health-track"><div class="boxing-health-delay"></div><div class="boxing-health-main"></div></div>
+      </div>
+    </div>
+
+    <!-- Boxing selects a mode before the shared X-to-start screen. -->
+    <div class="game-sheet" id="sheet-mode">
+      <h2>BOXING</h2>
+      <p>Choose how you want to step into the ring.</p>
+      <div class="boxing-mode-grid">
+        <button class="boxing-mode" id="boxing-training"><span class="glyph">◎</span><strong>TRAINING</strong><small>90 seconds of targets, defense prompts, and progressive combinations.</small></button>
+        <button class="boxing-mode" id="boxing-fight"><span class="glyph">🥊</span><strong>FIGHT OPPONENT</strong><small>Face an adaptive boxer. Block, dodge, parry, and counter.</small></button>
+      </div>
+      <div class="boxing-difficulty"><span>DIFFICULTY</span><button data-boxing-difficulty="easy">Easy</button><button class="selected" data-boxing-difficulty="normal">Normal</button><button data-boxing-difficulty="hard">Hard</button></div>
+      <button id="boxing-fullscreen">Full Screen</button>
+      <button id="boxing-mode-back">Back to Games</button>
+    </div>
+
     <!-- Start. Section 20: a preview, a detection state, and a START that
          stays disabled until somebody is really there. -->
     <div class="game-sheet on" id="sheet-start">
       <h2 id="start-title">Fruit Ninja</h2>
-      <p>Stand where the camera can see your full upper body.</p>
+      <p id="start-instruction">Stand where the camera can see your full upper body.<span id="start-round-copy"></span></p>
       <img id="game-preview" alt="">
       <div id="game-detected" class="no">Looking for a player…</div>
-      <button class="primary" id="start-play" disabled>START</button>
+      <div class="gesture-help" id="start-gesture-help">
+        <span class="step">X</span><span>Cross both arms into an X to start</span>
+      </div>
+      <button class="primary gesture-primary" id="start-play" disabled>START</button>
       <button id="start-back">Back to Games</button>
     </div>
 
@@ -1327,7 +1702,11 @@
         <div><span class="label">BEST</span><span class="big-score" id="over-best">0</span></div>
       </div>
       <p id="over-detail"></p>
-      <button class="primary" id="over-again">Play Again</button>
+      <div class="boxing-results" id="boxing-results"></div>
+      <div class="gesture-help" id="over-gesture-help">
+        <span class="step">X</span><span>Cross both arms into an X to play again</span>
+      </div>
+      <button class="primary gesture-primary" id="over-again">Play Again</button>
       <button id="over-back">Back to Games</button>
     </div>
 
@@ -1340,6 +1719,8 @@
       <button class="primary" id="error-retry">Retry</button>
       <button id="error-back">Back to Games</button>
     </div>
+
+    <div id="game-gesture-cursor" aria-hidden="true"><span>✋</span></div>
 
     <div id="game-debug"></div>
   </div>
@@ -1526,6 +1907,14 @@
         <div class="set-label">Showing now</div>
         <div class="set-value" id="set-mode">—</div>
       </div>
+      <!-- The idle-power behaviour, where somebody standing at the device can
+           check it. "Is the camera light off?" is the question this feature
+           exists to answer yes to, and the panel is closer to hand than the
+           journal is. -->
+      <div class="set-row">
+        <div class="set-label">Camera while asleep</div>
+        <div class="set-value" id="set-camera-idle">—</div>
+      </div>
       <!-- Section 22 asks for the schedule to be visible and section 25 for
            the timezone to be diagnosable. Both are read-only here on purpose:
            they live in one place in the YAML so they can be changed without
@@ -1572,13 +1961,24 @@
       <div id="set-collections"></div>
     </div>
 
-    <!-- Section 44. This exists to answer one question — is the AI HAT+ 2
-         actually doing the work — and it answers it from the device rather
-         than from the configuration, so a HAT that has fallen out of its
-         connector says so here instead of being reported by a setting that
-         still claims it is enabled. Section 42 is the same requirement seen
-         from the other side: there is no CPU pose fallback, so if this says
-         the accelerator is missing then the games do not run at all. -->
+    <div class="set-section">
+      <div class="set-title">Fruit Ninja</div>
+      <div class="set-row">
+        <div class="set-label">Play time</div>
+        <div class="set-value" id="set-game-time">—</div>
+      </div>
+      <div class="set-buttons" id="set-game-times">
+        <button class="set-button" data-game-seconds="60">60s</button>
+        <button class="set-button" data-game-seconds="120">120s</button>
+        <button class="set-button" data-game-seconds="180">180s</button>
+        <button class="set-button" data-game-seconds="240">240s</button>
+        <button class="set-button" data-game-seconds="300">300s</button>
+      </div>
+      <div class="set-note" id="set-game-note">Choose how long the next round lasts.</div>
+    </div>
+
+    <!-- Section 44. Motion health comes from the device, not configuration,
+         so a disconnected accelerator cannot look healthy here. -->
     <div class="set-section">
       <div class="set-title">AI Motion</div>
 
@@ -2276,6 +2676,18 @@ async function drawSettings() {
     `${screen.night_window || "—"}  ·  ${screen.night_mode === "photos"
       ? "Google Photos slideshow" : "Time + Weather"}`;
   el("set-mode").textContent = MODE_TEXT[screen.mode] || screen.mode || "—";
+  // Three facts in one line, because they are only useful together: whether the
+  // camera is released right now, whether the detector is parked with it, and
+  // how long the screen has after a touch before the two go away again.
+  const cam = info.camera || {};
+  const presence = info.presence || {};
+  const grace = Math.round((screen.wake_grace_s || 0) / 60);
+  el("set-camera-idle").textContent = cam.asleep
+    ? `Released — ${cam.asleep}. Touch or say 小艾同学 to wake.`
+    : `${cam.running ? "Open" : "Not running"}` +
+      `${presence.paused ? ", detector parked" : ", detector looking"}` +
+      `${grace ? ` · ${grace} min after a touch to find somebody` : ""}`;
+  el("set-camera-idle").classList.toggle("off", Boolean(cam.asleep));
   // Section 25 asks for the timezone to be diagnosable. It is in the boot log
   // too, but the boot log is not something anybody standing at the device can
   // read, and "the night screen came on an hour early" is a timezone question
@@ -2287,7 +2699,37 @@ async function drawSettings() {
 
   drawPhotoSettings(photos);
   drawPickState(photos.pick || {});
+  drawGameSettings();
   drawMotionSettings();
+}
+
+function roundLabel(seconds) {
+  const selected = Number(seconds || 120);
+  const minutes = Math.round(selected / 60);
+  return `${selected} seconds (${minutes} minute${minutes === 1 ? "" : "s"})`;
+}
+
+function renderGameSettings(info) {
+  const selected = Number(info.round_seconds || 120);
+  const choices = info.choices || [];
+  const choice = choices.find((item) => Number(item.seconds) === selected) || {};
+  el("set-game-time").textContent = roundLabel(selected);
+  for (const button of document.querySelectorAll("[data-game-seconds]")) {
+    button.classList.toggle("selected", Number(button.dataset.gameSeconds) === selected);
+    button.disabled = Boolean(info.locked);
+  }
+  el("set-game-note").textContent = info.locked
+    ? "Leave the current game before changing its play time."
+    : `Applies to the next round. Best score at this length: ${choice.best || 0}.`;
+}
+
+async function drawGameSettings() {
+  try {
+    const response = await fetch("/api/game/settings", { cache: "no-store" });
+    renderGameSettings(await response.json());
+  } catch (err) {
+    el("set-game-note").textContent = "The assistant is not answering.";
+  }
 }
 
 // Section 44. Asked of the device rather than read out of the configuration,
@@ -2504,6 +2946,23 @@ el("set-debug-pose").addEventListener("click", async () => {
     el("set-motion-note").textContent = "The assistant did not answer.";
   }
 });
+
+for (const button of document.querySelectorAll("[data-game-seconds]")) {
+  button.addEventListener("click", async () => {
+    try {
+      const response = await fetch("/api/game/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ round_seconds: Number(button.dataset.gameSeconds) }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Setting refused");
+      renderGameSettings(data);
+    } catch (err) {
+      el("set-game-note").textContent = err.message || "The assistant did not answer.";
+    }
+  });
+}
 
 // The one destructive button on this page, and it is armed by a second press
 // rather than by a dialog — the same pattern the file list's Delete uses, for
@@ -3237,15 +3696,18 @@ function callApi(path, body) {
 //
 // Matched on the label rather than taken by index, for exactly the reason the
 // Python side matches the camera by name: `videoinput[0]` is whatever the
-// enumeration happened to order first, and this Pi has a second capture device
-// on it — the TI microphone the assistant's own voice loop is using. Sending
-// the caller the assistant's microphone would work well enough to ship and be
-// wrong in a way nobody notices until the two fight.
+// enumeration happened to order first, and this Pi has other capture devices
+// on it — the TI microphone the assistant's own voice loop is using, and,
+// since the BRIO 4K replacement (REPORT.md §53), a *second* video input on
+// the same camera: an infrared sensor capped at 340x340 that reports the same
+// product name as the colour one. A label match alone cannot tell those two
+// apart, so every matching video input is collected here — `openBrio` below
+// is what picks among them.
 //
 // Labels are empty until permission has been granted at least once, so this
 // runs after the first `getUserMedia` rather than before it.
 async function brioDevices() {
-  const found = { video: null, audio: null, speaker: null, cancelled: false };
+  const found = { video: [], audio: null, speaker: null, cancelled: false };
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
     for (const device of devices) {
@@ -3266,7 +3728,7 @@ async function brioDevices() {
         continue;
       }
       if (!/brio/i.test(label)) continue;
-      if (device.kind === "videoinput" && !found.video) found.video = device.deviceId;
+      if (device.kind === "videoinput") found.video.push(device.deviceId);
       // Only as a fallback: the raw capsule, used when no cancelled source
       // exists. Chromium's own canceller then has to cope, and measurement on
       // this device says it does not — see config/pipewire-echo-cancel.conf.
@@ -3283,6 +3745,19 @@ async function brioDevices() {
     found.cancelled = false;
   }
   return found;
+}
+
+// The narrowest a call's video is allowed to negotiate before it is treated
+// as the wrong sensor rather than a bandwidth compromise. The BRIO 4K's
+// infrared node tops out at 340x340 (REPORT.md §53); a genuine colour
+// negotiation for this call — even a constrained one — never lands anywhere
+// near that, so 480 leaves headroom on the low side while still catching the
+// infrared node.
+const MIN_CALL_VIDEO_WIDTH = 480;
+
+function looksLikeColourCamera(track) {
+  const settings = track && track.getSettings ? track.getSettings() : {};
+  return !settings.width || settings.width >= MIN_CALL_VIDEO_WIDTH;
 }
 
 // Send the caller's voice to the echo canceller's own sink.
@@ -3339,6 +3814,11 @@ function withTimeout(promise, ms, what) {
 // the journal. A call with a working camera and no microphone is a degraded
 // call, not a failed one, so this is reported rather than thrown.
 let callAudioProblem = "";
+// Set when no Brio-labeled video candidate reached a colour-sized resolution
+// (see MIN_CALL_VIDEO_WIDTH) — the call still goes ahead on whatever it did
+// negotiate, same reasoning as callAudioProblem, but it needs to reach the
+// journal rather than fail invisibly.
+let callVideoProblem = "";
 //: Whether this call is using the PipeWire echo canceller rather than the
 //: browser's. Reported with the audio numbers, so a reading in the journal is
 //: always attributable to one or the other.
@@ -3378,14 +3858,38 @@ async function openBrio() {
   // Brio can be told from anything else plugged in. Matched by name rather
   // than taken by index, for the same reason the Python side does it.
   const wanted = await brioDevices();
-  const current = stream.getVideoTracks()[0];
-  const settings = current && current.getSettings ? current.getSettings() : {};
   let video = stream;
-  if (wanted.video && settings.deviceId && wanted.video !== settings.deviceId) {
-    for (const track of stream.getTracks()) track.stop();
-    video = await withTimeout(navigator.mediaDevices.getUserMedia({
-      video: Object.assign({ deviceId: { exact: wanted.video } }, videoWanted),
-    }), MEDIA_TIMEOUT_MS, "the Brio camera");
+  let current = stream.getVideoTracks()[0];
+  callVideoProblem = "";
+
+  // The browser's own default pick is trusted first: on this Pi it is the
+  // colour sensor (the lower UVC interface, same node the Python side
+  // prefers), and a working default must never be disturbed by a reselection
+  // that — now there are two Brio-labeled video inputs — could just as easily
+  // land on the infrared one instead. Only search further when the default
+  // itself did not negotiate a colour-sized frame.
+  if (!looksLikeColourCamera(current)) {
+    const settings = current.getSettings ? current.getSettings() : {};
+    for (const deviceId of wanted.video) {
+      if (deviceId === settings.deviceId) continue;
+      for (const track of video.getTracks()) track.stop();
+      try {
+        video = await withTimeout(navigator.mediaDevices.getUserMedia({
+          video: Object.assign({ deviceId: { exact: deviceId } }, videoWanted),
+        }), MEDIA_TIMEOUT_MS, "the Brio camera");
+      } catch (err) {
+        console.warn("could not open camera candidate", deviceId, err);
+        continue;
+      }
+      current = video.getVideoTracks()[0];
+      if (looksLikeColourCamera(current)) break;
+    }
+    if (!looksLikeColourCamera(current)) {
+      const finalSettings = current.getSettings ? current.getSettings() : {};
+      callVideoProblem = "camera negotiated " + (finalSettings.width || "?") +
+        "x" + (finalSettings.height || "?") + ", likely the infrared sensor";
+      console.warn(callVideoProblem);
+    }
   }
 
   callAudioProblem = "";
@@ -3705,6 +4209,10 @@ async function openLocalMedia() {
     setCallStatus("No microphone on this call — " + callAudioProblem);
     callApi("/api/call/send", { session: callSession,
       message: { type: "note", detail: "no microphone: " + callAudioProblem } });
+  }
+  if (callVideoProblem) {
+    callApi("/api/call/send", { session: callSession,
+      message: { type: "note", detail: "call video: " + callVideoProblem } });
   }
 
   callPc = buildCallPeer();
@@ -4504,12 +5012,300 @@ let gameState = null;               // last snapshot from the Pi
 let gameStateAt = 0;                // performance.now() when it arrived
 let gameFrame = null;               // requestAnimationFrame handle
 let gameId = "";                    // which game is open
+let dismissedGameId = "";           // an exited game awaiting server closure
+let gameCloseRequest = null;         // prevents reopen racing the old close
 let gameSounds = null;              // lazily built AudioContext
 let gameFps = 0;
 let gameOpening = false;            // an /api/game/open is in flight
 let gameNames = {};                 // id -> display name, from the catalogue
 
 function gameEl(id) { return document.getElementById(id); }
+
+// ── hands-free Start / Play Again ──────────────────────────────────────────
+//
+// Start and Play Again are now triggered in Python from the Hailo pose stream:
+// hold both forearms in an X across the upper chest. The server debounces the
+// six shoulder/elbow/wrist joints and starts the round itself, so the browser
+// does not have to see fingers or synthesize a click. Touch remains available.
+// The old MediaPipe helpers below are inert compatibility code; no recognizer
+// is loaded or sampled by `syncGestureControls`.
+
+const GESTURE_SAMPLE_MS = 160;      // the preview itself is five frames/sec
+const GESTURE_LOST_MS = 700;
+const GESTURE_CLOSE_WINDOW_MS = 1200;
+const GESTURE_MATCH_DISTANCE = 0.30;
+
+let gestureRecognizer = null;
+let gestureRecognizerLoad = null;
+let gestureTimer = null;
+let gestureMode = "";               // "start", "over", or off
+const gestureControl = {
+  x: NaN, y: NaN, lastSeen: 0,
+  candidate: "", candidateFrames: 0, shape: "",
+  armed: false, openHoverAt: 0, fired: false,
+};
+
+function gestureTarget() {
+  if (gestureMode === "start") {
+    const button = gameEl("start-play");
+    return button && !button.disabled ? { button, action: "start" } : null;
+  }
+  if (gestureMode === "over") {
+    return { button: gameEl("over-again"), action: "restart" };
+  }
+  return null;
+}
+
+function gestureHelp() {
+  return gameEl(gestureMode === "over" ? "over-gesture-help" :
+                "start-gesture-help");
+}
+
+function setGestureHelp(step, words) {
+  const help = gestureHelp();
+  if (!help) return;
+  const parts = help.querySelectorAll("span");
+  if (parts[0]) parts[0].textContent = step;
+  if (parts[1]) parts[1].textContent = words;
+}
+
+function clearGestureLatch(hideCursor = true) {
+  const cursor = gameEl("game-gesture-cursor");
+  gestureControl.x = gestureControl.y = NaN;
+  gestureControl.lastSeen = 0;
+  gestureControl.candidate = gestureControl.shape = "";
+  gestureControl.candidateFrames = 0;
+  gestureControl.armed = false;
+  gestureControl.openHoverAt = 0;
+  gestureControl.fired = false;
+  for (const id of ["start-play", "over-again"]) {
+    const button = gameEl(id);
+    if (button) button.classList.remove("gesture-hover", "gesture-press");
+  }
+  if (hideCursor && cursor) cursor.className = "";
+}
+
+async function prepareGestureRecognizer() {
+  if (gestureRecognizer) return gestureRecognizer;
+  if (gestureRecognizerLoad) return gestureRecognizerLoad;
+
+  gestureRecognizerLoad = (async () => {
+    try {
+      const vision = await import("/assets/mediapipe/vision_bundle.mjs");
+      const files = await vision.FilesetResolver.forVisionTasks(
+        "/assets/mediapipe/wasm");
+      gestureRecognizer = await vision.GestureRecognizer.createFromOptions(
+        files,
+        {
+          baseOptions: {
+            modelAssetPath: "/assets/mediapipe/gesture_recognizer.task",
+            delegate: "CPU",
+          },
+          runningMode: "VIDEO",
+          numHands: 2,
+          minHandDetectionConfidence: 0.55,
+          minHandPresenceConfidence: 0.55,
+          minTrackingConfidence: 0.5,
+          cannedGesturesClassifierOptions: {
+            categoryAllowlist: ["Open_Palm", "Closed_Fist"],
+            scoreThreshold: 0.55,
+          },
+        });
+      if (gestureMode) setGestureHelp("1", "Open your palm to take control");
+      return gestureRecognizer;
+    } catch (err) {
+      console.warn("Hand gesture controls could not start", err);
+      if (gestureMode) setGestureHelp("!", "Hand controls unavailable — use the green button");
+      return null;
+    }
+  })();
+  return gestureRecognizerLoad;
+}
+
+function gestureSamples(result) {
+  const samples = [];
+  for (let i = 0; i < (result.landmarks || []).length; i++) {
+    const points = result.landmarks[i];
+    if (!points || points.length < 18) continue;
+    // The centre of the five palm anchors is steadier than landmark 0 at the
+    // wrist.  MediaPipe sees the raw camera image, so x is mirrored once here
+    // to agree with both the on-screen preview and the pose-driven blades.
+    let x = 0, y = 0;
+    for (const index of [0, 5, 9, 13, 17]) {
+      x += points[index].x; y += points[index].y;
+    }
+    x = 1 - x / 5; y /= 5;
+    const category = result.gestures && result.gestures[i] && result.gestures[i][0];
+    samples.push({
+      x, y,
+      shape: category ? category.categoryName : "",
+      score: category ? category.score : 0,
+    });
+  }
+  return samples;
+}
+
+function nearestGestureSample(samples) {
+  if (!samples.length) return null;
+  if (!Number.isFinite(gestureControl.x)) {
+    // A fist cannot seize control.  This is the first half of the accidental
+    // click defence; the second is the open-over-button latch below.
+    return samples.filter((sample) => sample.shape === "Open_Palm")
+      .sort((a, b) => b.score - a.score)[0] || null;
+  }
+  let best = null, distance = Infinity;
+  for (const sample of samples) {
+    const d = Math.hypot(sample.x - gestureControl.x,
+                         sample.y - gestureControl.y);
+    if (d < distance) { distance = d; best = sample; }
+  }
+  return distance <= GESTURE_MATCH_DISTANCE ? best : null;
+}
+
+function palmInside(button, x, y) {
+  const stage = gameEl("game-stage").getBoundingClientRect();
+  const box = button.getBoundingClientRect();
+  const px = stage.left + x * stage.width;
+  const py = stage.top + y * stage.height;
+  return px >= box.left && px <= box.right && py >= box.top && py <= box.bottom;
+}
+
+function applyGestureSample(sample, now) {
+  const target = gestureTarget();
+  if (!target || gestureControl.fired) {
+    gameEl("game-gesture-cursor").className = "";
+    return;
+  }
+
+  if (!sample) {
+    if (gestureControl.lastSeen && now - gestureControl.lastSeen > GESTURE_LOST_MS) {
+      clearGestureLatch();
+      setGestureHelp("1", "Open your palm to take control");
+    }
+    return;
+  }
+
+  // A little visual smoothing only.  Recognition and the hit-test use this
+  // same point, so the cursor can never show inside while testing outside.
+  if (Number.isFinite(gestureControl.x)) {
+    gestureControl.x += 0.65 * (sample.x - gestureControl.x);
+    gestureControl.y += 0.65 * (sample.y - gestureControl.y);
+  } else {
+    gestureControl.x = sample.x; gestureControl.y = sample.y;
+  }
+  gestureControl.lastSeen = now;
+
+  const cursor = gameEl("game-gesture-cursor");
+  cursor.style.left = `${gestureControl.x * 100}%`;
+  cursor.style.top = `${gestureControl.y * 100}%`;
+  cursor.className = "on";
+
+  const next = sample.shape === "Open_Palm" || sample.shape === "Closed_Fist"
+    ? sample.shape : "";
+  if (next === gestureControl.candidate) gestureControl.candidateFrames += 1;
+  else {
+    gestureControl.candidate = next;
+    gestureControl.candidateFrames = 1;
+  }
+  if (gestureControl.candidateFrames >= 2) gestureControl.shape = next;
+
+  const closed = gestureControl.shape === "Closed_Fist";
+  cursor.classList.toggle("closed", closed);
+  cursor.querySelector("span").textContent = closed ? "✊" : "✋";
+
+  const inside = palmInside(target.button, gestureControl.x, gestureControl.y);
+  target.button.classList.toggle("gesture-hover", inside && !closed);
+
+  if (gestureControl.shape === "Open_Palm") {
+    gestureControl.armed = true;
+    gestureControl.openHoverAt = inside ? now : 0;
+    setGestureHelp(inside ? "3" : "2",
+      inside ? "Close your palm to click" : "Move your open palm onto the green button");
+    return;
+  }
+
+  if (closed && inside && gestureControl.armed && gestureControl.openHoverAt &&
+      now - gestureControl.openHoverAt <= GESTURE_CLOSE_WINDOW_MS) {
+    gestureControl.fired = true;
+    target.button.classList.remove("gesture-hover");
+    target.button.classList.add("gesture-press");
+    setGestureHelp("✓", "Gesture accepted");
+    gameCommand(target.action);
+  }
+}
+
+function recognizeGestureFrame() {
+  if (!gestureMode || !gestureRecognizer) return;
+  const target = gestureTarget();
+  if (!target) {
+    gameEl("game-gesture-cursor").className = "";
+    setGestureHelp("1", "Stand in view, then open your palm");
+    return;
+  }
+  const preview = gameEl("game-preview");
+  if (!preview.naturalWidth || !preview.naturalHeight) return;
+  const now = performance.now();
+  try {
+    const result = gestureRecognizer.recognizeForVideo(preview, now);
+    applyGestureSample(nearestGestureSample(gestureSamples(result)), now);
+  } catch (err) {
+    // A multipart image can swap frames between the readiness check above and
+    // the synchronous read.  Missing one sample is harmless; the lost-hand
+    // timer covers a stream that genuinely stopped.
+  }
+}
+
+function syncGestureControls(state) {
+  const game = state.game || {};
+  const motionFailed = state.motion && state.motion.error;
+  const boxingNeedsMode = gameId === "boxing" && !game.mode;
+  const next = motionFailed ? "" :
+    game.state === "ready" && !boxingNeedsMode ? "start" :
+    game.state === "over" ? "over" : "";
+  if (next !== gestureMode) {
+    gestureMode = next;
+    clearGestureLatch();
+    if (gestureTimer !== null) {
+      clearInterval(gestureTimer); gestureTimer = null;
+    }
+    const preview = gameEl("game-preview");
+    if (gestureMode === "start") {
+      preview.src = "/api/game/preview?t=" + Date.now();
+    } else {
+      // Game Over no longer needs a hidden five-fps preview: the same Hailo
+      // pose stream that drove the round recognizes the crossed arms.
+      preview.removeAttribute("src");
+    }
+  }
+  if (!gestureMode) return;
+
+  const target = gestureTarget();
+  if (!target) return;
+  const pose = state.pose && state.pose.player;
+  const gesture = state.gesture || {};
+  target.button.classList.toggle("gesture-hover", !!gesture.crossed);
+
+  if (!pose || !pose.present) {
+    setGestureHelp("X", "Stand in view, then cross both arms into an X");
+  } else if (!gesture.armed) {
+    setGestureHelp("↺", "Lower your arms, then make a new X");
+  } else if (gesture.crossed) {
+    const percent = Math.round(100 * Number(gesture.progress || 0));
+    setGestureHelp("✓", `Hold the X… ${percent}%`);
+  } else {
+    setGestureHelp("X", gestureMode === "over"
+      ? "Cross both arms into an X to play again"
+      : "Cross both arms into an X to start");
+  }
+}
+
+function stopGestureControls() {
+  gestureMode = "";
+  if (gestureTimer !== null) {
+    clearInterval(gestureTimer); gestureTimer = null;
+  }
+  clearGestureLatch();
+}
 
 // ── the library ─────────────────────────────────────────────────────
 
@@ -4528,11 +5324,15 @@ async function startLibrary() {
       tile.className = "game-tile" + (game.playable ? "" : " soon");
       const best = game.playable && game.best
         ? `<span class="best">Best ${game.best}</span>` : "";
+      const play = game.playable
+        ? (game.id === "boxing" ? "CHOOSE MODE" :
+          `PLAY · ${Math.round((game.round_seconds || 120) / 60)} MIN`)
+        : "Coming Soon";
       tile.innerHTML = best +
         `<span class="glyph">${game.glyph}</span>` +
         `<span class="name">${game.name}</span>` +
         `<span class="blurb">${game.blurb}</span>` +
-        `<span class="cta">${game.playable ? "PLAY" : "Coming Soon"}</span>`;
+        `<span class="cta">${play}</span>`;
       if (game.playable) {
         tile.addEventListener("click", () => openGame(game.id, game.name));
       }
@@ -4548,14 +5348,20 @@ function stopLibrary() { /* nothing held open */ }
 // ── opening and closing a game ──────────────────────────────────────
 
 async function openGame(id, name) {
+  // A fast second tap in the library must not let the previous asynchronous
+  // close arrive after this open and tear down the new session.
+  if (gameCloseRequest) await gameCloseRequest.catch(() => {});
+  dismissedGameId = "";
   gameId = id;
   gameOpening = true;
   gameEl("start-title").textContent = name;
+  gameEl("start-round-copy").textContent = "";
   showSheet("start");
-  gameEl("game-preview").src = "";
+  gameEl("game-preview").removeAttribute("src");
   gameEl("game-detected").textContent = "Starting the camera…";
   gameEl("game-detected").className = "no";
   show("game");
+  if (window.BoxingUI) window.BoxingUI.onOpen(id);
 
   const answer = await gamePost("/api/game/open", { game: id });
   gameOpening = false;
@@ -4570,6 +5376,10 @@ async function openGame(id, name) {
       "Fruit Ninja requires the AI HAT+ 2.";
     showSheet("error");
     return;
+  }
+  if (answer.data && answer.data.game) {
+    gameEl("start-round-copy").textContent =
+      ` · ${roundLabel(answer.data.game.duration)}`;
   }
   // The game's own preview, not `/api/camera/stream`. That one reads the
   // assistant's `Camera`, which is *lent* for as long as a game is open and
@@ -4590,6 +5400,7 @@ async function openGame(id, name) {
 // follows it.
 function adoptGame(id) {
   gameId = id;
+  if (window.BoxingUI) window.BoxingUI.onOpen(id);
   gameEl("game-preview").src = "/api/game/preview?t=" + Date.now();
   show("game");
   openGameStream();
@@ -4614,6 +5425,22 @@ function adoptGame(id) {
 // the screen has to follow the Pi rather than only its own buttons.
 function gameFromState(state) {
   const game = state.game;
+
+  // `show("games")` tears down a game immediately, while CameraLease and the
+  // Hailo pipeline can take a couple of seconds to close. During that window
+  // `/api/state` still truthfully reports the old game as active. Do not adopt
+  // a game the player explicitly exited; wait until one poll acknowledges its
+  // closure. A different active id is a genuine voice-start and still wins.
+  if (dismissedGameId) {
+    if (!game || !game.active) {
+      dismissedGameId = "";
+    } else if (game.active === dismissedGameId) {
+      return;
+    } else {
+      dismissedGameId = "";
+    }
+  }
+
   if (game && game.active) {
     if (currentPage !== "game") adoptGame(game.active);
     return;
@@ -4630,12 +5457,16 @@ function gameFromState(state) {
 }
 
 function stopGame() {
+  const closingId = gameId;
+  if (closingId) dismissedGameId = closingId;
   closeGameStream();
   if (gameFrame !== null) { cancelAnimationFrame(gameFrame); gameFrame = null; }
+  stopGestureControls();
+  if (window.BoxingUI) window.BoxingUI.stop();
   // The preview is an <img> on a multipart stream: it keeps reading the camera
   // for as long as the element has that src, whether or not anybody can see
   // it. Same trap as the camera page's.
-  gameEl("game-preview").src = "";
+  gameEl("game-preview").removeAttribute("src");
   gameState = null;
   resetHandTrails();
   // Everything the page was drawing goes with the game. Particles and a
@@ -4648,10 +5479,20 @@ function stopGame() {
   // Fire and forget. The manager's watchdog would give the hardware back
   // anyway, but not for twenty-five seconds, and the camera page may be the
   // very next thing somebody opens.
-  fetch("/api/game/close", {
+  const request = fetch("/api/game/close", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: "{}", keepalive: true,
-  }).catch(() => {});
+  });
+  gameCloseRequest = request;
+  request.then((response) => {
+    // If the server refused the close, allow its still-active game to be
+    // adopted again instead of leaving a live session hidden indefinitely.
+    if (!response.ok && dismissedGameId === closingId) dismissedGameId = "";
+  }).catch(() => {
+    if (dismissedGameId === closingId) dismissedGameId = "";
+  }).finally(() => {
+    if (gameCloseRequest === request) gameCloseRequest = null;
+  });
 }
 
 async function gamePost(url, body) {
@@ -4693,6 +5534,19 @@ function applyGameState(state) {
   const game = state.game;
   const pose = state.pose;
 
+  if (gameId === "boxing" && window.BoxingUI) {
+    window.BoxingUI.applyState(state);
+    const boxingMotion = state.motion;
+    if (boxingMotion && boxingMotion.error) {
+      gameEl("error-title").textContent = "Camera disconnected";
+      gameEl("error-detail").textContent = boxingMotion.error;
+      showSheet("error");
+    }
+    syncGestureControls(state);
+    for (const event of state.events || []) handleGameEvent(event);
+    return;
+  }
+
   // The start screen's live readiness. Section 20: START stays disabled until
   // the Pi says a player is really there — the page never decides this
   // itself, for the same reason the screensaver mode is not decided here.
@@ -4711,6 +5565,7 @@ function applyGameState(state) {
   if (pose && pose.player) updateShadow(pose.player.body, performance.now());
 
   if (game) {
+    gameEl("start-round-copy").textContent = ` · ${roundLabel(game.duration)}`;
     gameEl("game-score").textContent = game.score;
     gameEl("game-best").textContent = "BEST " + (game.best || 0);
     gameEl("game-streak").textContent =
@@ -4743,6 +5598,8 @@ function applyGameState(state) {
     showSheet("error");
   }
 
+  syncGestureControls(state);
+
   for (const event of state.events || []) handleGameEvent(event);
   drawGameDebug(state);
 }
@@ -4752,6 +5609,10 @@ function applyGameState(state) {
 // the render loop runs sixty times a second — anything driven from a snapshot
 // field instead of from an event ends up firing every frame it is true for.
 function handleGameEvent(e) {
+  if (gameId === "boxing" && window.BoxingUI) {
+    window.BoxingUI.handleEvent(e);
+    return;
+  }
   switch (e.name) {
     case "slice":
       playSliceSound(e.sound, e.streak || 0);
@@ -4780,7 +5641,11 @@ function handleGameEvent(e) {
       splash(e.x, e.y, "#3a1206", 1.6, 70, Math.random() * Math.PI);
       sparks(e.x, e.y, "#ff9b3d", 34, 620);
       sparks(e.x, e.y, "#ffffff", 12, 380);
-      popup(e.x, e.y - 20, "-5s", "#ff7043", 38);
+      popup(e.x, e.y - 20, "-" + bombSeconds(e) + "s", "#ff7043", 38);
+      // And again on the clock, which is where the five seconds actually went.
+      // The popup over the bomb says what happened at the bomb; this says it
+      // where the player will next look for the number that changed.
+      flashClockPenalty(bombSeconds(e));
       shakeScreen();
       break;
 
@@ -4955,10 +5820,12 @@ function resetBanner() {
   lastComboShown = 0;
   gameEl("game-banner").classList.remove("on");
   gameEl("game-combo").textContent = "";
+  // A bomb sliced in the last second of a round leaves this mid-animation.
+  clearClockPenalty();
 }
 
 function showSheet(which) {
-  for (const name of ["start", "paused", "over", "error"]) {
+  for (const name of ["mode", "start", "paused", "over", "error"]) {
     gameEl("sheet-" + name).classList.toggle("on", name === which);
   }
 }
@@ -4984,6 +5851,10 @@ function startGameRender() {
 function renderGame(now) {
   const canvas = gameEl("game-canvas");
   const ctx = canvas.getContext("2d");
+  if (gameId === "boxing" && window.BoxingUI) {
+    window.BoxingUI.render(ctx, now, gameState, gameFps);
+    return;
+  }
   if (!gameState || !gameState.game) { ctx.clearRect(0, 0, GAME_W, GAME_H); return; }
 
   const game = gameState.game;
@@ -5167,6 +6038,10 @@ const NINJA_CLOTH = "#0a0a0f";
 const NINJA_SASH = "#b3231f";
 //: The eye slit. Warm rather than white, so it reads as a face in shadow.
 const NINJA_EYES = "#e8cba4";
+// Original generated artwork based on the supplied image as a style reference.
+// The live pose still owns its position, angle and all body geometry.
+const ninjaHead = new Image();
+ninjaHead.src = "/assets/fruit-ninja/ninja-head.png";
 //: EMA weight on each new pose for the shadow only. Much heavier smoothing
 //: than the wrists get (0.55), and it costs nothing that matters: the blade
 //: must not lag the hand, but a shadow that lags by 60 ms is simply a calm
@@ -5180,10 +6055,25 @@ let shadowSeenAt = 0;
 
 function resetShadow() { shadowJoints = {}; shadowSeenAt = 0; }
 
-// Fold this frame's joints into the smoothed set. Joints the Pi left out — it
-// omits anything it is not confident about, see `PersonPose.silhouette` — are
-// *dropped* rather than held at their last position, so an arm that goes
-// behind the player's back disappears instead of freezing mid-air.
+// Fixed anime proportions. Camera distance and a player's build never change
+// these numbers; live pose data supplies only position and segment direction.
+// This is animation retargeting, not a silhouette of the person in the room.
+const NINJA_RIG = Object.freeze({
+  shoulderHalf: 38,
+  hipHalf: 22,
+  torso: 70,
+  headRadius: 25,
+  headLift: 27,
+  upperArm: 52,
+  forearm: 47,
+  thigh: 66,
+  calf: 61,
+  cloth: 20,
+});
+
+// Fold this frame's joints into the smoothed source pose. Joints the Pi omits
+// are dropped rather than frozen; the anime rig gives a missing limb a neutral
+// direction until tracking returns.
 function updateShadow(body, now) {
   if (!body) return;
   const next = {};
@@ -5198,13 +6088,93 @@ function updateShadow(body, now) {
   shadowSeenAt = now;
 }
 
+function retargetNinjaPose(source) {
+  const rawPoint = (joint) => joint
+    ? [joint[0] * SHADOW_W, joint[1] * SHADOW_H]
+    : null;
+  const midpoint = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const direction = (a, b, fallback) => {
+    const pa = rawPoint(a), pb = rawPoint(b);
+    if (!pa || !pb) return fallback;
+    const dx = pb[0] - pa[0], dy = pb[1] - pa[1];
+    const length = Math.hypot(dx, dy);
+    return length > 2 ? [dx / length, dy / length] : fallback;
+  };
+  const extend = (origin, vector, length) => [
+    origin[0] + vector[0] * length,
+    origin[1] + vector[1] * length,
+  ];
+
+  const rawLeftShoulder = rawPoint(source.left_shoulder);
+  const rawRightShoulder = rawPoint(source.right_shoulder);
+  if (!rawLeftShoulder || !rawRightShoulder) return null;
+
+  const shoulderCentre = midpoint(rawLeftShoulder, rawRightShoulder);
+  const side = direction(source.left_shoulder, source.right_shoulder, [1, 0]);
+  const rawLeftHip = rawPoint(source.left_hip);
+  const rawRightHip = rawPoint(source.right_hip);
+  const rawHipCentre = rawLeftHip && rawRightHip
+    ? midpoint(rawLeftHip, rawRightHip)
+    : null;
+  let down = rawHipCentre
+    ? [rawHipCentre[0] - shoulderCentre[0], rawHipCentre[1] - shoulderCentre[1]]
+    : [0, 1];
+  const downLength = Math.hypot(down[0], down[1]);
+  down = downLength > 2 ? [down[0] / downLength, down[1] / downLength] : [0, 1];
+
+  const hipCentre = extend(shoulderCentre, down, NINJA_RIG.torso);
+  const hipSide = direction(source.left_hip, source.right_hip, side);
+  const rig = {
+    left_shoulder: extend(shoulderCentre, side, -NINJA_RIG.shoulderHalf),
+    right_shoulder: extend(shoulderCentre, side, NINJA_RIG.shoulderHalf),
+    left_hip: extend(hipCentre, hipSide, -NINJA_RIG.hipHalf),
+    right_hip: extend(hipCentre, hipSide, NINJA_RIG.hipHalf),
+  };
+
+  const leftUpper = direction(source.left_shoulder, source.left_elbow,
+                              [-0.74, 0.67]);
+  const rightUpper = direction(source.right_shoulder, source.right_elbow,
+                               [0.74, 0.67]);
+  rig.left_elbow = extend(rig.left_shoulder, leftUpper, NINJA_RIG.upperArm);
+  rig.right_elbow = extend(rig.right_shoulder, rightUpper, NINJA_RIG.upperArm);
+  rig.left_wrist = extend(
+    rig.left_elbow,
+    direction(source.left_elbow, source.left_wrist, [-0.28, 0.96]),
+    NINJA_RIG.forearm);
+  rig.right_wrist = extend(
+    rig.right_elbow,
+    direction(source.right_elbow, source.right_wrist, [0.28, 0.96]),
+    NINJA_RIG.forearm);
+
+  const leftThigh = direction(source.left_hip, source.left_knee, [-0.34, 0.94]);
+  const rightThigh = direction(source.right_hip, source.right_knee, [0.34, 0.94]);
+  rig.left_knee = extend(rig.left_hip, leftThigh, NINJA_RIG.thigh);
+  rig.right_knee = extend(rig.right_hip, rightThigh, NINJA_RIG.thigh);
+  rig.left_ankle = extend(
+    rig.left_knee,
+    direction(source.left_knee, source.left_ankle, [-0.10, 1]),
+    NINJA_RIG.calf);
+  rig.right_ankle = extend(
+    rig.right_knee,
+    direction(source.right_knee, source.right_ankle, [0.10, 1]),
+    NINJA_RIG.calf);
+
+  // The hood touches the shoulders. Nose and ear distance from the camera are
+  // intentionally ignored, eliminating the stretched neck seen previously.
+  const headCentre = extend(shoulderCentre, down, -NINJA_RIG.headLift);
+  rig.nose = headCentre;
+  rig.left_ear = extend(headCentre, side, -NINJA_RIG.headRadius * 0.55);
+  rig.right_ear = extend(headCentre, side, NINJA_RIG.headRadius * 0.55);
+  return rig;
+}
+
 function drawPlayerShadow(ctx, now) {
-  const joints = shadowJoints;
-  const ls = joints.left_shoulder, rs = joints.right_shoulder;
+  const tracked = shadowJoints;
+  const trackedLs = tracked.left_shoulder, trackedRs = tracked.right_shoulder;
   // Both shoulders are the minimum for a body worth drawing. With one, the
   // torso polygon degenerates into a sliver that reads as a glitch rather than
   // as a person standing side-on.
-  if (!ls || !rs) return;
+  if (!trackedLs || !trackedRs) return;
   // A player who has just been lost keeps their shadow for a moment and fades
   // it, rather than blinking out on a single dropped detection.
   const age = now - shadowSeenAt;
@@ -5222,95 +6192,139 @@ function drawPlayerShadow(ctx, now) {
   s.lineCap = "round";
   s.lineJoin = "round";
 
-  const P = (j) => [j[0] * SHADOW_W, j[1] * SHADOW_H];
-  // Limb thickness scales with the player's own shoulder width, so somebody
-  // standing further back gets a proportionally slimmer figure instead of a
-  // small body with the arms of a much closer one.
-  const span = Math.abs(ls[0] - rs[0]) * SHADOW_W;
-  const thick = Math.max(4, span * 0.30);
+  const joints = retargetNinjaPose(tracked);
+  if (!joints) return;
+  const ls = joints.left_shoulder, rs = joints.right_shoulder;
+  const P = (j) => j;
+  const thick = NINJA_RIG.cloth;
 
   const [lsx, lsy] = P(ls), [rsx, rsy] = P(rs);
   const lh = joints.left_hip, rh = joints.right_hip;
 
-  // Torso. Where the hips are unknown — which is most of the time at the
-  // distance this game is played from — it is dropped straight down from the
-  // shoulders to below the bottom edge, so the body reads as continuing out of
-  // frame rather than as ending in a floating pair of shoulders.
-  const [lhx, lhy] = lh ? P(lh) : [lsx + span * 0.10, SHADOW_H + 40];
-  const [rhx, rhy] = rh ? P(rh) : [rsx - span * 0.10, SHADOW_H + 40];
-  s.beginPath();
-  s.moveTo(lsx, lsy); s.lineTo(rsx, rsy); s.lineTo(rhx, rhy); s.lineTo(lhx, lhy);
-  s.closePath();
-  s.fill();
-  // Stroked as well as filled, with a fat round pen: it rounds the square
-  // corners of the polygon off into shoulders and hips, which is most of what
-  // makes four points read as a body.
-  s.lineWidth = thick * 0.85;
-  s.stroke();
-  if (!lh && !rh) {
-    // No hips: fill the gap the drop-down leaves between the two legs of the
-    // polygon, so the torso is solid rather than a wide V.
-    s.fillRect(Math.min(lhx, rhx), Math.min(lsy, rsy),
-               Math.abs(rhx - lhx), SHADOW_H);
-  }
-
-  // Arms. Each segment is drawn only if both of its ends are known, so a lost
-  // elbow costs the upper arm and not the whole limb — and a wrist that is
-  // still tracked keeps its hand, which is the part the player is watching.
-  const bone = (a, b, width) => {
+  // Tapered cloth limbs carry the soft, athletic outline of the reference;
+  // constant-width skeleton strokes made the old shadow look mechanical.
+  const limb = (a, b, widthA, widthB, bulge = 1,
+                colour = NINJA_CLOTH) => {
     if (!a || !b) return;
     const [ax, ay] = P(a), [bx, by] = P(b);
-    s.lineWidth = width;
-    s.beginPath(); s.moveTo(ax, ay); s.lineTo(bx, by); s.stroke();
-  };
-  bone(ls, joints.left_elbow, thick * 0.62);
-  bone(joints.left_elbow, joints.left_wrist, thick * 0.50);
-  bone(rs, joints.right_elbow, thick * 0.62);
-  bone(joints.right_elbow, joints.right_wrist, thick * 0.50);
+    const dx = bx - ax, dy = by - ay;
+    const length = Math.max(1, Math.hypot(dx, dy));
+    const nx = -dy / length, ny = dx / length;
+    const bend = (widthA + widthB) * 0.08 * bulge;
+    const cx = (ax + bx) / 2 + nx * bend;
+    const cy = (ay + by) / 2 + ny * bend;
+    const mx = (ax + 2 * cx + bx) / 4;
+    const my = (ay + 2 * cy + by) / 4;
+    s.strokeStyle = colour;
+    s.lineCap = "round";
+    s.lineJoin = "round";
 
+    // The narrow stroke establishes a smooth complete limb. The wider first
+    // half overlaps it with a round cap, making loose cloth gather toward the
+    // body without exposing any polygon corners at shoulders, hips or knees.
+    s.lineWidth = widthB;
+    s.beginPath();
+    s.moveTo(ax, ay);
+    s.quadraticCurveTo(cx, cy, bx, by);
+    s.stroke();
+    s.lineWidth = widthA;
+    s.beginPath();
+    s.moveTo(ax, ay);
+    s.quadraticCurveTo((ax + cx) / 2, (ay + cy) / 2, mx, my);
+    s.stroke();
+  };
+
+  const [lhx, lhy] = P(lh), [rhx, rhy] = P(rh);
+
+  // A low, rounded crotch joins both thighs into the reference image's
+  // billowing harem-trouser silhouette instead of two separate stick legs.
+  const hipMidX = (lhx + rhx) / 2;
+  const hipMidY = (lhy + rhy) / 2;
+  s.fillStyle = NINJA_CLOTH;
+  s.beginPath();
+  s.moveTo(lhx - thick * 0.45, lhy - thick * 0.30);
+  s.quadraticCurveTo(hipMidX, hipMidY + thick * 1.12,
+                     rhx + thick * 0.45, rhy - thick * 0.30);
+  s.quadraticCurveTo(hipMidX, hipMidY - thick * 0.68,
+                     lhx - thick * 0.45, lhy - thick * 0.30);
+  s.closePath(); s.fill();
+
+  // Loose tapered trousers appear when those optional pose joints are in
+  // frame. A missing ankle costs only the calf and pointed foot.
+  for (const [hip, knee, ankle] of [
+    [lh, joints.left_knee, joints.left_ankle],
+    [rh, joints.right_knee, joints.right_ankle],
+  ]) {
+    if (!hip || !knee) continue;
+    limb(hip, knee, thick * 1.28, thick * 0.80, 1.55);
+    if (!ankle) continue;
+    limb(knee, ankle, thick * 0.82, thick * 0.26, 0.92);
+    const [kx, ky] = P(knee), [ax, ay] = P(ankle);
+    const angle = Math.atan2(ay - ky, ax - kx);
+    s.save(); s.translate(ax, ay); s.rotate(angle);
+    s.fillStyle = NINJA_CLOTH;
+    s.beginPath();
+    s.moveTo(-thick * 0.20, -thick * 0.22);
+    s.quadraticCurveTo(thick * 0.48, -thick * 0.34, thick * 0.82, 0);
+    s.quadraticCurveTo(thick * 0.34, thick * 0.34, -thick * 0.20, thick * 0.20);
+    s.closePath(); s.fill(); s.restore();
+  }
+
+  // Sleeves sit behind the tunic. Wide shoulder ends and soft outward curves
+  // give the arms the same loose-cloth weight as the reference poses.
+  limb(ls, joints.left_elbow, thick * 1.02, thick * 0.62, 1.22);
+  limb(joints.left_elbow, joints.left_wrist,
+       thick * 0.64, thick * 0.28, 1.0);
+  limb(rs, joints.right_elbow, thick * 1.02, thick * 0.62, 1.22);
+  limb(joints.right_elbow, joints.right_wrist,
+       thick * 0.64, thick * 0.28, 1.0);
+
+  // Rounded tunic: broad through the chest and tucked into a narrow sash.
+  // Drawing it over the sleeves hides mechanical-looking shoulder joints.
+  const shoulderMidX = (lsx + rsx) / 2;
+  const shoulderTop = Math.min(lsy, rsy) - thick * 0.30;
+  s.beginPath();
+  s.moveTo(lsx - thick * 0.40, lsy + thick * 0.05);
+  s.quadraticCurveTo(shoulderMidX, shoulderTop,
+                     rsx + thick * 0.40, rsy + thick * 0.05);
+  s.bezierCurveTo(rsx + thick * 0.50,
+                  rsy + (rhy - rsy) * 0.38,
+                  rhx + thick * 0.32, rhy - thick * 0.30,
+                  rhx + thick * 0.16, rhy + thick * 0.02);
+  s.quadraticCurveTo((lhx + rhx) / 2, Math.max(lhy, rhy) + thick * 0.30,
+                     lhx - thick * 0.16, lhy + thick * 0.02);
+  s.bezierCurveTo(lhx - thick * 0.32, lhy - thick * 0.30,
+                  lsx - thick * 0.50, lsy + (lhy - lsy) * 0.38,
+                  lsx - thick * 0.40, lsy + thick * 0.05);
+  s.closePath(); s.fill();
   // ── the ninja, section 5 as the player asked for it ──────────────
   //
   // The figure behind the fruit is a hooded ninja rather than a plain grey
   // silhouette: black cloth, a red sash at the waist, a headband whose two
-  // tails stream behind the head, and an eye slit. All of it is drawn from
-  // the same eleven pose joints and none of it is imported — the reference
-  // the player supplied is a stock illustration, so the *idea* is taken and
-  // the artwork is not. See `ASSET_LICENSES.md`.
+  // tails stream behind the head, and an eye slit. Live pose angles animate a
+  // fixed-proportion body; the face is original generated artwork made from
+  // the supplied picture as a style reference. See `ASSET_LICENSES.md`.
 
   const now8 = now / 1000;
 
-  // Hands, wrapped: a fist plus a cuff across the forearm, which is what
-  // separates a ninja's arm from a plain stroke at this size.
-  for (const [wrist, elbow] of [[joints.left_wrist, joints.left_elbow],
-                                [joints.right_wrist, joints.right_elbow]]) {
+  // Flat black mitts, as in the supplied reference. The bright blade markers
+  // are drawn later and remain the player's precise hand-position feedback.
+  for (const wrist of [joints.left_wrist, joints.right_wrist]) {
     if (!wrist) continue;
     const [wx, wy] = P(wrist);
     s.fillStyle = NINJA_CLOTH;
-    s.beginPath(); s.arc(wx, wy, thick * 0.36, 0, Math.PI * 2); s.fill();
-    if (!elbow) continue;
-    // The cuff sits a little up the forearm, square to it.
-    const [ex, ey] = P(elbow);
-    const angle = Math.atan2(wy - ey, wx - ex);
-    s.save();
-    s.translate(wx - Math.cos(angle) * thick * 0.5,
-                wy - Math.sin(angle) * thick * 0.5);
-    s.rotate(angle);
-    s.fillStyle = NINJA_SASH;
-    s.fillRect(-thick * 0.10, -thick * 0.30, thick * 0.20, thick * 0.60);
-    s.restore();
+    s.beginPath(); s.arc(wx, wy, thick * 0.31, 0, Math.PI * 2); s.fill();
   }
 
   // The sash, across the waist and square to the torso, with a tail hanging
   // off the player's left. Drawn from the hip line where it is known and from
   // a point below the shoulders where it is not.
-  const waistX = (lhx + rhx) / 2, waistY = lh || rh
-    ? (lhy + rhy) / 2
-    : (lsy + rsy) / 2 + span * 0.62;
+  const waistX = (lhx + rhx) / 2, waistY = (lhy + rhy) / 2;
   const hipAngle = Math.atan2(rhy - lhy, rhx - lhx);
-  const waistW = (lh || rh) ? Math.hypot(rhx - lhx, rhy - lhy) : span * 0.8;
+  const waistW = Math.hypot(rhx - lhx, rhy - lhy);
   s.save();
   s.translate(waistX, Math.min(waistY, SHADOW_H + thick));
-  s.rotate(lh && rh ? hipAngle : 0);
+  s.rotate(hipAngle);
   s.fillStyle = NINJA_SASH;
   s.fillRect(-waistW * 0.62, -thick * 0.20, waistW * 1.24, thick * 0.44);
   // The knot and its two short tails, offset to one side so the figure is not
@@ -5331,10 +6345,7 @@ function drawPlayerShadow(ctx, now) {
   }
   s.restore();
 
-  // Neck, hood and headband. The head is sized from the shoulder span rather
-  // than from the ear positions, which are the two least reliable joints in
-  // the set — a hood that changes size every time an ear is lost is worse than
-  // one that is occasionally slightly wrong.
+  // Neck, hood and headband. Their dimensions come only from NINJA_RIG.
   const nose = joints.nose;
   if (nose) {
     const [nx, ny] = P(nose);
@@ -5343,21 +6354,28 @@ function drawPlayerShadow(ctx, now) {
     s.lineWidth = thick * 0.72;
     s.beginPath(); s.moveTo(midX, midY); s.lineTo(nx, ny); s.stroke();
 
-    const headR = span * 0.26;
-    const cx = nx, cy = ny - span * 0.05;
+    const headR = NINJA_RIG.headRadius;
+    const cx = nx, cy = ny;
     // Which way the head is turned, from the ears when both are visible.
     // Used only to lean the hood and the eye slit; a wrong guess is a head
     // slightly askew, not a broken figure.
     const le = joints.left_ear, re = joints.right_ear;
-    const tilt = (le && re) ? Math.atan2((re[1] - le[1]) * SHADOW_H,
-                                         (re[0] - le[0]) * SHADOW_W) : 0;
+    const tilt = (le && re) ? Math.atan2(re[1] - le[1], re[0] - le[0]) : 0;
 
     s.save();
     s.translate(cx, cy);
-    s.rotate(tilt);
+    s.rotate(tilt + Math.sin(now8 * 2.1) * 0.018);
 
-    // The hood: a head, with a peak at the crown and a short cowl over the
-    // shoulders, so the outline is not simply a ball.
+    if (ninjaHead.complete && ninjaHead.naturalWidth) {
+      // The sprite includes its two left-streaming ribbons. Its anchor is the
+      // centre of the eye opening (not the centre of the transparent image),
+      // so the player's nose remains exactly where the live pose placed it.
+      const headW = headR * 3.2;
+      const headH = headW * ninjaHead.naturalHeight / ninjaHead.naturalWidth;
+      s.drawImage(ninjaHead, -headW * 0.67, -headH * 0.53, headW, headH);
+    } else {
+      // Procedural fallback for the first frame or an asset-load failure.
+      // The hood has a peak at the crown and a short cowl over the shoulders.
     s.fillStyle = NINJA_CLOTH;
     s.beginPath();
     s.ellipse(0, 0, headR * 0.92, headR * 1.12, 0, 0, Math.PI * 2);
@@ -5393,6 +6411,7 @@ function drawPlayerShadow(ctx, now) {
     s.fillStyle = NINJA_EYES;
     s.fillRect(-headR * 0.62, -headR * 0.06, headR * 0.5, headR * 0.26);
     s.fillRect(headR * 0.12, -headR * 0.06, headR * 0.5, headR * 0.26);
+    }
     s.restore();
   }
 
@@ -5421,7 +6440,7 @@ function drawPlayerShadow(ctx, now) {
   // blades are bright glowing markers with tails and are what the player
   // tracks, while the figure is there to show the shape of the movement.
   // Relative motion is preserved exactly; only the scale changes.
-  const centre = ((ls[0] + rs[0]) / 2);
+  const centre = (trackedLs[0] + trackedRs[0]) / 2;
   const dw = GAME_W * SHADOW_SCALE, dh = GAME_H * SHADOW_SCALE;
   ctx.drawImage(shadowCanvas, 0, 0, SHADOW_W, SHADOW_H,
                 centre * GAME_W - centre * dw, GAME_H - dh, dw, dh);
@@ -5445,7 +6464,19 @@ function drawPlayerShadow(ctx, now) {
 // rather than refusing the newest, so the screen always shows the most recent
 // thing that happened.
 
-const FX_CAPS = { splats: 26, drops: 240, halves: 20, popups: 14 };
+// `halves` raised with the tripled throw rate, and only `halves`. It is the one
+// cap that tracks the fruit count directly — two per slice, alive for a second
+// and a half — so at three times the fruit a flurry hit the old twenty in the
+// middle of itself and blinked half a watermelon out of the air, which reads as
+// a glitch rather than as a busy screen. Twenty-four fruit's worth.
+//
+// The other three are left where they are on purpose. `drops` is the one that
+// actually costs frames on the Pi, and droplets thinning out during a flurry is
+// close to invisible next to a half-fruit vanishing; `fxBudget` already thins
+// them further if the frame rate says to. `popups` is a legibility bound rather
+// than a performance one — three times the slices should not mean three times
+// the numbers in front of the fruit.
+const FX_CAPS = { splats: 26, drops: 240, halves: 48, popups: 14 };
 const gameFx = { splats: [], drops: [], halves: [], popups: [] };
 //: Pixels per second squared, for the client-side pieces. The same figure the
 //: Pi uses, so a half falls at the rate the fruit it came from was falling.
@@ -5731,6 +6762,47 @@ function drawClockHud(game, ahead) {
   }
 }
 let lastClockSecond = -1;
+
+// What the bomb cost, taken from the event rather than written out again here.
+// `BOMB_PENALTY_S` lives in `aipi5/games/fruit_ninja/game.py`, and a page still
+// open across a restart that changed it would otherwise announce the old
+// number while the clock lost the new one.
+function bombSeconds(e) {
+  const seconds = Number(e && e.seconds);
+  return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds) : 5;
+}
+
+// The clock losing five seconds, made visible on the clock.
+//
+// Worth the twenty lines: the countdown is the one number a player trusts, and
+// the drop is instantaneous and five times the size of a normal tick. Without
+// this the honest reading of what they saw is that the timer is broken — which
+// is exactly what the first person to slice a bomb near the Ultimate reported.
+function flashClockPenalty(seconds) {
+  const column = gameEl("game-clock-col");
+  const label = gameEl("game-clock-penalty");
+  if (!column || !label) return;
+  label.textContent = "-" + seconds + "s";
+  // Removed, reflowed, re-added: a CSS animation does not restart while its
+  // class is already on the element, and two bombs in a round is not unusual.
+  column.classList.remove("penalty");
+  label.classList.remove("on");
+  void column.offsetWidth;
+  column.classList.add("penalty");
+  label.classList.add("on");
+  clearTimeout(clockPenaltyTimer);
+  clockPenaltyTimer = setTimeout(clearClockPenalty, 1150);
+}
+
+function clearClockPenalty() {
+  clearTimeout(clockPenaltyTimer);
+  clockPenaltyTimer = null;
+  gameEl("game-clock-col").classList.remove("penalty");
+  const label = gameEl("game-clock-penalty");
+  label.classList.remove("on");
+  label.textContent = "";
+}
+let clockPenaltyTimer = null;
 
 // ── the fruit ───────────────────────────────────────────────────────
 //
@@ -6720,6 +7792,7 @@ function gameCommand(action) {
     resetEffects();
     resetBanner();
     lastDragonHits = -1;
+    if (window.BoxingUI) window.BoxingUI.resetRound();
   }
   return gamePost("/api/game/command", { action });
 }
@@ -6755,5 +7828,6 @@ fromHash();
 pollState();
 pollFeed();
 </script>
+<script src="/assets/boxing/boxing.js?v=20260816-7"></script>
 </body>
 </html>
