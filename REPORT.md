@@ -2889,3 +2889,689 @@ virtual environment passed **869 tests with 1 skip**. A live Boxing ready-state
 check measured 91.3 camera fps, 20.1 Hailo pose fps and zero motion errors. No
 player was visible, so the safety gate remained false. Closing the game released
 the motion session and the assistant process reclaimed `/dev/video0`.
+
+### 60. Yoga Coach — one rig for the coach and the scorer
+
+Yoga Coach is the third consumer of `aipi5/motion/`, added 2026-08-17. Like
+Boxing it is a new directory under `aipi5/games/` plus one `CATALOGUE` entry
+flipped to `playable: True`, and it changes nothing in `motion/`. The split
+holds: `motion` still produces poses and knows nothing about games.
+
+    aipi5/games/yoga/rig.py       fourteen bone directions, forwards
+    aipi5/games/yoga/poses.py     32 frontal-plane poses, as bone tables
+    aipi5/games/yoga/scoring.py   one frame of a body against one pose
+    aipi5/games/yoga/lesson.py    three authored twenty-minute classes
+    aipi5/games/yoga/game.py      the session: two clocks, a hold, a score
+    aipi5/ui/web/assets/yoga/yoga.js   the coach, drawn from the same rig
+
+#### The decision the whole game rests on
+
+A pose is stored **once**, as fourteen absolute bone directions in image
+coordinates. `rig.forward_kinematics` runs that table forwards into joint
+positions; `rig.measure` turns joint positions into the twelve angles and seven
+ratios a pose is judged by. The coach is drawn from the first function and the
+player is scored against the second, and the player's own landmarks go through
+the *same* `measure`. There is no second table of target numbers to keep in
+step with the artwork, because there was never a first.
+
+Three things fall out of it that were not designed separately:
+
+- **Transitions are free and correct.** The page interpolates two angle tables,
+  so a limb swings. Interpolating drawings would give a cross-fade;
+  interpolating joint *positions* would give limbs that stretch and shrink.
+- **Left and right cannot disagree.** The coach is drawn from behind, which is
+  Boxing's third-person view, and the pose stream is already mirrored — so
+  anatomical left is at the smaller x for both, with no conversion anywhere.
+  "Raise your left arm" is one sentence for both bodies.
+- **The wrong side is detectable for almost nothing.** Mirroring a metric set is
+  a swap and a sign flip, so every frame is scored twice: against the pose and
+  against its mirror. A beautiful Warrior II on the wrong side scores badly
+  against one and well against the other, which is a signal rather than a
+  nuisance.
+
+`tests/test_yoga.py` checks the JS copy of the rig constants against the Python
+one, and a one-off cross-check ran both forward-kinematics implementations over
+all 32 poses: worst joint disagreement **9.0e-16** rig units.
+
+#### What a frontal camera can and cannot see
+
+Every pose is in the frontal plane, and that is a measurement constraint before
+it is an aesthetic one. Shoulder width is the scale every ratio is divided by,
+and a body turned side-on has no shoulder width. So: no floor poses (the Brio
+is on a desk and a person lying down is out of frame), no profile poses, no deep
+twists. Sun Salutation contributes only its standing half and the closing rest
+is Mountain Breath rather than Savasana.
+
+Two poses were changed by this during the build and both are worth recording:
+
+- **Chair Pose bends its knees towards the lens**, so from the front there is
+  almost no knee angle to measure. It is scored on `stack` — how far the hips
+  sit above the feet, in shoulder widths — and explicitly *not* on the knees.
+- **A standing backbend with the arms overhead is indistinguishable from Upward
+  Salute** from the front: the spine simply gets shorter. It was rebuilt with
+  the hands low on the back and the elbows folded, which is its own shape.
+
+#### Calibration, and why the tolerances can afford to be tight
+
+Angles need no calibration — an elbow at 90 degrees is 90 degrees on anybody.
+Ratios do: a long-legged player standing perfectly upright measures `stack` 2.3
+where a short-legged one measures 1.9, and judged against the coach's 2.07 flat,
+one of them is told to sink lower in every pose forever.
+
+So the coach's Mountain Pose is compared against the *player's*, once, while
+they stand on the ready screen waiting to begin — which is the best calibration
+sample this game will ever get, and the reason that screen waits for a player at
+all. The two ratios that fall out (leg length, arm length, relative to the
+coach) scale every ratio target afterwards. Samples are only taken from a body
+already close to Mountain, so a calibration is never learned mid-Warrior.
+
+Measured: a simulated player with **18% longer legs** scores 100 on the whole
+Advanced lesson with calibration and is marked down without it.
+
+#### Scoring
+
+Per pose, 0-100 from three parts: **quality** 0.50 (mean accuracy across the
+hold), **coverage** 0.30 (how much of the asked-for hold was credited),
+**stability** 0.20 (Welford over the accuracy series, plus a count of breaks).
+Coverage carries nearly a third deliberately: one frame of a beautiful Triangle
+with no hold behind it tops out at fifty. Bands are the specification's own —
+90 Excellent, 80 Great, 70 Good, below that Keep Practicing.
+
+Tolerance bands are *the width of the population*, not measurement error, and a
+metric inside its band is simply correct with no gradient at all. Difficulty
+scales every band (beginner 1.35, intermediate 1.05, advanced 0.88) and sets the
+accuracy needed to credit hold time (0.58 / 0.64 / 0.70).
+
+Two weighting rules stop a pose from being diluted by the sixteen metrics it is
+not about:
+
+- a metric a pose leaves exactly where standing leaves it keeps 45% of its
+  weight, rising to all of it once the pose moves it by a full band — automatic,
+  so a pose need not list every joint it is *not* about;
+- a pose's `emphasis` joints carry a fixed **62% share** of the total between
+  them, however many there are. A share rather than a multiplier because a Neck
+  Release is entirely about one joint out of seventeen, and doubling that joint
+  still leaves a body standing perfectly still scoring in the high nineties.
+
+Measured, on the most generous difficulty: a player who simply stands there
+scores **27-48** against every real standing and balance pose, and **44 overall**
+across a full twenty-minute Beginner class.
+
+#### Two clocks
+
+`time_left` is twenty minutes of wall time and is the promise the game made;
+`hold_left` is what the current pose is still owed and only moves while the
+player is in it. Folding them together breaks whichever promise was folded into
+the other. Every step also carries a wall deadline (`hold x 1.6 + 5 s`), so a
+player who cannot find Half Moon spends forty seconds being told what to fix and
+then moves on. A player who never finds anything simply gets fewer poses, and
+the class still stops at twenty minutes.
+
+The per-pose results card is **not a phase**, and that is the difference between
+a class that runs to twenty minutes and one that runs to twenty-one and a half:
+forty poses times a two-second card is ninety seconds. It is drawn over the
+start of the next pose's transition, where the coach is already moving.
+
+Scheduled lengths: Beginner 43 steps / 19.75 min, Intermediate 40 / 19.88,
+Advanced 37 / 19.90, all inside the 20-minute clock with the countdown.
+
+#### The live camera during play, and the rule it bends
+
+Section 22 kept the player's room off the screen during play, and that still
+holds for Fruit Ninja and Boxing. Yoga is the deliberate exception: a player two
+metres from the panel being told to straighten their back cannot see their own
+back, so the feed *is* the correction. `/api/game/preview` gained bounded `fps`
+and `w` parameters — the page asks for 12 fps at 640 px and the server clamps to
+15 and 720, because a stale tab asking for 200 would take a core away from the
+inference this game is built on.
+
+#### Performance, measured on the device 2026-08-17
+
+All three games were measured the same way, mid-round, with the kiosk showing
+them and an empty room:
+
+| | pose fps | inference | capture-to-pose | camera |
+|---|---|---|---|---|
+| Fruit Ninja | 17.1-18.6 | 38-49 ms | 56-74 ms | 80-88 |
+| Boxing | 18.3-19.8 | 35-62 ms | 53-97 ms | 78-92 |
+| **Yoga Coach** | **15.8-19.0** | 36-54 ms | 52-82 ms | 65-85 |
+
+**Yoga is not a regression: it performs identically to the two games already
+shipping.** The ~18 fps figure is a property of the device and the deployed
+capture configuration, not of this game — section 59 already recorded 20.1 pose
+fps for Boxing on 2026-08-16, against the 26-30 measured in section 29.13 when
+the pipeline captured 640x360. Load average was 5.4-6.4 of four cores and the
+SoC ran 72.5-74.7 C, under the soft limit; `get_throttled` reported 0x50000,
+which is a historic under-voltage and a historic soft-temperature event with no
+current throttling. Assistant RSS 924 MB of 8 GB.
+
+Chasing the shared pipeline back to 26-30 fps is worth doing and is deliberately
+**not** part of this change: it would touch the capture path both existing games
+depend on. Yoga does not need 30 Hz — a held pose is the one thing in this
+project that does not.
+
+#### Verified on the device
+
+Catalogue lists Yoga as playable; open, level select, start, transition, hold,
+per-pose score card, pose advance, Yoga Complete with all six summary fields,
+and the crossed-arms prompt. The coach animates between poses. Framing advice
+("Step back so the camera can see your feet") appears when the legs are not
+visible — yoga is the only game here that needs ankles, so the check lives in
+the session rather than redefining readiness for every game. Closing releases
+the camera; Fruit Ninja and Boxing both open and run afterwards with no motion
+error. Local suite: **965 tests, 13 skips, all passing.**
+
+#### Not verified
+
+Everything that needs a body. Whether the tolerances feel fair to a real person,
+whether the corrections arrive fast enough to act on, whether the coach is
+legible from two metres, whether the crossed-arms X is comfortable to make at
+yoga distance (further back than Fruit Ninja distance), and whether twenty
+minutes is the right length. All of it needs somebody standing in front of the
+camera, not another measurement.
+
+
+### 61. Cutting the hand-to-screen delay by 40%, and widening the blade
+
+Three requests: take the ninja figure off the play field, make the blade three
+times wider so fruit is easier to cut, and find the motion-tracking latency and
+reduce it — with the camera resolution and frame rate explicitly on the table
+and image quality explicitly expendable.
+
+The third one is the interesting one, because **the camera turned out not to be
+where the time was going.** The mode that was already configured is the mode it
+still runs in; everything gained came from three things the pipeline was doing
+to itself.
+
+#### The ninja
+
+`drawPlayerShadow` and its rig, 450 lines, removed along with the three call
+sites that fed it, the generated `ninja-head.png` and its licence row. Two
+comments elsewhere had been written against it — the wood's lattice, "so the
+eye has something to judge depth against when the shadow moves over it", and
+the bomb's halo, "visible against the shadow, which is the case that actually
+failed" — and both were reworded rather than left describing a figure that is
+no longer there. The bomb keeps its halo: it was redrawn because it was
+invisible against *dark wood*, and the wood has not moved.
+
+`tests/test_ui_assets.py` had a test pinning the ninja's fixed anime
+proportions. It is now a test that every part of the ninja is absent, which is
+the property that can regress — a half-removal that stops drawing the figure
+but keeps smoothing its pose every frame would otherwise pass.
+
+#### The blade, and the one place it was not widened
+
+The drawn trail is `BLADE_WIDTH_SCALE = 3` on both strokes, so the head goes
+from 18 px across to 54.
+
+The collision test was a **line with no thickness**: `slash_hits_fruit` took
+the fruit's own radius and nothing else, so a swipe whose bright centre passed
+a hair to one side of a grape scored nothing while the streak was drawn
+straight over it. That reads as dropped tracking, not as a near miss. So
+`collision.BLADE_HALF_WIDTH = 27` — half the drawn width — is added to the
+target radius, which makes the tested shape the swept capsule the player can
+see. On a 32 px grape that is nearly double the reach; on the Ultimate's 86 px
+dragon fruit it is a third more.
+
+**A bomb gets none of it.** Widening the blade is meant to stop a good swing
+scoring nothing; letting the same widening set off a bomb the player steered
+around would take with one hand what it gives with the other and turn "the
+blade got thicker" into "the round got shorter". Generous towards a reward and
+exact towards a hazard is what reads as fair rather than as inconsistent, and a
+bomb is the one object on screen that is aimed *away* from, so its edge is
+already being judged by eye. `game._blade_reach` is the one line that says so.
+
+The debug overlay's slash segments are drawn at the real 54 px with a round cap,
+because `closest_distance` measures against a segment with hemispherical ends —
+the drawn shape and the tested shape are now the same shape.
+
+#### Where the delay actually was
+
+Measured with `scripts/bench_motion.py`, which is new and breaks one frame into
+its stages — the read, how old the frame was when the pose thread picked it up,
+the letterbox, the accelerator, and the tensor decode — because a single
+end-to-end number cannot tell you that a mode which halved the frame age also
+doubled the JPEG decode.
+
+Three faults, in the order they were found:
+
+**1. A "free" slice that cost a full-resolution copy — 8.3 ms.** The capture
+thread published `frame[:, :, ::-1]` to convert BGR to RGB. That is a view, so
+it looks free, and it is not: a reversed axis has a negative stride, OpenCV
+cannot work on one, and both consumers silently copied the whole 1280x720 frame
+before they could touch it. The letterbox, three ways, on a real frame:
+
+    reverse the axis, then resize (was)          8.89 ms
+    cvtColor at full size, then resize           1.55 ms
+    resize into a kept buffer, swap after (now)  0.57 ms
+
+The lease now publishes exactly what the driver gave it, and the channel swap
+happens *after* the downscale, on a quarter of the pixels. The preview needed no
+conversion at all after that — BGR is what `imencode` writes — so a full-frame
+`cvtColor` there disappeared too.
+
+**2. 3.9 MB of allocation and memset per frame.** `infer` was calling
+`create_bindings()` and `np.zeros` for all nine output tensors on every frame,
+zeroing 3.9 MB that the accelerator then overwrote completely. Allocated once
+at load now, along with the 640x640 input square whose grey border is the same
+grey on every frame of a session.
+
+**3. The big one: 8.5 ms of dequantisation nobody wanted.** The outputs were
+requested as FLOAT32, so the runtime converted all nine tensors on the way out.
+Measured directly, one HEF against itself:
+
+    run() with FLOAT32 outputs   28.04 ms   3.90 MB out
+    run() with native outputs    19.50 ms   1.40 MB out
+
+**8.5 ms, thirty per cent of the whole inference**, to produce 8,400 numbers the
+decoder looks at and 3.8 MB it discards untouched — because `decode` already
+thresholds before it decodes anything. So the model now takes the accelerator's
+own UINT8 and UINT16, and `yolov8_pose.decode` converts the few hundred rows
+that clear the score threshold, using the `qp_scale`/`qp_zp` the runtime
+publishes per tensor. A HEF with per-channel quantisation or an unfamiliar
+format falls back to asking the runtime, which is slower and correct.
+
+That decoder had **no tests at all**, which was survivable while it was a
+straight port and stopped being so the moment it started doing its own
+arithmetic on integers — a wrong zero point moves every joint a little, which
+looks like tracking that is merely loose. `tests/test_pose_decode.py` covers the
+half-cell anchor offset, the sigmoid that is folded into the graph and the one
+that is not, and above all decodes the same person twice, once from floats and
+once from the integers those floats came from, requiring the two to agree within
+a model pixel — with a companion test that a deliberately wrong zero point
+*fails* that comparison, so the equality is not passing for the wrong reason.
+
+#### The camera sweep, and why nothing changed
+
+Every mode worth trying, with the assistant stopped and a person in shot, as
+capture-to-decoded-pose:
+
+    1280x720@90  MJPG   27.8 ms   46.3 pose fps   28% cpu   <- unchanged
+    640x480@120  MJPG   26.5 ms   46.8 pose fps   21% cpu
+    1280x720@60  MJPG   30.1 ms   47.1 pose fps   22% cpu
+    960x540@30   MJPG   21.5 ms   28.2 pose fps   10% cpu
+    640x360@30   MJPG   21.6 ms   28.2 pose fps    5% cpu
+    1280x720@30  NV12   30.9 ms   28.3 pose fps   16% cpu
+    1280x720@30  YUYV   31.0 ms   28.3 pose fps   13% cpu
+
+The camera advertises exactly two modes above 30 fps — 1280x720 MJPG at 90 and
+640x480 MJPG at 120 — so this is not a grid. NV12 and YUYV are there to answer
+"what if we drop the JPEG decode", and they do drop it, and it does not help:
+both cap at 30 fps, and what a compressed mode buys is frames.
+
+**The 30 fps rows look like the winners and are not.** Their low figure is the
+pose loop *waiting* for a camera slower than itself, so the frame is fresh and
+then sits on screen for a whole 35 ms until the next one. Mean displayed
+staleness is latency plus half the update period, and on that measure all seven
+rows are within 2 ms of each other; what the fast modes additionally buy is
+halving the gap between pose samples, which is what collision segments and blade
+smoothness are made of. Repeated inside the running system with the browser
+drawing at 60 fps, 30 fps capture measured *worse* end to end — **46.2 ms
+against 36.4 ms** — because a pose loop that is now faster than 30 fps spends
+the difference waiting.
+
+640x480@120 is 1.3 ms better than the mode in use and is **not** taken here.
+The camera's 4:3 modes are a horizontal crop rather than a rescale — confirmed
+by capturing the same scene at both and measuring two door handles, 75% of the
+16:9 field — and the field of view is how far a player has to move their arms
+to reach the edge of the screen. 1.3 ms is not worth a quarter of the play
+area.
+
+**Section 62 takes it anyway, and is right to**: measured inside the running
+system rather than on an idle one, those two modes are 17 ms apart rather than
+1.3, because the 720p capture thread is competing with the browser for four
+cores. That section also has the two faults that had to be fixed first.
+
+#### Before and after
+
+The same A/B the deploy notes ask for: the pre-change `aipi5/motion/` restored
+from the backup on the device, measured, then the new code put back and measured
+again. Inside the running assistant, with the kiosk drawing the game, a round
+live and the same scene:
+
+    capture -> decoded pose   62.0 / 58.1 ms  ->  36.4 / 35.6 ms    -24 ms, -41%
+    pose rate                 17.5 / 18.7 fps ->  33.0 / 32.5 fps        +77%
+    hailo inference           43.4 / 39.4 ms  ->  27.7 / 23.6 ms    -16 ms, -38%
+
+With the assistant stopped, so the accelerator is not shared and the CPU is not
+contended, the same mode measures **45.4 ms -> 27.8 ms** and **25.6 -> 46.3
+pose fps**, broken down as age 6.2, letterbox 0.9, accelerator 19.7, decode 0.7.
+The floor is now the accelerator: 19.7 ms of a 27.8 ms total, and
+`/usr/share/hailo-models/` has no smaller pose HEF for HAILO10H than the
+`yolov8s` in use — `yolov8m_pose_h10` is the only other one and is larger.
+
+#### What is still worth chasing
+
+**The machine, not the pipeline.** Under heavy play — fruit on screen, a person
+swinging, the browser compositing splashes at 60 fps — the load average passes
+4 on four cores and capture-to-pose swings between 22 ms and 63 ms depending on
+what the browser is doing at that instant. That is contention, not the camera:
+the same instant shows the accelerator taking 33 ms for an inference that costs
+19.7 ms on an idle machine. The next real gain is on the drawing side.
+
+`motion.target_fps` is in the configuration and has never been read by anything.
+It now has an obvious job — capping the *consumer* rate so the game simulation,
+the snapshot JSON and the SSE stream do not all run at 46 Hz when 30 would
+do — but capping was not done, because it trades blade smoothness for headroom
+and there is no measurement yet saying which way that goes.
+
+#### Verified on the device
+
+The figure is gone from the play field and the trails are visibly three times
+wider, in a screenshot of a live round. Fruit cut, score climbing, streak
+counter running. The Yoga live feed still shows the room in the right colours
+after the preview stopped converting them, checked on a frame pulled from the
+stream. Suite on the Pi: **978 tests, 6 skips, all passing**; on the development
+machine, 978 with 22 skips — the extra skips are the new decoder tests, which
+need numpy and only run on the device.
+
+
+### 62. 640x480 at 120, and what a faster pipeline broke in Boxing
+
+Section 61 measured 640x480@120 as the fastest mode the camera has and declined
+it, because the field-of-view crop was not worth 1.3 ms. Asked for it anyway,
+and asked for the same work to reach Boxing.
+
+Taking it turned out to be right for a reason the first sweep did not show, and
+two things had to be fixed before it was safe.
+
+#### It is worth much more in Boxing than the first sweep suggested
+
+The section 61 sweep ran with the assistant stopped, so the pose loop had the
+machine to itself and the two fast modes were 1.3 ms apart. Inside the running
+system, with the kiosk drawing, they are not close at all:
+
+    boxing, capture -> decoded pose      1280x720@90   640x480@120
+    ------------------------------------------------------------
+    capture -> decoded pose                  48.1 ms       31.0 ms
+    pose rate                                34.5 fps      37.8 fps
+    hailo inference                          31.4 ms       27.0 ms
+    cpu idle                                    29%           46%
+
+**17 ms, 36%, between two modes that measured 1.3 ms apart on an idle
+machine.** The difference is CPU: Boxing's renderer is the heaviest thing this
+device draws — a full-body fighter, baked damage WebPs, an arena — and it is
+competing for four cores with a capture thread decoding 1280x720 MJPEG eighty
+times a second. Dropping that to 640x480 hands the difference back to the
+browser, and inference stops being slowed by contention.
+
+There is no 1280x720@120: the camera advertises 90, 60, 30 and below at that
+size. A request for 120 there negotiates down to 90, measured — 38.6 ms, which
+is 720p@90 with a longer name.
+
+#### Before and after, for Boxing
+
+The section 61 A/B repeated with Boxing running, pre-change `aipi5/motion/`
+restored from the device backup and then put back:
+
+                             before          after (640x480@120)
+    capture -> decoded pose   70.8 ms   ->   31.0 ms    -39.8 ms, -56%
+    pose rate                 17.5 fps  ->   37.8 fps        +116%
+    hailo inference           47.6 ms   ->   27.0 ms    -20.6 ms, -43%
+
+Split between the two causes, both measured on the device: the old code at the
+new camera mode is 54.7 ms, so of the 39.8 ms, **16 ms is the camera mode and
+24 ms is the pipeline work** from section 61.
+
+#### The crop rescales one axis and not the other
+
+The camera's 4:3 modes are a horizontal *crop* of the 16:9 field — 75% of the
+width, all of the height. For Fruit Ninja that is exactly the accepted trade:
+positions map straight to the screen, so a player moves their arms three
+quarters as far to reach the edge.
+
+For Boxing and Yoga it is not a trade, it is a **fault**, and it took some
+staring to see. Both measure *shapes* — signed angles between bones, and
+distances divided by a shoulder span — out of coordinates normalised to the
+frame. Normalised coordinates carry the frame's aspect ratio inside them:
+`tan θ' = tan θ × aspect`, so a limb at a true 45 degrees reads as 60.6 degrees
+through a 16:9 camera and 53.1 degrees through a 4:3 one. **7.5 degrees of
+systematic error on every diagonal limb**, which is most of a yoga tolerance
+and would have marked Triangle Pose wrong for somebody doing it correctly.
+Boxing's duck, measured as a vertical drop over a horizontal span, would have
+needed a third more movement to register.
+
+`PersonPose.shaped()` is the fix: x is re-expressed in a fixed reference aspect
+before anything measures a shape, so every constant in `boxing/config.py`,
+`yoga/poses.py` and `motion/gestures.py` keeps the meaning it was measured
+with, whatever the camera is set to. The aspect comes from the letterbox — the
+frame that actually arrived, not the one that was configured, because the
+driver is free to answer a request for one size with another and does.
+
+The split is the interesting part and is worth stating as a rule: **a position
+wants the camera's own normalised space and a shape does not.** Fruit Ninja
+never calls `shaped()`, and should not — the screen is deliberately stretched
+to match camera space, and correcting it would be undoing that on purpose.
+
+`tests/test_pose_shape.py` photographs one body two ways and requires all three
+consumers to measure it the same, with a companion test that the uncorrected
+version really does move — otherwise the equality would be passing for the
+wrong reason.
+
+#### The faster pipeline was quietly making Boxing harder to play
+
+The second fault, and the one that matters most for "make it land". Every punch
+threshold in `boxing/config.py` is a **distance**, and a distance only means
+something over a stated time. They were measured against the previous *frame*
+at a pose rate of about thirty, so `punch_travel` of 0.065 shoulder widths was
+implicitly "in 33 ms". Section 61 took the pose rate to forty-five. The frames
+got closer together, the distance between two of them shrank by a third, and
+the same punch stopped clearing the same threshold.
+
+Measured, by sweeping how slowly a punch can be thrown and still be seen:
+
+    pose rate     slowest punch still detected
+                  per-frame (was)   33 ms window (now)
+    26 fps             610 ms            610 ms
+    30 fps             610 ms            610 ms
+    45 fps             420 ms            610 ms
+    60 fps             310 ms            610 ms
+
+**A third of the range of punches the game recognises, lost to a latency
+improvement.** That is the worst shape a regression can have, because it does
+not present as "the frame rate changed", it presents as the tracking having got
+worse — and the punches it drops first are the slow deliberate ones, thrown by
+exactly the person this device is in the house for.
+
+So a wrist is now compared against where it was `PUNCH_WINDOW_S` ago —
+interpolated between the two samples that bracket 33 ms, whatever the frame
+rate is — rather than against the previous frame. `travel`, `speed`,
+`radial_gain` and `extension_gain` all become rate-independent together, and a
+faster pipeline buys what it should: the decision arrives sooner, on fresher
+data, rather than a different decision.
+
+The neutral-stance blend had the same bug in miniature and got the same fix: a
+flat 3.5% per frame chased the player 1.7x faster once the rate went up, which
+eats the very offset a dodge is measured against. It is a 0.94 s time constant
+now — what 3.5% per frame came to at thirty frames a second.
+
+`tests/test_boxing.py` throws one 450 ms punch, described once as a function of
+wall-clock time, sampled at 30, 45 and 60 fps. It was checked against the code
+it replaces and **fails there at 45 and 60**, which is the only way to know a
+test of this kind is worth having. Its companion refuses a 1.5 s reach at all
+three rates, so "rate-independent" cannot quietly become "always yes".
+
+#### What did not transfer from Fruit Ninja, and why
+
+The 3x blade does not have a Boxing analogue and was not invented one.
+`slash_hits_fruit` was widened because a *drawn* streak 54 px across was being
+tested as a line with no thickness. Boxing has no such gap: there is no spatial
+hitbox at all — `_player_attacks` lands a punch the moment the analyzer
+classifies one, unless the AI dodges or blocks it — and no thin drawn blade,
+because the player is a whole fighter. Its equivalent of "the swing connected
+and nothing happened" is a punch that fails to classify, which is precisely
+what the window fix addresses. Tripling `punch_travel` would have made it
+*stricter*; tripling `parry_radius` to two and a half shoulder widths would
+have made any moving hand a parry.
+
+Removing the ninja has no analogue either. The figure in Boxing is the game.
+
+#### Verified on the device
+
+Boxing in training mode with a person in front of the camera: fighter tracking,
+punches registering, score climbing, combo counter running, 39.1 pose fps.
+Fruit Ninja on the same camera mode: both blades tracked, fruit spawning, no
+figure. Suite: **991 tests, all passing**, on the Pi and on the development
+machine.
+
+One thing to watch, since the field of view is now narrower: a player has to
+stand slightly further back than before for their whole upper body to be in
+shot, and Yoga — which needs ankles — was already the game that asks for the
+most distance. Its framing advice ("Step back so the camera can see your feet")
+is unchanged and still the thing that says so, but nobody has stood through a
+class on this camera mode yet.
+
+
+### 63. Boxing in first person
+
+"Change the boxing game to 1st person view, regenerate pictures of action if
+needed." The view was over the player's shoulder: a rear-view fighter driven by
+their pose, with the opponent in the middle distance beyond him.
+
+The move is not a camera position. It is a change in **which things exist**.
+
+#### The player stops existing
+
+`drawPlayer` and everything under it is gone — the rig, the smoothing, the
+joint constraints, the procedural torso and head, the ground shadow, the
+twenty-one-pose player selection. Nothing of the player is drawn but two
+gloves. `player-red-torso.png`, the sixteen baked player damage bodies and the
+336-image player pose matrix are all still on disk and **not one of them is
+requested any more**; they are kept rather than deleted because between them
+they are the whole of the third-person view and nothing needs them gone.
+
+#### Their head becomes the camera
+
+Leaning, ducking and dodging used to slide a figure across a still arena.
+They now move the arena, because that is what moving your head does.
+`headCamera` turns `motion.posture` into a translation, a zoom and a roll, and
+`applyCamera` applies it at **two depths**: the arena at 0.34 and the opponent
+at 1. That difference is the parallax, and it is what makes two flat images
+read as a room with a man standing in it — the same movement of the head shifts
+something across the room and something at arm's length by very different
+amounts. Leaning back shrinks the shoulder span, which is the only depth cue
+this camera has and a surprisingly convincing one.
+
+The gloves are drawn **outside** the camera, deliberately. They are on the ends
+of the arms of the head the camera *is*; moving them with it would move them
+twice, and a duck would drop the player's own hands out of their own view.
+
+A punch that lands on the player has nothing on screen to flinch, so the
+picture takes it: a red wash strongest at the edges and thin in the middle —
+the opponent must stay visible through it, because the punch after the one that
+hurt is the one you have to see coming — plus a harder shake, and the sparks
+where the glove arrived rather than at a position along the bottom of the
+frame. The rope that used to be drawn across the bottom of the picture is gone;
+it sat where the player's own gloves now are, and a rope in front of your own
+hands puts you outside the ring looking in.
+
+#### The pictures: cut, not generated
+
+The request allowed for regenerating artwork. None was needed, because the
+picture wanted already existed inside artwork this project has generated and
+licensed: **sheet 06, the right straight to the head**, whose rear-view fighter
+has one arm fully extended away from the camera. That is exactly the view a
+player has of their own punching arm. Nothing on that half of the sheet touches
+it, so a crop and an alpha trim get a clean cutout with no matting by hand.
+
+`scripts/build_boxing_first_person.py` cuts it, and cuts it **in two at the
+wrist**, because the pieces move differently: the glove sits at the tracked
+hand and is scaled by how far away it is, while the forearm is a bridge to
+wherever the glove went. One right arm, mirrored for the left, so the two hands
+cannot drift out of agreement. Stored at 2x so the good resampling happens once
+rather than every frame.
+
+Three things had to be measured rather than assumed, and each is in the
+manifest the builder writes: where the wrist is in each piece, and the sprite's
+own axis — the arm is drawn at about six degrees off horizontal, and rotating
+about the bounding box instead of the axis hangs the glove off the side of its
+own wrist.
+
+#### Three faults found by looking at it
+
+**The glove flew off the top of the screen on every jab.** One number moved the
+glove up and down with the player's hand, and it was set for a hand at guard.
+A hand at the end of a straight arm is twice as far from the eye, so the same
+movement covers half the angle; a single figure for both threw the glove into
+the ceiling the moment the arm extended. Two constants now, one per distance.
+
+**The forearm looked like a plank.** It was drawn from a fixed point off the
+bottom corner all the way to the glove, which on a straight punch is six
+hundred pixels of a three-hundred-and-sixty pixel drawing — every muscle in it
+smeared into a streak, on the shot the player throws most. The arm now keeps
+its own proportions and its far end simply falls where it falls, with a squared
+alpha ramp **baked into the sprite** so it fades out instead of ending on a
+hard stretched edge. Baked rather than done per frame with a scratch canvas and
+a gradient, because it is the same ramp on every frame of every round.
+
+**Both arms were the wrong arm, and upside down — which is one fault, not
+two.** Reported from the screen in those words, and they are the same thing:
+the sprite is a right arm reaching to the right, so its top edge is the outside
+of the limb; pointing it up and inward, which is where a guard is, turns it
+past vertical and puts its top edge underneath. An arm reflected along its own
+length **is the other arm**, so a single missing roll shows up as the pair
+swapped *and* as each one flipped. One negative in the y scale fixes both, and
+the glove takes the same roll — which is why it now adds its axis tilt where
+the forearm subtracts it. `tests/test_ui_assets.py` pins the two transforms,
+because nothing else in the suite can see this and the screen is the only place
+it is visible.
+
+#### Verified on the device
+
+The renderer was driven with fabricated snapshots through the real page over an
+SSH tunnel — guard, a right straight, and a duck-and-slip — because the fault
+in each of the three above is a thing you can only see. Then live on the kiosk:
+a fight started by a real person, HUD and countdown running, their right hand
+extended into the opponent and their left up in guard, both gloves correctly
+oriented, at 41.2 pose fps and 33.3 ms capture-to-pose. Suite: **993 tests**,
+passing on the Pi and on the development machine.
+
+One consequence of the camera mode in section 62 showed up here first: the
+player was refused a start with "move back a little so your shoulders are
+visible". The 4:3 field is a quarter narrower, so the distance a player has to
+stand at has genuinely changed, and Boxing is where they notice.
+
+### 64. An image generator, so "regenerate the artwork" is a real answer
+
+Twice in two sessions the answer to "regenerate pictures of action if needed"
+was that there was no image generator to hand — the boxing first-person view
+was built by cutting up a sheet that already existed, which worked, and would
+not have if the sheet had not existed. `.claude/skills/image-gen/` closes that.
+
+`scripts/imagegen.py` has three subcommands: `models` prints what the key can
+actually reach, `generate` makes a picture from a prompt, `edit` makes one from
+a prompt and one or more reference images — which is the important one, because
+new artwork that does not match the sheets already here is worse than none.
+
+Three decisions worth keeping:
+
+**Standard library only.** The `openai` package is installed on the Pi and is
+not installed on the development machine, and an artwork tool that runs on one
+of the two is a tool that gets used once. `urllib` is on both; the multipart
+body for `/images/edits` is thirty lines.
+
+**No second credential path.** The key comes from
+`aipi5.core.config.credentials()` — the same environment-then-gitignored-file
+resolver everything else uses, with the same rule that it is never printed.
+A tool that read `OPENAI_API_KEY` itself would be a second place to audit and a
+second place to fix when the key rotates.
+
+**The skill carries the project's asset rules, not just the API's.** Where
+sources live against where served files live; that `ui/server.py` serves a
+fixed extension list and anything else 404s however correctly it is placed;
+that PNG is 1235 kB against WebP's 86 kB for the same 1024-square with alpha;
+that derivatives belong in a build script rather than in hand edits; and that
+every generated file needs an `ASSET_LICENSES.md` row, because that file is the
+record that no third-party pixels are in this repository and it is only true
+while it is complete.
+
+Both paths were run end to end before being called finished — a transparent
+glove generated and trimmed, then the same glove recoloured through `edit`
+against itself as the style reference, then the same again as WebP to confirm
+the alpha survives the format. Two faults were found by doing it rather than by
+reading it: a shadowed variable in the multipart builder that rebound the
+`path` parameter and posted the whole request to `/v1<the image's filename>`,
+which the API answers with a 404 and an empty body; and an unquoted
+`description:` in the skill's own frontmatter, which contained a colon-space,
+which YAML reads as a nested mapping — the skill would have failed to load and
+said nothing about why.
