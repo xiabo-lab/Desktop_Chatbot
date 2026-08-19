@@ -41,15 +41,23 @@ import time
 
 log = logging.getLogger(__name__)
 
-#: Verified on the installed BRIO 4K. MJPEG is essential: uncompressed 720p90
-#: does not fit on USB, while the camera advertises this exact compressed mode.
-GAME_WIDTH, GAME_HEIGHT = 1280, 720
+#: Verified on the installed BRIO 4K, which offers exactly two modes above 30
+#: fps: this one and 1280x720 at 90. MJPEG is essential — neither fits on USB
+#: uncompressed, and the camera advertises both as compressed modes only.
+GAME_WIDTH, GAME_HEIGHT = 640, 480
 
 #: Two, for the reason in the module docstring. Not one, which halves the
 #: frame rate; not four, which is three frames of latency for no frame rate.
 GAME_BUFFERS = 2
 
-GAME_FPS = 90
+GAME_FPS = 120
+
+#: The pixel format asked of the driver. MJPG is the only one this camera
+#: offers above 30 fps at any useful size, and the JPEG decode it costs is paid
+#: on the capture thread rather than on the pose thread — see `_run`. YUYV and
+#: NV12 are accepted here so the alternatives can be measured against it
+#: (`scripts/bench_motion.py`) rather than argued about.
+GAME_FOURCC = "MJPG"
 
 #: How long to wait for the borrowed device to start producing frames before
 #: giving up and telling the player. Generous because a UVC camera coming out
@@ -80,10 +88,12 @@ class CameraLease:
 
     def __init__(self, camera, *, width: int = GAME_WIDTH,
                  height: int = GAME_HEIGHT, fps: int = GAME_FPS,
+                 fourcc: str = GAME_FOURCC,
                  borrower: str = "an AI Motion game"):
         self._camera = camera
         self._borrower = borrower
         self._width, self._height, self._fps = width, height, fps
+        self._fourcc = fourcc
         self._requested_size = (width, height)
         self._capture = None
         self._device = ""
@@ -100,6 +110,11 @@ class CameraLease:
         self._format = ""
         #: Smoothed capture rate, for the debug panel.
         self.fps = 0.0
+        #: Smoothed time inside one `read()`. Mostly the wait for the next
+        #: frame, plus the MJPEG decode when the format is compressed — which
+        #: is the only place that decode is visible, and the number that says
+        #: whether a compressed mode is paying for itself.
+        self.read_s = 0.0
         self.frames = 0
         self.dropped = 0
 
@@ -190,7 +205,8 @@ class CameraLease:
             # list of sizes depends on the pixel format, so a size asked for
             # while still in YUYV gets clamped to what the uncompressed mode
             # can carry over USB.
-            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+            capture.set(cv2.CAP_PROP_FOURCC,
+                        cv2.VideoWriter_fourcc(*self._fourcc))
             capture.set(cv2.CAP_PROP_FRAME_WIDTH, self._width)
             capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self._height)
             capture.set(cv2.CAP_PROP_FPS, self._fps)
@@ -241,8 +257,12 @@ class CameraLease:
         smoothing = 0.15
         previous = 0.0
         while not self._stop.is_set():
+            began = time.monotonic()
             ok, frame = self._capture.read()
             now = time.monotonic()
+            read = now - began
+            self.read_s = (read if not self.read_s
+                           else self.read_s + smoothing * (read - self.read_s))
             if not ok or frame is None or not getattr(frame, "size", 0):
                 # Unplugged mid-game. Section 43: the game pauses and says so,
                 # rather than the process ending.
@@ -258,9 +278,16 @@ class CameraLease:
                 # signal into half a second of lag instead.
                 if self._new_frame.is_set():
                     self.dropped += 1
-                # BGR to RGB once, here, because every consumer wants RGB and
-                # doing it downstream would cost a copy of every frame.
-                self._frame = frame[:, :, ::-1]
+                # **Stored exactly as the driver gave it: BGR, contiguous.**
+                # This used to hand out `frame[:, :, ::-1]`, which reads as a
+                # free view and is not — a reversed axis has a negative stride,
+                # so both consumers had to copy the whole frame before they
+                # could touch it, one of them at full resolution on the pose
+                # thread. The model's channel swap now happens after the
+                # downscale (`geometry.letterbox_image(swap_rb=True)`) and the
+                # preview needs no swap at all, because BGR is what `imencode`
+                # already writes.
+                self._frame = frame
                 self._frame_at = now
                 self.frames += 1
             self._new_frame.set()
@@ -276,7 +303,7 @@ class CameraLease:
     # ── reading ──────────────────────────────────────────────────────
 
     def frame(self, wait: bool = True):
-        """The newest frame and when it was captured, or `(None, 0.0)`.
+        """The newest **BGR** frame and when it was captured, or `(None, 0.0)`.
 
         Blocks until a frame the caller has not already seen arrives, so the
         pose loop runs at capture rate without polling — and never longer than
@@ -311,14 +338,10 @@ class CameraLease:
         try:
             import cv2
 
-            # Back to BGR, because `_run` flipped it to RGB for the model and
-            # `imencode` writes whatever order it is given as if it were BGR.
-            # Without this the preview is blue people in an orange room, which
-            # looks like a broken camera rather than a swapped channel.
-            #
-            # `cvtColor` rather than `frame[:, :, ::-1]`: the slice is a view
-            # with a negative stride, and OpenCV wants a contiguous buffer.
-            image = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            # No colour conversion: the lease keeps the driver's BGR, and BGR
+            # is what `imencode` writes. This was a full-frame `cvtColor` back
+            # when `_run` handed out RGB, purely to undo it.
+            image = frame
             height, width = image.shape[:2]
             if width > max_width:
                 scale = max_width / width
@@ -354,11 +377,13 @@ class CameraLease:
             "device": self._device,
             "size": f"{self._width}x{self._height}",
             "format": self._format or None,
+            "requested_format": self._fourcc,
             "requested": (f"{self._requested_size[0]}x"
                           f"{self._requested_size[1]}@{self._fps}"),
             "negotiated_fps": (round(self._negotiated_fps, 1)
                                if self._negotiated_fps else None),
             "fps": round(self.fps, 1),
+            "read_ms": round(self.read_s * 1000, 1),
             "frames": self.frames,
             "dropped": self.dropped,
             "running": self.running,

@@ -29,6 +29,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from aipi5.motion import geometry
+
 # COCO's seventeen, in the order every COCO-trained pose model emits them. The
 # index is what comes out of the tensor; the name is what the rest of the
 # project uses, because `keypoints["left_wrist"]` survives a model swap and
@@ -138,9 +140,38 @@ class PersonPose:
     #: Stable across frames while this person keeps being matched to the same
     #: track. 0 means untracked.
     track_id: int = 0
+    #: Width over height of the frame these coordinates are normalised to.
+    #: Only `shaped()` reads it. Defaults to the reference aspect so that a
+    #: hand-built pose in a test is already in shape space and needs no camera.
+    aspect: float = geometry.SHAPE_ASPECT
 
     def point(self, name: str) -> KeyPoint | None:
         return self.keypoints.get(name)
+
+    def shaped(self) -> "PersonPose":
+        """The same person with x re-expressed in `geometry.SHAPE_ASPECT`.
+
+        **Call this before measuring an angle or a span-relative distance, and
+        do not call it before deciding where something goes on screen.** That
+        split is the whole point: a position wants the camera's own normalised
+        space, because the screen is deliberately stretched to match it, and a
+        shape wants a space where one unit across means the same as one unit
+        down. See `geometry.shape_scale` for what goes wrong otherwise.
+
+        Returns `self` unchanged when the camera already is the reference
+        shape, which is the common case and makes this free on the hot path.
+        """
+        scale = geometry.shape_scale(self.aspect)
+        if abs(scale - 1.0) < 1e-9:
+            return self
+        keypoints = {name: KeyPoint(x=point.x * scale, y=point.y,
+                                    confidence=point.confidence)
+                     for name, point in self.keypoints.items()}
+        x, y, width, height = self.box
+        return PersonPose(confidence=self.confidence, keypoints=keypoints,
+                          box=(x * scale, y, width * scale, height),
+                          track_id=self.track_id,
+                          aspect=geometry.SHAPE_ASPECT)
 
     def visible(self, name: str, threshold: float) -> bool:
         point = self.keypoints.get(name)
@@ -204,6 +235,17 @@ class PoseFrame:
     #: How long the accelerator took on this frame, in seconds. For the debug
     #: panel and the performance report; never used by gameplay.
     inference_s: float = 0.0
+    #: The two host-side stages either side of it: the letterbox on the way in
+    #: and the tensor decode on the way out, both in seconds.
+    #:
+    #: Broken out because the three are fixed by different things and only one
+    #: of them is the accelerator's. Tuning capture resolution moves the first,
+    #: the model moves the second, and nothing but numpy moves the third — with
+    #: a single total there is no way to tell which of those a change helped,
+    #: which is exactly the question every latency measurement here has to
+    #: answer. Four `monotonic()` calls per frame, and they are free.
+    preprocess_s: float = 0.0
+    decode_s: float = 0.0
     #: Camera frame size this was decoded from, for the debug overlay's benefit.
     source_size: tuple[int, int] = (0, 0)
 
@@ -215,6 +257,8 @@ class PoseFrame:
         return {
             "timestamp": round(self.timestamp, 3),
             "inference_ms": round(self.inference_s * 1000, 1),
+            "preprocess_ms": round(self.preprocess_s * 1000, 1),
+            "decode_ms": round(self.decode_s * 1000, 1),
             "persons": [person.as_dict() for person in self.persons],
         }
 

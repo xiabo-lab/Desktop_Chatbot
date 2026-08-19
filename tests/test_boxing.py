@@ -51,6 +51,83 @@ class TestBoxingMotion(unittest.TestCase):
             left_elbow=(0.30, 0.43), left_wrist=(0.18, 0.39)), 1.2)
         self.assertNotIn("left_punch", held.names)
 
+    def test_the_same_punch_registers_at_any_pose_rate(self):
+        """The regression the faster pipeline would otherwise have caused.
+
+        Every punch threshold is a distance, and a distance only means anything
+        over a stated time. They were measured against the previous *frame* at
+        about thirty frames a second; the pipeline now runs at forty-five, so
+        the gap between two frames is a third smaller and the identical punch
+        used to stop clearing `punch_travel`. A latency improvement making the
+        game harder to play is the worst shape a regression can have, because
+        it presents as the tracking having got worse.
+
+        So: one physical punch, described once as a function of wall-clock
+        time, sampled at three rates. All three must see it.
+        """
+        # 450 ms from guard to full extension. Deliberately not a fast jab:
+        # a fast one clears every gate at any frame rate and would prove
+        # nothing. Measured against the per-frame version this replaces, the
+        # slowest punch it would still see fell from 610 ms at 30 fps to 420 ms
+        # at 45 and 310 ms at 60 — so this is a punch that the old code sees at
+        # the rate it was tuned at and stops seeing at the rate it now runs at.
+        # Which is to say: a deliberate punch, thrown by somebody who is not in
+        # a hurry, going unrecognised because the pipeline got faster.
+        DURATION = 0.45
+
+        def wrist_at(t):
+            travel = min(1.0, max(0.0, t / DURATION))
+            return (0.36 - 0.18 * travel, 0.56 - 0.17 * travel)
+
+        def elbow_at(t):
+            travel = min(1.0, max(0.0, t / DURATION))
+            return (0.34 - 0.04 * travel, 0.50 - 0.07 * travel)
+
+        for rate in (30.0, 45.0, 60.0):
+            with self.subTest(pose_fps=rate):
+                motion = BoxingMotionAnalyzer()
+                step = 1 / rate
+                # Half a second of guard first, so the neutral stance is
+                # settled and the wrist history is full before the jab.
+                at = 0.0
+                while at < 0.5:
+                    motion.update(pose(), at)
+                    at += step
+                thrown = False
+                start = at
+                while at < start + DURATION + 0.15:
+                    result = motion.update(
+                        pose(left_elbow=elbow_at(at - start),
+                             left_wrist=wrist_at(at - start)), at)
+                    thrown = thrown or "left_punch" in result.names
+                    at += step
+                self.assertTrue(thrown, f"no punch seen at {rate:.0f} fps")
+
+    def test_a_slow_reach_is_still_not_a_punch_at_any_rate(self):
+        """The other half: rate independence must not mean "always yes".
+
+        The same arm extending over a second and a half is somebody reaching
+        for a glass of water, and the speed gate is what tells the two apart.
+        """
+        for rate in (30.0, 45.0, 60.0):
+            with self.subTest(pose_fps=rate):
+                motion = BoxingMotionAnalyzer()
+                step = 1 / rate
+                at = 0.0
+                while at < 0.5:
+                    motion.update(pose(), at)
+                    at += step
+                start, thrown = at, False
+                while at < start + 1.5:
+                    travel = min(1.0, (at - start) / 1.5)
+                    result = motion.update(
+                        pose(left_elbow=(0.34 - 0.04 * travel, 0.50 - 0.07 * travel),
+                             left_wrist=(0.36 - 0.18 * travel, 0.56 - 0.17 * travel)),
+                        at)
+                    thrown = thrown or "left_punch" in result.names
+                    at += step
+                self.assertFalse(thrown, f"a reach scored at {rate:.0f} fps")
+
     def test_torso_position_selects_left_middle_and_right_lanes(self):
         self.assertEqual(self.motion.update(pose(), 1.1).posture["lane"], "middle")
         left = self.motion.update(pose(

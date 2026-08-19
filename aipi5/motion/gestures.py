@@ -38,6 +38,11 @@ def arms_crossed(person, threshold: float = 0.35) -> bool:
     """
     if person is None:
         return False
+    # Every threshold below is a distance divided by the shoulder span, and
+    # several of them mix a vertical distance with a horizontal one — so they
+    # are measured in the reference camera shape rather than the camera's own.
+    # See `PersonPose.shaped`; free unless the camera mode has changed.
+    person = person.shaped()
     points = {name: person.point(name) for name in JOINTS}
     if any(point is None or point.confidence < threshold
            for point in points.values()):

@@ -30,7 +30,7 @@ class TestDefaults(unittest.TestCase):
         self.assertEqual(
             (settings.motion.capture_width, settings.motion.capture_height,
              settings.motion.capture_fps),
-            (1280, 720, 90),
+            (640, 480, 120),
         )
         self.assertTrue(settings.news.feeds, "news needs somewhere to read from")
 
@@ -182,21 +182,41 @@ class TestTheShippedConfigMatchesTheCamera(unittest.TestCase):
                               camera.capture_height, camera.fps)
 
     def test_the_gameplay_capture_is_a_real_mode(self):
-        # The one that motivated the new camera: 720p90 is what lets the pose
-        # loop have a fresh frame every time it asks. See `motion/camera_lease`.
+        """640x480@120: the fastest thing the camera has, and it matters.
+
+        The pose loop asks for a frame roughly forty-five times a second, and
+        what a capture rate above that buys is freshness — the newest frame is
+        never more than half a capture period old. See `motion/camera_lease`.
+        """
         motion = self.settings.motion
         self.assert_reachable("motion", motion.capture_width,
                               motion.capture_height, motion.capture_fps)
         self.assertEqual((motion.capture_width, motion.capture_height,
-                          motion.capture_fps), (1280, 720, 90))
+                          motion.capture_fps), (640, 480, 120))
+
+    def test_only_two_modes_on_this_camera_beat_thirty_frames_a_second(self):
+        """Which is why the choice of gameplay mode is a choice of two.
+
+        Written as a test rather than a comment because it is the fact that
+        makes every other option in the sweep uninteresting: dropping the JPEG
+        decode by asking for NV12 or YUYV also drops the frame rate to 30.
+        """
+        # Above 1080p nothing is fast, and 1080p60 is far too many pixels to
+        # letterbox into a 640-square thirty times a second — so the modes
+        # worth considering are the two small fast ones.
+        fast = {mode for mode, best in self.MODES.items()
+                if best > 30 and mode[1] * mode[2] <= 1280 * 720}
+        self.assertEqual(fast, {("MJPG", 640, 480), ("MJPG", 1280, 720)})
+        self.assertEqual(self.MODES[("MJPG", 1280, 720)], 90,
+                         "1280x720 has no 120 fps mode on this camera")
 
     def test_the_call_capture_is_a_real_mode(self):
         call = self.settings.call
         self.assert_reachable("call", call.width, call.height, call.fps)
 
     def test_the_pose_loop_is_not_asked_for_more_than_the_accelerator_gives(self):
-        # 90 is the camera's number, 30 is the Hailo's. Asking the pose loop for
-        # the camera's rate would be asking for frames nothing can infer.
+        # 120 is the camera's number, 30 is the Hailo's. Asking the pose loop
+        # for the camera's rate would be asking for frames nothing can infer.
         self.assertLessEqual(self.settings.motion.target_fps,
                              self.settings.motion.capture_fps)
 

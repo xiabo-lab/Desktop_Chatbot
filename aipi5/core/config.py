@@ -200,12 +200,21 @@ class MotionConfig:
     #: How long a wrist may coast on its last known position once confidence
     #: drops, before the hand is declared gone. Section 15.
     stale_ms: int = 250
-    #: The Brio 4K's low-latency gameplay mode. Capture runs ahead of the
-    #: roughly 30 fps pose model; CameraLease keeps only the newest frame, so
+    #: The BRIO 4K's fastest mode, and the one AI Motion plays in. Capture runs
+    #: ahead of the pose model; CameraLease keeps only the newest frame, so
     #: those extra camera frames reduce age instead of becoming a queue.
-    capture_width: int = 1280
-    capture_height: int = 720
-    capture_fps: int = 90
+    #:
+    #: 4:3 rather than 16:9 on purpose — see `config/aipi5.yaml` for the full
+    #: sweep and what the crop costs. Anything that measures the *shape* of a
+    #: player is insulated from it by `PersonPose.shaped()`.
+    capture_width: int = 640
+    capture_height: int = 480
+    capture_fps: int = 120
+    #: Pixel format asked of the driver. MJPG is the only format this camera
+    #: offers above 30 fps at any size worth using; YUYV and NV12 exist so the
+    #: trade can be re-measured rather than re-argued — see
+    #: `scripts/bench_motion.py`.
+    capture_format: str = "MJPG"
     #: Frames per second the pose loop aims for. The Hailo model, rather than
     #: the camera, is the limiting stage at this value.
     target_fps: int = 30
@@ -746,6 +755,7 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
                                          "motion.capture_height")),
             capture_fps=int(_positive(motion.get("capture_fps", 90), 90,
                                       "motion.capture_fps")),
+            capture_format=str(motion.get("capture_format", "MJPG")).upper(),
             target_fps=int(_positive(motion.get("target_fps", 30), 30,
                                      "motion.target_fps")),
         ),

@@ -165,11 +165,11 @@ class TestDrainDepth(unittest.TestCase):
 class TestBrio4KGameplayMode(unittest.TestCase):
 
     class Frame:
-        shape = (720, 1280, 3)
-        size = 720 * 1280 * 3
+        shape = (480, 640, 3)
+        size = 480 * 640 * 3
 
     class Capture:
-        def __init__(self, cv2, fps=90.0):
+        def __init__(self, cv2, fps=120.0):
             self.cv2 = cv2
             self.fps = fps
             self.sets = []
@@ -203,7 +203,7 @@ class TestBrio4KGameplayMode(unittest.TestCase):
         CAP_PROP_FPS = 5
         CAP_PROP_BUFFERSIZE = 38
 
-        def __init__(self, fps=90.0):
+        def __init__(self, fps=120.0):
             self.capture = TestBrio4KGameplayMode.Capture(self, fps)
 
         @staticmethod
@@ -219,7 +219,7 @@ class TestBrio4KGameplayMode(unittest.TestCase):
     def camera():
         return mock.Mock(cfg=CameraConfig(), describe=lambda: {})
 
-    def test_game_capture_requests_720p90_mjpeg_and_fixed_exposure(self):
+    def test_game_capture_requests_480p120_mjpeg_and_fixed_exposure(self):
         cv2 = self.Cv2()
         lease = CameraLease(self.camera())
         with mock.patch.object(camera_mod, "_set_dynamic_framerate",
@@ -230,12 +230,12 @@ class TestBrio4KGameplayMode(unittest.TestCase):
         self.assertEqual(cv2.opened, ("/dev/video0", cv2.CAP_V4L2))
         self.assertEqual(capture.sets[:4], [
             (cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG")),
-            (cv2.CAP_PROP_FRAME_WIDTH, 1280),
-            (cv2.CAP_PROP_FRAME_HEIGHT, 720),
-            (cv2.CAP_PROP_FPS, 90),
+            (cv2.CAP_PROP_FRAME_WIDTH, 640),
+            (cv2.CAP_PROP_FRAME_HEIGHT, 480),
+            (cv2.CAP_PROP_FPS, 120),
         ])
-        self.assertEqual(lease.describe()["requested"], "1280x720@90")
-        self.assertEqual(lease.describe()["negotiated_fps"], 90.0)
+        self.assertEqual(lease.describe()["requested"], "640x480@120")
+        self.assertEqual(lease.describe()["negotiated_fps"], 120.0)
         self.assertEqual(lease.describe()["format"], "MJPG")
 
     def test_a_lower_driver_fallback_is_reported_and_still_usable(self):

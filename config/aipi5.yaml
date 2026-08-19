@@ -149,8 +149,8 @@ camera:
   # YUYV and NV12. No H.264.** Maximum frame rate per mode:
   #
   #            MJPG        YUYV / NV12
-  #   640x480   120 fps      30 fps
-  #   1280x720   90 fps      30 fps      <- the mode below, and AI Motion's
+  #   640x480   120 fps      30 fps      <- AI Motion's gameplay mode
+  #   1280x720   90 fps      30 fps      <- the mode below, the assistant's
   #   1920x1080  60 fps      30 fps
   #   3840x2160  30 fps      —
   #
@@ -166,11 +166,11 @@ camera:
   # every read waits for one fresh frame rather than accepting a queued one, so
   # this is what a read costs: about 35 ms at 30 fps. See `Camera._read`.
   #
-  # The assistant keeps 30 fps here for better low-light stills; the sensor
+  # The assistant keeps 720p30 here for better low-light stills; the sensor
   # halves its own rate in a dim room whatever is asked for. AI Motion switches
-  # the device to fixed 720p90 with two buffers while a game is open and puts
-  # this mode back afterwards — see `aipi5/motion/camera_lease.py`, where 90 is
-  # the camera's number and 30 is the Hailo pose loop's.
+  # the device to fixed 640x480 at 120 with two buffers while a game is open and
+  # puts this mode back afterwards — see `aipi5/motion/camera_lease.py`. The two
+  # want opposite things: a still wants pixels, a game wants the next frame.
   fps: 30
   jpeg_quality: 80
   # tmpfs. The Pi boots from flash and a capture-per-question write cycle is
@@ -243,13 +243,65 @@ motion:
   # How long a wrist coasts on its last position once confidence drops, before
   # the hand is declared gone.
   stale_ms: 250
-  # Logitech BRIO 4K gameplay capture. The camera was verified to advertise
-  # 1280x720 MJPEG at 90 fps. The Hailo pose model still runs at about 30 fps;
-  # superseded camera frames are discarded so inference always gets the newest
-  # image instead of accumulating latency.
-  capture_width: 1280
-  capture_height: 720
-  capture_fps: 90
+  # Logitech BRIO 4K gameplay capture. Superseded camera frames are discarded,
+  # so a capture rate above the pose rate buys freshness rather than a queue:
+  # the frame handed to the accelerator is at most half a capture period old.
+  #
+  # **Re-measured 2026-08-18 against every alternative worth trying**, with the
+  # assistant stopped and a person in shot (`scripts/bench_motion.py`), as
+  # capture-to-decoded-pose:
+  #
+  #   1280x720@90 MJPG    27.8 ms   46.3 pose fps   28% cpu   <- this one
+  #   640x480@120 MJPG    26.5 ms   46.8 pose fps   21% cpu   4:3, see below
+  #   1280x720@60 MJPG    30.1 ms   47.1 pose fps   22% cpu
+  #   960x540@30  MJPG    21.5 ms   28.2 pose fps   10% cpu
+  #   640x360@30  MJPG    21.6 ms   28.2 pose fps    5% cpu
+  #   1280x720@30 NV12    30.9 ms   28.3 pose fps   16% cpu
+  #   1280x720@30 YUYV    31.0 ms   28.3 pose fps   13% cpu
+  #
+  # The 30 fps rows look like the winners and are not. Their low figure is the
+  # pose loop *waiting* for a camera slower than itself, so the frame is fresh
+  # and then sits on screen for a whole 35 ms until the next one — mean
+  # displayed staleness is latency plus half the update period, and on that
+  # measure all six rows are within 2 ms of each other. What the fast modes
+  # additionally buy is halving the gap between pose samples, which is what
+  # collision segments and blade smoothness are made of. Repeated inside the
+  # running system, with the browser drawing at 60 fps, 30 fps capture measured
+  # *worse* end to end: 46.2 ms against 36.4 ms for this mode.
+  #
+  # 640x480@120 is 1.3 ms better and is not taken: the camera's 4:3 modes are a
+  # horizontal crop, not a rescale, so it gives up a quarter of the field of
+  # view — and the field of view is how far a player has to move their arms to
+  # reach the edge of the screen.
+  #
+  # **640x480@120 is the mode in use**, chosen deliberately over 1280x720@90
+  # after the sweep above: it is the fastest thing the camera offers, it is the
+  # freshest frame (a capture period of 8.3 ms against 11.1), it needs no
+  # downscale at all on the way into the model's 640-square, and it puts a
+  # third more vertical pixels on the player than a 720p frame does once that
+  # frame has been letterboxed down to 640x360.
+  #
+  # **The trade is the field of view, and it is a real one.** The camera's 4:3
+  # modes are a horizontal *crop* of the 16:9 field, not a rescale — verified
+  # by photographing one scene at both sizes — so it sees 75% of the width and
+  # all of the height. A player therefore has to move their arms three quarters
+  # as far to reach the edge of the screen, and has to stand slightly further
+  # back to keep their whole body in shot.
+  #
+  # Nothing that *measures* the player is affected by that, and the reason is
+  # `PersonPose.shaped()`: boxing, yoga and the crossed-arms gesture all work
+  # in a fixed reference aspect, so every tuned constant in `boxing/config.py`
+  # and `yoga/poses.py` keeps the meaning it was measured with. Without it a
+  # true 45-degree limb reads 7.5 degrees differently here than at 16:9.
+  capture_width: 640
+  capture_height: 480
+  capture_fps: 120
+  # MJPG, YUYV or NV12. Only MJPG goes above 30 fps on this camera at any size
+  # worth using; the JPEG decode it costs is paid on the capture thread, which
+  # is not the thread gameplay is waiting on. 640x480 MJPG at 120 and 1280x720
+  # MJPG at 90 are the only two modes above 30 fps that exist — 1280x720@120 is
+  # not offered and a request for it negotiates down to 90.
+  capture_format: MJPG
   target_fps: 30
 
 games:

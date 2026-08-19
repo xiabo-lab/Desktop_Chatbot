@@ -7,10 +7,35 @@ objects, so recorded or synthetic poses can test it without a camera.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 import math
 
 from aipi5.games.boxing.config import MOTION, MotionTuning
+from aipi5.motion import geometry
+
+#: How far back a wrist is compared against, in seconds.
+#:
+#: **Every punch threshold in `config.MotionTuning` is a distance, and a
+#: distance only means something over a stated time.** They were measured
+#: against the previous *frame* at a pose rate of about thirty, so
+#: `punch_travel` of 0.065 shoulder widths was implicitly "in 33 ms". When the
+#: pose pipeline was sped up to about forty-five frames a second the frames got
+#: closer together, the distance between two of them shrank by a third, and the
+#: same punch stopped clearing the same threshold — a latency improvement
+#: quietly making the game harder to play, which is the worst possible shape
+#: for a regression because it looks like the tracking got worse.
+#:
+#: So the comparison is against where the wrist was 33 ms ago, interpolated
+#: between the two samples that bracket it, whatever the frame rate is. The
+#: constants keep the meaning they were measured with, and a faster pipeline
+#: now buys what it should: the *decision* arrives sooner, on fresher data.
+PUNCH_WINDOW_S = 1 / 30
+
+#: How long the neutral stance takes to follow a player who has drifted, as a
+#: time constant rather than a per-frame weight — same reason, same fix. 0.94 s
+#: is what the old 3.5%-per-frame blend came to at thirty frames a second.
+NEUTRAL_TAU_S = 0.94
 
 
 @dataclass(frozen=True)
@@ -33,6 +58,42 @@ class BoxingAction:
         if self.trajectory:
             data["trajectory"] = [round(value, 4) for value in self.trajectory]
         return data
+
+
+@dataclass(frozen=True)
+class _WristSample:
+    """Where one wrist was, and how extended the arm was, at one instant."""
+
+    at: float
+    x: float
+    y: float
+    extension: float
+
+
+def _interpolate(track, wanted: float) -> _WristSample:
+    """The wrist as it was at `wanted`, between the two samples around it.
+
+    Interpolated rather than "the nearest sample", because nearest quantises
+    the comparison window to the frame interval — which is the very thing this
+    is trying to stop mattering. Clamped to the oldest sample held, so the
+    first frames after a hand appears compare against the little history there
+    is instead of inventing some.
+    """
+    if track[0].at >= wanted:
+        return track[0]
+    for older, newer in zip(track, list(track)[1:]):
+        if newer.at >= wanted:
+            gap = newer.at - older.at
+            if gap <= 1e-9:
+                return newer
+            t = (wanted - older.at) / gap
+            return _WristSample(
+                at=wanted,
+                x=older.x + t * (newer.x - older.x),
+                y=older.y + t * (newer.y - older.y),
+                extension=older.extension + t * (newer.extension - older.extension),
+            )
+    return track[-1]
 
 
 @dataclass
@@ -72,9 +133,10 @@ class BoxingMotionAnalyzer:
 
     def reset(self) -> None:
         self._last_time: float | None = None
-        self._last_wrist: dict[str, tuple[float, float]] = {}
+        #: A third of a second of wrist history per side, so the comparison
+        #: window below is a duration and not a frame count.
+        self._track: dict[str, deque] = {"left": deque(), "right": deque()}
         self._last_speed = {"left": 0.0, "right": 0.0}
-        self._last_extension: dict[str, float] = {}
         self._cooldown = {"left": -1e9, "right": -1e9,
                           "dodge": -1e9, "duck": -1e9,
                           "lean": -1e9, "parry": -1e9}
@@ -98,8 +160,13 @@ class BoxingMotionAnalyzer:
             return None
         return points
 
-    def calibrate(self, person) -> bool:
-        """Blend a neutral stance from one credible upper-body pose."""
+    def calibrate(self, person, dt: float = PUNCH_WINDOW_S) -> bool:
+        """Blend a neutral stance from one credible upper-body pose.
+
+        `dt` is how long since the last blend. It defaults to one frame at the
+        rate this was tuned at, so an outside caller behaves exactly as before.
+        """
+        person = person.shaped() if person is not None else None
         points = self._points(person)
         if points is None:
             return False
@@ -117,13 +184,25 @@ class BoxingMotionAnalyzer:
         if not self._neutral:
             self._neutral = sample
         else:
-            alpha = 0.035
+            # A time constant, not a per-frame weight. The old flat 0.035 meant
+            # the neutral chased the player 1.7x faster once the pose rate went
+            # up, which eats exactly the offset a dodge is measured against.
+            alpha = 1.0 - math.exp(-max(0.0, dt) / NEUTRAL_TAU_S)
             for name, value in sample.items():
                 self._neutral[name] += alpha * (value - self._neutral[name])
         return True
 
     def update(self, person, timestamp: float, hands=None,
                incoming: dict | None = None) -> MotionResult:
+        # Everything below is a shape — angles, and distances divided by the
+        # shoulder span — so it is measured in the reference camera aspect
+        # rather than the camera's own. `hands` comes from the shared filter in
+        # camera space and gets the same factor applied by hand, because a
+        # `Hand` is not a `PersonPose` and must not start pretending to be one:
+        # Fruit Ninja steers a blade with it and wants camera space exactly.
+        shape_scale = (geometry.shape_scale(person.aspect)
+                       if person is not None else 1.0)
+        person = person.shaped() if person is not None else None
         points = self._points(person)
         if points is None:
             self._last_time = timestamp
@@ -139,7 +218,7 @@ class BoxingMotionAnalyzer:
             self.calibrate(person)
 
         dt = 0.0 if self._last_time is None else timestamp - self._last_time
-        dt = max(1 / 120, min(0.20, dt)) if dt > 0 else 0.0
+        dt = max(1 / 240, min(0.20, dt)) if dt > 0 else 0.0
         self._last_time = timestamp
 
         centre_x = (left_shoulder.x + right_shoulder.x) / 2
@@ -198,24 +277,38 @@ class BoxingMotionAnalyzer:
             # Prefer the shared filtered wrists used by Fruit Ninja.  The raw
             # landmark is a fallback for synthetic tests and debug playback.
             filtered = hands.get(f"{side}_wrist") if isinstance(hands, dict) else None
-            x = filtered.x if filtered is not None and filtered.live else wrist.x
-            y = filtered.y if filtered is not None and filtered.live else wrist.y
-            previous = self._last_wrist.get(side, (x, y))
-            travel = math.hypot(x - previous[0], y - previous[1])
-            speed = travel / (dt * span) if dt else 0.0
-            acceleration = (speed - self._last_speed[side]) / dt if dt else 0.0
+            live = filtered is not None and filtered.live
+            x = filtered.x * shape_scale if live else wrist.x
+            y = filtered.y if live else wrist.y
             direct = math.hypot(x - shoulder.x, y - shoulder.y)
             limb = self._distance(shoulder, elbow) + math.hypot(x - elbow.x, y - elbow.y)
             extension = direct / max(0.001, limb)
-            extension_gain = extension - self._last_extension.get(side, extension)
-            radial_before = math.hypot(previous[0] - shoulder.x,
-                                       previous[1] - shoulder.y)
+
+            # Against where this wrist was `PUNCH_WINDOW_S` ago, not against
+            # the previous frame — see that constant for why the difference is
+            # the whole of this. History older than twice the window is of no
+            # further use and is dropped rather than allowed to grow.
+            track = self._track[side]
+            track.append(_WristSample(timestamp, x, y, extension))
+            while len(track) > 2 and timestamp - track[1].at >= 2 * PUNCH_WINDOW_S:
+                track.popleft()
+            before = _interpolate(track, timestamp - PUNCH_WINDOW_S)
+            window = max(1e-3, timestamp - before.at)
+
+            travel = math.hypot(x - before.x, y - before.y)
+            speed = travel / (window * span)
+            acceleration = (speed - self._last_speed[side]) / window
+            extension_gain = extension - before.extension
+            # The *current* shoulder against the *old* wrist, deliberately: a
+            # player stepping forward must not read as an arm extending.
+            radial_before = math.hypot(before.x - shoulder.x,
+                                       before.y - shoulder.y)
             radial_gain = (direct - radial_before) / span
             confidence = min(wrist.confidence, elbow.confidence,
                              shoulder.confidence)
             result.hands[side] = {
                 "x": round(x, 4), "y": round(y, 4),
-                "px": round(previous[0], 4), "py": round(previous[1], 4),
+                "px": round(before.x, 4), "py": round(before.y, 4),
                 "speed": round(speed, 2),
                 "acceleration": round(acceleration, 2),
                 "extension": round(extension, 2),
@@ -233,8 +326,8 @@ class BoxingMotionAnalyzer:
                               speed >= self.tuning.punch_speed * 0.55)
             if ((enough_motion and extending) or straightening) and \
                     timestamp - self._cooldown[side] >= self.tuning.punch_cooldown_s:
-                horizontal = abs(x - previous[0])
-                vertical = abs(y - previous[1])
+                horizontal = abs(x - before.x)
+                vertical = abs(y - before.y)
                 hook = (horizontal > self.tuning.hook_horizontal_ratio *
                         max(0.008, vertical) and extension < 0.90)
                 target = "head" if y <= centre_y + 0.28 * span else "body"
@@ -243,12 +336,10 @@ class BoxingMotionAnalyzer:
                     name, side=side, target=target,
                     confidence=min(1.0, confidence * min(1.35, speed / self.tuning.punch_speed)),
                     speed=speed, acceleration=acceleration,
-                    trajectory=(previous[0], previous[1], x, y)))
+                    trajectory=(before.x, before.y, x, y)))
                 self._cooldown[side] = timestamp
 
-            self._last_wrist[side] = (x, y)
             self._last_speed[side] = speed
-            self._last_extension[side] = extension
 
         if near_face.get("left") and near_face.get("right"):
             result.guard = "two_hand_guard"
@@ -281,7 +372,7 @@ class BoxingMotionAnalyzer:
 
         # Slowly follow ordinary stance drift, never a decisive dodge/duck.
         if abs(dx) < 0.10 and abs(nose_dy) < 0.10 and abs(scale_change) < 0.08:
-            self.calibrate(person)
+            self.calibrate(person, dt)
         self._last_result = result
         return result
 

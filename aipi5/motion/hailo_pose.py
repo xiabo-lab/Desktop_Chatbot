@@ -43,6 +43,23 @@ from aipi5.motion.pose_types import (KEYPOINT_NAMES, KeyPoint, PersonPose,
 
 log = logging.getLogger(__name__)
 
+#: What each HailoRT output format is, as a numpy type name. Keyed on the tail
+#: of `str(FormatType.UINT8)` rather than on the enum members themselves,
+#: because this module has to stay importable on a machine with no HailoRT —
+#: which is where most of the tests run.
+#:
+#: A format that is not in here is not guessed at. It falls back to asking the
+#: runtime for FLOAT32, which is the slow path this file exists to avoid and is
+#: still the right answer: a wrong guess about the width of an integer does not
+#: fail, it decodes a person made of noise.
+_NUMPY_TYPE_NAMES = {"UINT8": "uint8", "UINT16": "uint16", "FLOAT32": "float32"}
+
+
+def _numpy_type(format_type, np):
+    """`FormatType.UINT8` to `np.uint8`, or None for one nobody here has seen."""
+    name = _NUMPY_TYPE_NAMES.get(str(format_type).rsplit(".", 1)[-1].upper())
+    return getattr(np, name) if name else None
+
 # How long one inference may take before it counts as a wedged accelerator.
 # The measured figure is around 25 ms; two seconds is a bound, not a target,
 # and it is shorter than the person detector's ten because this one is on an
@@ -80,6 +97,15 @@ class HailoPose:
         self._model = None
         self._input_hw = (yolov8_pose.INPUT_SIZE, yolov8_pose.INPUT_SIZE)
         self._outputs: dict[str, tuple] = {}
+        #: Allocated once at load and reused for every frame. See `_allocate`.
+        self._input_buffer = None
+        self._output_buffers: dict = {}
+        self._bindings = None
+        #: The numpy type each output really comes back as, and the
+        #: `(scale, zero point)` that turns it into a number. See the loop in
+        #: `__init__` that fills them.
+        self._dtypes: dict = {}
+        self._quant: dict = {}
         self._ok = False
 
         if not model_path.exists():
@@ -119,19 +145,41 @@ class HailoPose:
                             "expected %d square", shape[1], shape[0],
                             yolov8_pose.INPUT_SIZE)
 
-            # FLOAT32 out, so the runtime dequantizes. Requested per output
-            # rather than globally because the input must stay UINT8 — it is
-            # camera pixels, and asking the runtime to convert a float image
-            # back down would be a conversion in the hot path for nothing.
+            # **The accelerator's own integers, converted lazily.** This used
+            # to ask the runtime for FLOAT32 and let it dequantise all nine
+            # tensors on the way out. That is 3.9 MB per frame and was measured
+            # on this device at 8.5 ms — thirty per cent of the whole inference
+            # — to produce 8,400 numbers the decoder looks at and 3.8 MB it
+            # discards untouched. `yolov8_pose.decode` now converts the few
+            # hundred rows that clear the score threshold, and takes the
+            # quantisation parameters gathered here to do it.
             for output in model.outputs:
-                output.set_format_type(FormatType.FLOAT32)
                 self._outputs[output.name] = tuple(output.shape)
+                dtype = _numpy_type(output.format.type, np)
+                infos = list(output.quant_infos or ())
+                if dtype is None or len(infos) != 1:
+                    # Per-channel quantisation, or a type this does not know.
+                    # Neither is what this HEF does, and both are recoverable
+                    # by handing the work back to the runtime — which is
+                    # slower and correct, and much better than a fast wrong
+                    # answer from a recompiled model.
+                    log.warning("pose output %s is %s with %d quantisation "
+                                "records; letting the runtime dequantise it",
+                                output.name, output.format.type, len(infos))
+                    output.set_format_type(FormatType.FLOAT32)
+                    self._dtypes[output.name] = np.float32
+                    self._quant.pop(output.name, None)
+                    continue
+                self._dtypes[output.name] = dtype
+                self._quant[output.name] = (float(infos[0].qp_scale),
+                                            float(infos[0].qp_zp))
 
             self._configured_ctx = model.configure()
             self._configured = self._configured_ctx.__enter__()
             self._model = model
-            self._ok = True
             self._np = np
+            self._allocate(np)
+            self._ok = True
 
             log.info("AI Motion: pose model loaded (%s, input %dx%d, "
                      "%d output tensors)", model_path.name,
@@ -143,6 +191,40 @@ class HailoPose:
             raise PoseUnavailable(
                 f"could not bring up the pose model on the AI HAT+ 2: {exc}"
             ) from exc
+
+    def _allocate(self, np) -> None:
+        """Reserve every buffer one inference needs, once, at load.
+
+        **This used to happen inside `infer`, on every frame.** The output
+        tensors of this HEF come back as FLOAT32 and total about 3.9 MB —
+        80x80x64 and 80x80x51 are most of it — so a fresh `np.zeros` per output
+        per frame meant allocating and *zeroing* 3.9 MB thirty times a second
+        for values the accelerator is about to overwrite completely. The zero
+        fill was pure waste: not one byte of it is ever read.
+
+        The bindings object is reused for the same reason and is safe to reuse
+        for exactly one reason: `infer` runs one job at a time under a lock and
+        does not return until `run()` has. Bindings may not be shared between
+        inferences that are in flight together, which is what the asynchronous
+        API does — this is the synchronous one, and there is only ever one.
+
+        The input buffer is a 640x640x3 uint8 square that `letterbox_image`
+        writes the resized frame into. Its padding is filled once here, because
+        the grey border is the same grey on every frame of a session and
+        repainting it thirty times a second is 1.2 MB of memset for a picture
+        that never changes.
+        """
+        self._input_buffer = np.full(
+            (self._input_hw[1], self._input_hw[0], 3),
+            geometry.LETTERBOX_FILL, dtype=np.uint8)
+        bindings = self._configured.create_bindings()
+        self._output_buffers = {
+            name: np.empty(shape, dtype=self._dtypes.get(name, np.float32))
+            for name, shape in self._outputs.items()
+        }
+        for name, buffer in self._output_buffers.items():
+            bindings.output(name).set_buffer(buffer)
+        self._bindings = bindings
 
     # ── inference ────────────────────────────────────────────────────
 
@@ -157,14 +239,16 @@ class HailoPose:
     def infer(self, frame, captured_at: float) -> PoseFrame:
         """One camera frame in, one `PoseFrame` out. Never raises.
 
-        `frame` is RGB, full camera resolution, exactly as `Camera.frame()`
-        hands it back. The letterbox and the resize happen here rather than in
-        the camera, because they are properties of *this model's* input and the
-        camera is shared with the person detector, which wants a different size.
+        `frame` is **BGR**, full camera resolution, exactly as the driver
+        produced it. The letterbox, the resize and the channel swap all happen
+        here rather than in the camera, because they are properties of *this
+        model's* input and the camera is shared with the person detector, which
+        wants a different size — and because doing the swap after the downscale
+        is a quarter of the work of doing it before (`letterbox_image`).
 
-        Section 8: the full 1280x720 frame is never sent anywhere. It is
-        resized to 640x360 and padded once, on this thread, and what crosses
-        into native code is the 640x640 square the model actually consumes.
+        Section 8: the full camera frame is never sent anywhere. It is resized
+        and padded once, on this thread, into a buffer reserved at load, and
+        what crosses into native code is the 640x640 square the model consumes.
         """
         if not self._ok:
             return PoseFrame(timestamp=captured_at)
@@ -172,29 +256,28 @@ class HailoPose:
         np = self._np
         height, width = frame.shape[:2]
         try:
-            padded, box = geometry.letterbox_image(frame, *self._input_hw)
-            # Contiguous because the buffer goes to native code and a padded
-            # slice assignment can leave a non-contiguous view behind.
-            image = np.ascontiguousarray(padded, dtype=np.uint8)
+            began = time.monotonic()
+            image, box = geometry.letterbox_image(frame, *self._input_hw,
+                                                  into=self._input_buffer,
+                                                  swap_rb=True)
+            preprocess = time.monotonic() - began
 
             started = time.monotonic()
             with self._lock:
                 if not self._ok:
                     return PoseFrame(timestamp=captured_at)
-                bindings = self._configured.create_bindings()
+                bindings = self._bindings
                 bindings.input().set_buffer(image)
-                buffers = {}
-                for name, shape in self._outputs.items():
-                    buffer = np.zeros(shape, dtype=np.float32)
-                    bindings.output(name).set_buffer(buffer)
-                    buffers[name] = buffer
+                buffers = self._output_buffers
                 self._configured.run([bindings], INFER_TIMEOUT_MS)
             elapsed = time.monotonic() - started
 
+            decoded = time.monotonic()
             people = yolov8_pose.decode(
                 buffers, score_threshold=self.score_threshold,
                 iou_threshold=self.iou_threshold,
-                input_size=self._input_hw[0])
+                input_size=self._input_hw[0], quant=self._quant)
+            decode_s = time.monotonic() - decoded
         except Exception as exc:
             # Never raises into the pose loop. An accelerator that has stopped
             # answering must degrade to "nobody is there", which the game shows
@@ -206,6 +289,8 @@ class HailoPose:
             timestamp=captured_at,
             persons=tuple(self._to_person(person, box) for person in people),
             inference_s=elapsed,
+            preprocess_s=preprocess,
+            decode_s=decode_s,
             source_size=(width, height),
         )
 
@@ -239,6 +324,13 @@ class HailoPose:
             keypoints=keypoints,
             box=(mirrored_left, top,
                  mirrored_right - mirrored_left, bottom - top),
+            # The camera's own shape, carried so that whoever measures an angle
+            # can undo it — see `PersonPose.shaped`. From the letterbox rather
+            # than from configuration, because it has to be the shape of the
+            # frame that actually arrived: the driver is free to answer a
+            # request for one size with another, and does.
+            aspect=(box.source_w / box.source_h if box.source_h else
+                    geometry.SHAPE_ASPECT),
         )
 
     # ── teardown ─────────────────────────────────────────────────────
@@ -250,6 +342,11 @@ class HailoPose:
             "loaded": self._ok,
             "input": f"{self._input_hw[0]}x{self._input_hw[1]}",
             "outputs": len(self._outputs),
+            #: How many outputs come back as the accelerator's own integers.
+            #: Fewer than `outputs` means a tensor fell back to the runtime's
+            #: FLOAT32 conversion, which is a real 8.5 ms and worth being able
+            #: to see from the panel rather than only from the log.
+            "quantised": len(self._quant),
         }
 
     def close(self) -> None:
@@ -265,6 +362,11 @@ class HailoPose:
             ctx, self._configured_ctx = self._configured_ctx, None
             self._configured = None
             self._model = None
+            # Dropped before the configured model goes, because the bindings
+            # hold buffers the runtime was given pointers to.
+            self._bindings = None
+            self._output_buffers = {}
+            self._input_buffer = None
         if ctx is not None:
             try:
                 ctx.__exit__(None, None, None)

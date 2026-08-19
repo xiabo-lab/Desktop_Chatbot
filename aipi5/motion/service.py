@@ -151,6 +151,7 @@ class PoseService:
                 width=self.cfg.capture_width,
                 height=self.cfg.capture_height,
                 fps=self.cfg.capture_fps,
+                fourcc=self.cfg.capture_format,
             )
             try:
                 lease.acquire()
@@ -318,16 +319,23 @@ class PoseService:
         with self._lock:
             return self._last_frame
 
-    def preview_jpeg(self):
-        """One camera frame as JPEG, for the start screen. None if not running.
+    def preview_jpeg(self, width: int = 480):
+        """One camera frame as JPEG, or None if the loop is not running.
 
         The only route by which a game ever shows the camera image. Section 22
-        is explicit that the player's room must not be on screen during play —
-        this is for the "stand where the camera can see you" screen and the
-        debug overlay, and nothing else asks for it.
+        wanted the player's room kept off the screen during play, and that
+        remains true of Fruit Ninja and Boxing, where the camera appears only
+        on the "stand where I can see you" screen.
+
+        **Yoga Coach is the deliberate exception, not an erosion of the rule.**
+        A player being told to straighten their back is two metres from the
+        panel and cannot see their own back; the live feed is the correction,
+        and a game that asked for one without showing the other would be
+        asking somebody to fix something they cannot see. `width` exists for
+        the same reason: that feed is worth more pixels than a thumbnail.
         """
         lease = self._lease
-        return lease.preview_jpeg() if lease is not None else None
+        return lease.preview_jpeg(width) if lease is not None else None
 
     def describe(self) -> dict:
         """Section 44's panel: proof that the AI HAT+ 2 is really being used."""

@@ -78,7 +78,14 @@ def _softmax_last(values):
     return exponentials / np.sum(exponentials, axis=-1, keepdims=True)
 
 
-def group_by_scale(tensors: dict, input_size: int = INPUT_SIZE) -> list[dict]:
+#: What an unquantised tensor's `(scale, zero point)` are: dequantising with
+#: these is the identity, which is what makes `quant=None` mean "these are
+#: already floats" without a branch anywhere downstream.
+IDENTITY_QUANT = (1.0, 0.0)
+
+
+def group_by_scale(tensors: dict, input_size: int = INPUT_SIZE,
+                   quant: dict | None = None) -> list[dict]:
     """Sort raw outputs into one (box, score, keypoints, stride) set per scale.
 
     Keyed on channel count and spatial size, for the reason in the module
@@ -88,6 +95,11 @@ def group_by_scale(tensors: dict, input_size: int = INPUT_SIZE) -> list[dict]:
     the reference walks them in. Nothing downstream depends on the order —
     every proposal carries its own stride — but a stable order makes two runs
     comparable when something is being debugged.
+
+    `quant` maps a tensor name to its `(qp_scale, qp_zp)`, for the case where
+    the runtime handed back the accelerator's own integers rather than floats.
+    It is carried through here rather than applied here because *when* the
+    conversion happens is the whole point of it — see `decode`.
     """
     import numpy as np
 
@@ -112,13 +124,18 @@ def group_by_scale(tensors: dict, input_size: int = INPUT_SIZE) -> list[dict]:
                 f"stride of the {input_size}px input")
 
         stride = input_size // height
-        slot = by_scale.setdefault(stride, {"stride": stride})
+        slot = by_scale.setdefault(stride, {"stride": stride,
+                                            "quant": {}})
+        part = ""
         if channels == BOX_CHANNELS:
-            slot["box"] = array
+            part = "box"
         elif channels == CLASS_CHANNELS:
-            slot["score"] = array
+            part = "score"
         elif channels == KEYPOINT_CHANNELS:
-            slot["keypoints"] = array
+            part = "keypoints"
+        if part:
+            slot[part] = array
+            slot["quant"][part] = ((quant or {}).get(name) or IDENTITY_QUANT)
         else:
             raise PoseDecodeError(
                 f"{name} has {channels} channels; expected {BOX_CHANNELS} "
@@ -159,9 +176,25 @@ def _anchor_centres(size: int, stride: int):
     return centre_x.reshape(-1), centre_y.reshape(-1)
 
 
+def dequantise(array, quant, np):
+    """Accelerator integers to real numbers: `(raw - zero point) * scale`.
+
+    Always returns float32, and is a plain cast when `quant` is the identity —
+    which is what a hand-built test tensor and an already-dequantised runtime
+    output both get.
+    """
+    scale, zero = quant
+    values = array.astype(np.float32)
+    if zero:
+        values -= zero
+    if scale != 1.0:
+        values *= scale
+    return values
+
+
 def decode(tensors: dict, score_threshold: float = 0.5,
            iou_threshold: float = 0.7, input_size: int = INPUT_SIZE,
-           max_detections: int = 8) -> list[dict]:
+           max_detections: int = 8, quant: dict | None = None) -> list[dict]:
     """Raw tensors to a list of people, in model pixel coordinates.
 
     Each entry is `{"score", "box": (x1, y1, x2, y2), "keypoints": (17, 3)}`
@@ -174,10 +207,22 @@ def decode(tensors: dict, score_threshold: float = 0.5,
     goes: 8400 proposals of which typically one clears 0.5, and decoding a
     distribution over 16 bins for four sides of 8399 boxes nobody wants is the
     difference between this costing 2 ms and costing 30.
+
+    **`quant` is the other half of that same idea, one stage earlier.** These
+    heads are quantised — UINT8 for the box and score, UINT16 for the keypoints
+    — and the runtime will happily convert all nine tensors to FLOAT32 before
+    handing them over. That is 3.9 MB of conversion per frame and it was
+    measured on the device at **8.5 ms, thirty per cent of the whole
+    inference**, to produce 8,400 numbers that get looked at and 3.8 MB that
+    are thrown away untouched. Taking the accelerator's own integers and
+    converting the few hundred rows that clear the threshold costs
+    microseconds. Pass `{tensor name: (qp_scale, qp_zp)}` to do that; pass
+    nothing and the tensors are treated as floats already, which is what every
+    test here does.
     """
     import numpy as np
 
-    scales = group_by_scale(tensors, input_size)
+    scales = group_by_scale(tensors, input_size, quant)
 
     boxes: list = []
     scores: list = []
@@ -185,7 +230,11 @@ def decode(tensors: dict, score_threshold: float = 0.5,
 
     for scale in scales:
         stride = scale["stride"]
-        score_map = scale["score"].astype(np.float32).reshape(-1)
+        quants = scale["quant"]
+        # The score map is dequantised whole, and that is not a contradiction
+        # of the paragraph above: it is one channel, so all three scales
+        # together are 8,400 numbers against the keypoint heads' 428,400.
+        score_map = dequantise(scale["score"], quants["score"], np).reshape(-1)
 
         # **Not sigmoided.** The compiled graph already ends in one, so this is
         # a probability in 0-1 as it stands. Applying another sigmoid here is
@@ -208,7 +257,12 @@ def decode(tensors: dict, score_threshold: float = 0.5,
         centre_y = centre_y[candidates]
 
         # Box: (n, 4, 16) distributions -> expected distance in cells -> pixels.
-        raw = scale["box"].astype(np.float32).reshape(-1, 4, REG_BINS)[candidates]
+        #
+        # **Indexed before it is converted**, which is the whole saving: at
+        # stride 8 that is 409,600 numbers narrowed to a handful of rows, and
+        # converting first would spend the entire cost this is avoiding.
+        raw = dequantise(scale["box"].reshape(-1, 4, REG_BINS)[candidates],
+                         quants["box"], np)
         distribution = _softmax_last(raw)
         bins = np.arange(REG_BINS, dtype=np.float32)
         distance = np.sum(distribution * bins, axis=-1) * stride   # (n, 4) ltrb
@@ -224,8 +278,9 @@ def decode(tensors: dict, score_threshold: float = 0.5,
         # Keypoints: (n, 17, 3). x and y are offsets from the cell centre in
         # half-strides; the visibility column *does* need a sigmoid, unlike the
         # class score above, because it is a separate head that was not folded.
-        raw_kpts = (scale["keypoints"].astype(np.float32)
-                    .reshape(-1, KEYPOINTS, 3)[candidates])
+        raw_kpts = dequantise(
+            scale["keypoints"].reshape(-1, KEYPOINTS, 3)[candidates],
+            quants["keypoints"], np)
         decoded = np.empty_like(raw_kpts)
         decoded[:, :, 0] = stride * (raw_kpts[:, :, 0] * 2 - 0.5) + centre_x[:, None]
         decoded[:, :, 1] = stride * (raw_kpts[:, :, 1] * 2 - 0.5) + centre_y[:, None]

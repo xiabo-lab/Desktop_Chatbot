@@ -92,6 +92,50 @@ class Letterbox:
         return (x - pad_x) / width, (y - pad_y) / height
 
 
+#: The camera shape every *shape* measurement in this project is expressed in.
+#:
+#: Camera space is normalised to the frame, so x and y are on different scales
+#: whenever the frame is not square — at 16:9 one unit of x is 1.78 times the
+#: physical distance of one unit of y. Everything that measures a **position**
+#: is fine with that, because the screen is stretched the same way on purpose
+#: (see `to_screen`). Everything that measures a **shape** is not: an angle, or
+#: a vertical distance divided by a shoulder width, silently carries the
+#: frame's aspect ratio in it.
+#:
+#: That was invisible while there was only ever one camera mode, and stopped
+#: being invisible the moment a 4:3 mode was worth considering. A bone at a
+#: true 45 degrees reads as 60.6 degrees in a 16:9 frame and 53.1 degrees in a
+#: 4:3 one — **7.5 degrees of systematic error** on every diagonal limb, which
+#: is most of a yoga tolerance and would mark Triangle Pose wrong for a player
+#: doing it correctly.
+#:
+#: So the shape consumers work in this reference aspect rather than in the
+#: camera's, and every tuned constant in `boxing/config.py`, `yoga/poses.py`
+#: and `motion/gestures.py` keeps the meaning it was measured with, whatever
+#: the camera is set to. 16:9 because that is what all of them were measured
+#: on; the number matters only in that it does not change.
+SHAPE_ASPECT = 16 / 9
+
+
+def shape_scale(aspect: float) -> float:
+    """Factor on x that takes camera space to `SHAPE_ASPECT` space.
+
+    Derived rather than fitted. A horizontal distance `d` occupies `d / W` of a
+    frame whose field is `W` wide, so re-expressing it in a reference frame of
+    field `W_ref` is a multiply by `W / W_ref` — and with the vertical field
+    shared, that ratio is just the ratio of the two aspects. A 4:3 crop of a
+    16:9 field gives 0.75, which is exactly the fraction of the horizontal view
+    it kept.
+
+    y is left alone, so a purely vertical measurement is untouched and a purely
+    horizontal one is scaled uniformly — only the mixed ones move, which are
+    precisely the ones that were wrong.
+    """
+    if aspect <= 0:
+        return 1.0
+    return aspect / SHAPE_ASPECT
+
+
 def mirror(x: float) -> float:
     """Flip a normalised x so the room behaves like a mirror.
 
@@ -131,17 +175,36 @@ def to_screen(x: float, y: float, width: int, height: int,
     return sx, sy
 
 
-def letterbox_image(frame, target_w: int, target_h: int, fill: int = 114):
-    """Resize a camera frame into the model's square, padding to fit.
+#: The grey Ultralytics trains YOLO with, so a model sees padding it recognises
+#: as padding rather than as a large black object at the edge of every frame.
+LETTERBOX_FILL = 114
 
-    `fill` is 114 because that is the grey Ultralytics trains YOLO with, and a
-    model sees padding it recognises as padding rather than as a large black
-    object at the edge of every frame.
+
+def letterbox_image(frame, target_w: int, target_h: int,
+                    fill: int = LETTERBOX_FILL, into=None,
+                    swap_rb: bool = False):
+    """Resize a camera frame into the model's square, padding to fit.
 
     Returns `(padded, Letterbox)`. numpy and cv2 are imported here rather than
     at module scope so that everything above — the arithmetic that actually
     gets things wrong — stays importable and testable on a machine with
     neither, which is where the tests run.
+
+    `into` is a caller-owned `target_h x target_w x 3` uint8 array to write
+    into, already filled with `fill`. Passing one is what lets the hot path
+    skip both the allocation and the 1.2 MB memset of a grey border that is
+    identical on every frame of a session; passing None allocates a fresh one,
+    which is what the tests and any one-shot caller want.
+
+    `swap_rb` converts BGR to RGB **after** the downscale rather than before.
+    That ordering is the whole point of the flag: the camera hands back BGR,
+    the model wants RGB, and doing it on the 640x360 result is a quarter of the
+    pixels of doing it on the 1280x720 source. The alternative that reads more
+    naturally — reversing the last axis at the camera and resizing the result —
+    is the expensive one, because a reversed axis is a view with a negative
+    stride and OpenCV cannot work on one: it silently copies the whole frame
+    first, so the "free" slice costs a full-resolution copy *and* leaves the
+    resize reading backwards through memory.
     """
     import cv2
     import numpy as np
@@ -151,12 +214,28 @@ def letterbox_image(frame, target_w: int, target_h: int, fill: int = 114):
     new_w, new_h = box.scaled
     pad_x, pad_y = box.padding
 
+    padded = into
+    if padded is None:
+        padded = np.full((target_h, target_w, 3), fill, dtype=np.uint8)
+
+    window = padded[pad_y:pad_y + new_h, pad_x:pad_x + new_w]
     # INTER_LINEAR rather than INTER_AREA, which is the better downscale.
     # Measured on the Pi: AREA costs about 3 ms more per frame at 1280x720 to
     # 640x360 and changes no keypoint by a pixel, and 3 ms is 10% of the frame
     # budget for a game whose whole problem is latency.
-    resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-
-    padded = np.full((target_h, target_w, 3), fill, dtype=np.uint8)
-    padded[pad_y:pad_y + new_h, pad_x:pad_x + new_w] = resized
+    #
+    # `dst=window` writes straight into the padded square, which needs the
+    # window to be one unbroken run of memory. It is whenever the fitted image
+    # is as wide as the square — true for every camera frame wider than it is
+    # tall, which is all of them — and the check is here rather than an
+    # assumption because a portrait frame would silently get a resize that
+    # OpenCV reallocated and nobody ever read.
+    if window.flags["C_CONTIGUOUS"]:
+        cv2.resize(frame, (new_w, new_h), dst=window,
+                   interpolation=cv2.INTER_LINEAR)
+    else:
+        window[:] = cv2.resize(frame, (new_w, new_h),
+                               interpolation=cv2.INTER_LINEAR)
+    if swap_rb:
+        cv2.cvtColor(window, cv2.COLOR_BGR2RGB, dst=window)
     return padded, box
