@@ -1,6 +1,6 @@
 """The UI's deliberately narrow local-asset route.
 
-The retained hand gesture model and active ninja head made this the first
+The retained hand gesture model and the Boxing artwork made this the first
 version of the page that loads files beside ``index.html``.  The route is
 useful only if those files ship, and safe only if ``..`` can never turn it into
 a filesystem reader.
@@ -19,8 +19,11 @@ class TestBundledGameAssets(unittest.TestCase):
 
     def test_every_game_asset_resolves_inside_the_asset_folder(self):
         paths = (
-            "/assets/fruit-ninja/ninja-head.png",
             "/assets/boxing/boxing.js",
+            "/assets/boxing/fp/glove.webp",
+            "/assets/boxing/fp/forearm.webp",
+            "/assets/boxing/fp/manifest.json",
+            "/assets/yoga/yoga.js",
             "/assets/boxing/arena-anime-v2.png",
             "/assets/boxing/player-red-torso.png",
             "/assets/boxing/opponent-blue-torso.png",
@@ -47,6 +50,77 @@ class TestBundledGameAssets(unittest.TestCase):
                 path.relative_to(root)
                 self.assertGreater(path.stat().st_size, 0)
 
+    def test_the_yoga_page_has_the_coach_and_the_live_feed_side_by_side(self):
+        """Both must be on screen at once, and neither may cover the other.
+
+        The coach is drawn on the shared canvas; the player is an MJPEG
+        element positioned beside it. The camera is the one element in this
+        game that nothing is allowed on top of, because it is what the player
+        is correcting themselves in.
+        """
+        page = (ASSET_ROOT.parent / "index.html").read_text(encoding="utf-8")
+        self.assertIn('<img id="yoga-camera" alt="">', page)
+        self.assertIn("#game-stage.yoga-playing #yoga-camera { display: block; }",
+                      page)
+        for element in ("yoga-name", "yoga-sanskrit", "yoga-instruction",
+                        "yoga-cue", "yoga-hold", "yoga-feedback", "yoga-clock",
+                        "yoga-count", "yoga-segment", "yoga-score",
+                        "yoga-result", "yoga-results"):
+            self.assertIn(f'id="{element}"', page)
+        self.assertIn('/assets/yoga/yoga.js?v=20260817-1', page)
+
+    def test_the_end_of_a_class_is_not_called_game_over(self):
+        """Nobody loses a yoga class.
+
+        The sheet is deliberately the shared one — same buttons, same
+        crossed-arms Play Again — so only the three words change, and they
+        change back when the game does.
+        """
+        script = (ASSET_ROOT / "yoga" / "yoga.js").read_text(encoding="utf-8")
+        self.assertIn('overHeading("YOGA COMPLETE");', script)
+        self.assertIn('const SHARED_OVER = "GAME OVER";', script)
+        self.assertIn("overHeading(SHARED_OVER)", script)
+
+    def test_the_yoga_level_sheet_offers_all_three_lessons(self):
+        page = (ASSET_ROOT.parent / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="sheet-yoga"', page)
+        for level in ("beginner", "intermediate", "advanced"):
+            self.assertIn(f'data-yoga-difficulty="{level}"', page)
+        # The level sheet is one of the sheets `showSheet` knows how to hide,
+        # or choosing a level leaves it on screen over the class.
+        self.assertIn('["mode", "yoga", "start", "paused", "over", "error"]',
+                      page)
+        # And an X held over it must not start a lesson nobody has chosen.
+        self.assertIn('const yogaNeedsLevel = gameId === "yoga" '
+                      '&& !game.difficulty;', page)
+
+    def test_yoga_reuses_the_shared_gesture_start_and_play_again(self):
+        """No second gesture implementation, and no second pose pipeline."""
+        page = (ASSET_ROOT.parent / "index.html").read_text(encoding="utf-8")
+        script = (ASSET_ROOT / "yoga" / "yoga.js").read_text(encoding="utf-8")
+        self.assertIn('if (window.YogaUI) window.YogaUI.onOpen(id);', page)
+        self.assertIn('if (window.YogaUI) window.YogaUI.stop();', page)
+        self.assertIn("window.YogaUI.applyState(state);", page)
+        self.assertIn("window.YogaUI.render(ctx, now, gameState, gameFps);", page)
+        # The gesture, the readiness and the preview all come from the shared
+        # code; yoga adds none of its own.
+        self.assertNotIn("MediaPipe", script)
+        self.assertNotIn("getUserMedia", script)
+        self.assertNotIn("arms_crossed", script)
+
+    def test_the_yoga_live_feed_asks_for_a_rate_the_server_will_agree_to(self):
+        """Five frames a second reads as a broken camera in a mirror.
+
+        The page asks for twelve and a wider frame; the server clamps both, so
+        a stale tab cannot take a core away from pose inference.
+        """
+        script = (ASSET_ROOT / "yoga" / "yoga.js").read_text(encoding="utf-8")
+        self.assertIn('"/api/game/preview?fps=12&w=640&t="', script)
+        from aipi5.ui.server import GAME_PREVIEW_FPS_MAX, GAME_PREVIEW_WIDTH_MAX
+        self.assertGreaterEqual(GAME_PREVIEW_FPS_MAX, 12)
+        self.assertGreaterEqual(GAME_PREVIEW_WIDTH_MAX, 640)
+        self.assertLessEqual(GAME_PREVIEW_FPS_MAX, 15)
+
     def test_the_retained_gesture_model_is_not_a_placeholder(self):
         model = asset_file("/assets/mediapipe/gesture_recognizer.task")
         self.assertIsNotNone(model)
@@ -59,7 +133,7 @@ class TestBundledGameAssets(unittest.TestCase):
         self.assertIsNone(asset_file("/assets/%2e%2e/index.html"))
 
     def test_a_missing_asset_is_refused(self):
-        self.assertIsNone(asset_file("/assets/fruit-ninja/not-there.png"))
+        self.assertIsNone(asset_file("/assets/boxing/not-there.png"))
 
     def test_wasm_and_modules_have_explicit_mime_types(self):
         self.assertEqual(ASSET_TYPES[".wasm"], "application/wasm")
@@ -102,12 +176,19 @@ class TestBundledGameAssets(unittest.TestCase):
         self.assertIn('if (!game || !game.active)', page)
         self.assertIn("if (gameCloseRequest) await gameCloseRequest", page)
 
-    def test_ninja_uses_fixed_anime_proportions_not_player_body_size(self):
+    def test_the_ninja_figure_is_gone_from_the_play_field(self):
+        """Removed on request: the play field is wood, fruit and blades.
+
+        Asserted as an absence because that is what the change was. The figure
+        was five hundred lines that ran inside the render loop, and a partial
+        removal — the draw call gone but the pose still smoothed every frame,
+        or the reverse — is the failure this catches.
+        """
         page = (ASSET_ROOT.parent / "index.html").read_text(encoding="utf-8")
-        self.assertIn("function retargetNinjaPose(source)", page)
-        self.assertIn("const thick = NINJA_RIG.cloth", page)
-        self.assertIn("const headR = NINJA_RIG.headRadius", page)
-        self.assertNotIn("span * 0.30", page)
+        for gone in ("drawPlayerShadow", "retargetNinjaPose", "NINJA_RIG",
+                     "updateShadow", "resetShadow", "shadowCanvas",
+                     "ninja-head.png"):
+            self.assertNotIn(gone, page)
 
     def test_boxing_does_not_mirror_anatomical_sides_twice(self):
         script = (ASSET_ROOT / "boxing" / "boxing.js").read_text(
@@ -123,28 +204,94 @@ class TestBundledGameAssets(unittest.TestCase):
         self.assertIn("function drawAttackCue", script)
         self.assertIn("attack.phase === \"recover\"", script)
         self.assertIn("const targetY = attack.target === \"body\" ? 310 : 240", script)
-        self.assertIn("1.06 + motion.drive * .09", script)
         self.assertIn("createRadialGradient(shoulderX, shoulderY", script)
+        self.assertIn("OPPONENT_SCALE + motion.drive * .14", script)
         self.assertNotIn('replaceAll("_", " ").toUpperCase()', script)
 
-    def test_boxing_uses_layered_anime_arena_and_filtered_player_rig(self):
+    def test_boxing_is_played_from_behind_the_players_own_eyes(self):
+        """First person, stated as the absence of a third-person player.
+
+        The rear-view fighter was a rig, a torso image and a twenty-one
+        pose matrix, and the failure a partial removal produces is very
+        specific: a body still drawn in the middle of a view that is
+        supposed to be looking out of its head.
+        """
         script = (ASSET_ROOT / "boxing" / "boxing.js").read_text(
             encoding="utf-8")
         self.assertIn("/assets/boxing/arena-anime-v2.png", script)
-        self.assertIn("/assets/boxing/player-red-torso.png", script)
         self.assertIn("/assets/boxing/opponent-blue-torso.png", script)
-        self.assertIn("function smoothPlayerRig", script)
-        self.assertIn("function constrainJoint", script)
-        self.assertIn("ctx.save(); ctx.globalAlpha = .68;", script)
+        self.assertIn("function drawFirstPersonHands", script)
+        self.assertIn("function drawFirstPersonArm", script)
         self.assertIn("function drawImpactEffect", script)
+        for gone in ("function smoothPlayerRig", "function constrainJoint",
+                     "function drawPlayerLimb", "function playerPoseFor",
+                     "player-red-torso.png", "globalAlpha = .68"):
+            self.assertNotIn(gone, script)
 
-    def test_boxing_reference_fighters_keep_red_player_and_blue_opponent(self):
+    def test_the_players_head_is_the_camera(self):
+        """Leaning has to move the room, not a figure standing in it.
+
+        Two depths and no more: the arena is across the room and the
+        opponent is within reach, so one movement of the head shifts them
+        by different amounts. That parallax is the whole illusion, and one
+        flat camera applied to both would throw it away.
+        """
         script = (ASSET_ROOT / "boxing" / "boxing.js").read_text(
             encoding="utf-8")
-        self.assertIn('side === "left" ? "#ef3b48" : "#bc243b"', script)
+        self.assertIn("function headCamera", script)
+        self.assertIn("function applyCamera", script)
+        self.assertIn("applyCamera(ctx, camera, .34)", script)
+        self.assertIn("applyCamera(ctx, camera, 1)", script)
+        # The gloves hang off the same head, so the camera must be put
+        # away before they are drawn or they move twice.
+        hands = script.index("drawFirstPersonHands(ctx, payload, now)")
+        restore = script.index("ctx.restore();", script.index(
+            "applyCamera(ctx, camera, 1)"))
+        self.assertLess(restore, hands)
+
+    def test_the_players_gloves_come_from_the_approved_artwork(self):
+        """One right arm, cut in two at the wrist, mirrored for the left.
+
+        Two pieces because they move differently — the glove sits at the
+        tracked hand and the forearm stretches to reach it from off-frame
+        — and one arm because two would be two things to keep matching.
+        """
+        script = (ASSET_ROOT / "boxing" / "boxing.js").read_text(
+            encoding="utf-8")
+        self.assertIn("/assets/boxing/fp/${part}.webp", script)
+        self.assertIn("/assets/boxing/fp/manifest.json", script)
+        self.assertIn('if (side === "left") { ctx.translate(W, 0); '
+                      "ctx.scale(-1, 1); }", script)
         self.assertIn('training ? "#49cfe8" : "#164f9f"', script)
-        self.assertIn('drawDamageBody(ctx, "player"', script)
-        self.assertIn("510, 540], .62", script)
+        self.assertNotIn('drawDamageBody(ctx, "player"', script)
+
+        # **The negative y scale is the arm's roll.** The sprite is a right arm
+        # reaching to the right, so pointing it up and inward takes it past
+        # vertical and lands its top edge underneath — which shows up as both
+        # arms upside down *and* as the pair swapped, because an arm reflected
+        # along its own length is the other arm. Both were reported from the
+        # screen; neither is visible in any other test.
+        self.assertIn("ctx.scale(armLength / axisLength, "
+                      "-scale * FP_ARM_WIDTH);", script)
+        self.assertIn("ctx.scale(scale, -scale);", script)
+
+        manifest = json.loads(
+            (ASSET_ROOT / "boxing" / "fp" / "manifest.json").read_text(
+                encoding="utf-8"))
+        # The renderer rotates the glove about its wrist and stretches the
+        # forearm between two named points. A missing anchor would not
+        # fail — it would hang a glove off the side of its own arm.
+        self.assertEqual(manifest["glove"]["wrist"][0], 0)
+        self.assertEqual(manifest["forearm"]["elbow"][0], 0)
+        self.assertEqual(manifest["forearm"]["wrist"][0],
+                         manifest["forearm"]["width"])
+
+    def test_a_punch_that_lands_on_the_player_is_taken_by_the_view(self):
+        """There is no body on screen to flinch, so the picture has to."""
+        script = (ASSET_ROOT / "boxing" / "boxing.js").read_text(
+            encoding="utf-8")
+        self.assertIn("function hitFlash", script)
+        self.assertIn("now < hitFlashUntil", script)
 
     def test_boxing_uses_jointed_reference_arms_and_three_lanes(self):
         script = (ASSET_ROOT / "boxing" / "boxing.js").read_text(
@@ -152,8 +299,9 @@ class TestBundledGameAssets(unittest.TestCase):
         self.assertIn("function muscleSegment", script)
         self.assertIn("function drawAnimeArm", script)
         self.assertIn("drawAnimeArm(ctx, shoulder, elbow, wrist", script)
-        self.assertIn('smoothLane("player", playerLane', script)
+        # Only the opponent has lanes now; the player's lane is the camera.
         self.assertIn('smoothLane("opponent", laneIndex(ai.lane)', script)
+        self.assertNotIn('smoothLane("player"', script)
         self.assertNotIn("function arm(ctx", script)
 
     def test_boxing_uses_complete_baked_damage_images_not_canvas_overlays(self):
@@ -164,7 +312,7 @@ class TestBundledGameAssets(unittest.TestCase):
         self.assertIn("function drawDamageBody", script)
         self.assertNotIn("function drawInjury", script)
         page = (ASSET_ROOT.parent / "index.html").read_text(encoding="utf-8")
-        self.assertIn('/assets/boxing/boxing.js?v=20260816-7', page)
+        self.assertIn('/assets/boxing/boxing.js?v=20260818-2', page)
 
     def test_boxing_action_feedback_is_small_and_bottom_centred(self):
         page = (ASSET_ROOT.parent / "index.html").read_text(encoding="utf-8")
@@ -189,15 +337,16 @@ class TestBundledGameAssets(unittest.TestCase):
     def test_boxing_maps_motion_to_complete_pose_matrix_fighters(self):
         script = (ASSET_ROOT / "boxing" / "boxing.js").read_text(
             encoding="utf-8")
-        self.assertIn("function playerPoseFor", script)
         self.assertIn("function opponentPoseFor", script)
         self.assertIn("function drawPoseBody", script)
         self.assertIn(
             "/assets/boxing/poses/matrix/${kind}/${pose}/${key}.webp", script)
-        self.assertIn("left_straight_${target}", script)
-        self.assertIn("right_hook_${target}", script)
-        for pose in ("high_guard", "dodge_left", "duck", "lean_back",
-                     "knockout"):
+        # The opponent's twenty poses are still driven by live AI state.
+        # The player's twenty-one are not: nothing on screen is the player.
+        self.assertIn('drawPoseBody(ctx, "opponent"', script)
+        self.assertNotIn('drawPoseBody(ctx, "player"', script)
+        for pose in ("high_guard", "body_guard", "dodge_left", "dodge_right",
+                     "head_hit_right", "body_hit", "parried", "knockout"):
             self.assertIn(f'"{pose}"', script)
 
     def test_boxing_pose_damage_matrix_is_complete(self):

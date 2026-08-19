@@ -1,7 +1,7 @@
 # Asset licences
 
 Most Fruit Ninja visuals and every sound are still generated at runtime by
-code in this repository. The exceptions are the ninja-head art and a retained
+code in this repository. The exceptions are the Boxing artwork and a retained
 copy of the MediaPipe runtime/model used by the former palm-click control.
 They are recorded here so their provenance remains clear while deployed
 devices transition to the Hailo arms-crossed gesture.
@@ -10,10 +10,10 @@ devices transition to the Hailo arms-crossed gesture.
 
 | File(s) | Author / source | Licence | Use and modifications |
 |---|---|---|---|
-| `aipi5/ui/web/assets/fruit-ninja/ninja-head.png` | Original output generated with OpenAI image generation for this project. The user-supplied Freepik picture was a style reference only. | Generated project artwork; no third-party pixels are embedded. | Chroma-key background removed, transparent bounds cropped, and resized to 512 px. Drawn over the live pose-driven neck; the body remains procedural. |
 | `aipi5/ui/web/assets/boxing/arena-anime-v2.png` | Original output generated with OpenAI image generation for this project. The user-supplied boxing screenshots were composition references only. | Generated project artwork; no third-party pixels are embedded. | Empty 2.5D anime boxing arena background. Fighters, animation, impacts, lighting changes and HUD remain live Canvas/DOM layers. |
 | `aipi5/ui/web/assets/boxing/player-red-torso.png`, `opponent-blue-torso.png` | Original outputs generated with OpenAI image generation for this project from the user-supplied red-player / blue-opponent design sheet. | Generated project artwork; no source-sheet pixels are embedded. | Chroma-key backgrounds removed with a soft alpha matte. Used as the clean sources for the baked damage bodies; live arms, gloves, motion and reactions remain Canvas-driven. |
 | `artwork/boxing-damage/*.png` | Original damage progression and source artwork generated with OpenAI image generation for this project using the approved generated fighters as style references. | Generated project artwork; no third-party pixels are embedded. | Project-bound source sheets for the four-location damage matrix. |
+| `aipi5/ui/web/assets/boxing/fp/glove.webp`, `forearm.webp` | Deterministic crops of the generated `06-right-straight-head` pose sheet, whose rear-view fighter has one arm extended away from the camera. | Generated project artwork. | The player's own glove and forearm for the first-person view, cut apart at the wrist and stored at 2x by `scripts/build_boxing_first_person.py`. One right arm; the left is the same sprite reflected at draw time. |
 | `aipi5/ui/web/assets/boxing/damage/{opponent,player}/*.webp` | Deterministic derivatives of the generated transparent fighter bodies and generated damage art direction. | Generated project artwork. | 256 complete opponent bodies and 16 meaningful rear-player bodies. Bruising, swelling and restrained stage-three bleeding are baked into the body pixels; runtime Canvas overlays are not used. |
 | `artwork/boxing-poses/{previews,sheets,transparent-sheets}/*.png` | Original outputs generated with OpenAI image generation for this project from the user-supplied red-player / blue-opponent design sheet and approved preview direction. | Generated project artwork; no source-sheet pixels are embedded. | Project-bound sources for 21 paired action/reaction sheets. Flat chroma backgrounds were removed with the ImageGen soft-matte helper before deterministic splitting and registration. |
 | `aipi5/ui/web/assets/boxing/poses/**` | Deterministic derivatives of the generated full-body pose sheets and approved damage progression. | Generated project artwork. | 41 clean full-body pose bases and 5,456 complete pose/damage WebPs: 21 rear-player poses × 16 visible shoulder states, plus 20 front-opponent poses × 256 four-location states. Runtime selects whole images and does not overlay bruises or construct fighter arms. |
@@ -45,6 +45,20 @@ No browser hand model runs and camera frames are not sent to any service.
 | Fruit-slicing gameplay shape and the original launch-speed range | [`hailo-ai/hailo-rpi5-examples`](https://github.com/hailo-ai/hailo-rpi5-examples) | MIT | Design reference only. Physics and swept collision were independently implemented. |
 | Constants for decoding YOLOv8-pose output tensors | `/usr/include/hailo/tappas/pose_estimation/yolov8pose_postprocess.cpp` | LGPL | Consulted for anchor strides and channel layout; the NumPy decoder is independent. |
 | `yolov8s_pose_h10.hef` | Debian package `hailo-models` on the device | Vendor licence, as installed | Loaded from `/usr/share/hailo-models/`; not vendored here. |
+
+## Yoga Coach
+
+The Yoga Coach contains no bundled artwork at all. The coach, her studio, the
+mat and every pose are drawn at runtime by `aipi5/ui/web/assets/yoga/yoga.js`
+from the same bone tables the Pi scores against, so there is nothing to license
+and nothing to preload. Pose names and their Sanskrit names are the common
+vocabulary of the practice and are not anyone's property.
+
+Tummee's beginner sequence library was read as a reference for class *structure*
+— full-body warm-up, standing sequence, a progression into Tree Pose, hip and
+chest opening, cooldown. No Tummee image, sequence file, text or artwork is
+copied or bundled; the pose choices, holds, transitions, coach and lesson data
+here are this project's own.
 
 ## Emoji and trademark note
 

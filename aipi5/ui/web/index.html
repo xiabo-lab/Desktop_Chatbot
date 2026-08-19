@@ -647,6 +647,158 @@
 
   /* ── the camera page ─────────────────────────────────────────── */
 
+
+  /* -- Yoga Coach ----------------------------------------------
+     The coach and her studio are drawn on the shared canvas; everything with
+     words in it is HTML over the top, for the reason the Fruit Ninja HUD is:
+     none of it moves, and re-rasterising a pose name sixty times a second is
+     work for nothing.
+
+     The one element here that is neither is `#yoga-camera`, which is the live
+     Brio feed. It is the only game screen on this device that shows the room
+     during play, and it is not decoration - a player two metres from the panel
+     being told to straighten their back cannot see their own back. Everything
+     else is arranged around it and nothing is allowed on top of it. */
+  #yoga-hud { display: none; position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+  #game-stage.yoga-active { background: #14102a; }
+  #game-stage.yoga-active .game-hud,
+  #game-stage.yoga-active #game-banner { display: none; }
+  #game-stage.yoga-active.yoga-playing #yoga-hud { display: block; }
+  #game-stage.yoga-active #sheet-over .sheet-rows,
+  #game-stage.yoga-active #over-detail { display: none; }
+  #game-stage:not(.yoga-active) .yoga-results { display: none; }
+
+  #yoga-bar {
+    position: absolute; left: 0; right: 0; top: 0; height: 74px;
+    display: flex; align-items: center; gap: 26px; padding: 0 30px;
+    background: linear-gradient(180deg, rgba(10,7,22,.86), rgba(10,7,22,0));
+    text-shadow: 0 2px 7px rgba(0,0,0,.8);
+  }
+  #yoga-segment {
+    font-size: 15px; letter-spacing: .18em; text-transform: uppercase;
+    color: #9ad9ff; font-weight: 700;
+  }
+  #yoga-count { font-size: 15px; letter-spacing: .14em; color: var(--ink-dim); font-weight: 600; }
+  #yoga-bar .spacer { flex: 1; }
+  #yoga-clock {
+    font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums;
+    line-height: 1.05;
+  }
+  #yoga-clock::before {
+    content: "LESSON"; display: block; font-size: 11px; letter-spacing: .18em;
+    color: var(--ink-dim); font-weight: 700;
+  }
+  #yoga-score {
+    font-size: 21px; font-weight: 700; letter-spacing: .1em; color: #ffd88a;
+    min-width: 150px; text-align: right;
+  }
+
+  /* The pose card. Top-left over the coach, where it is read once at the start
+     of each pose and then ignored - so it sits clear of where her arms go
+     rather than centred over them. */
+  #yoga-card {
+    position: absolute; left: 24px; top: 86px; width: 320px;
+    padding: 18px 22px 20px; border-radius: 16px;
+    background: linear-gradient(150deg, rgba(30,22,54,.92), rgba(14,10,28,.9));
+    border: 1px solid rgba(154,217,255,.24);
+    box-shadow: 0 18px 46px rgba(0,0,0,.45);
+  }
+  #yoga-name { font-size: 30px; font-weight: 700; line-height: 1.1; }
+  #yoga-sanskrit {
+    font-size: 15px; font-style: italic; color: #b79ce0; margin-top: 2px;
+  }
+  #yoga-instruction { font-size: 18px; line-height: 1.4; margin-top: 12px; }
+  #yoga-cue { font-size: 18px; line-height: 1.4; color: var(--ink-dim); margin-top: 4px; }
+  #yoga-hold {
+    margin-top: 14px; font-size: 16px; font-weight: 700; letter-spacing: .13em;
+    color: #5fe3b4;
+  }
+  /* The instruction is for the transition, when the player is watching rather
+     than working. During the hold the card keeps only the pose name and the
+     time, and the coach gets the space back. */
+  #game-stage.yoga-active:not(.yoga-reading) #yoga-sanskrit,
+  #game-stage.yoga-active:not(.yoga-reading) #yoga-instruction,
+  #game-stage.yoga-active:not(.yoga-reading) #yoga-cue { display: none; }
+  #game-stage.yoga-active:not(.yoga-reading) #yoga-hold { margin-top: 8px; }
+  #yoga-card { transition: width 200ms ease; }
+
+  #yoga-camera {
+    position: absolute; right: 24px; top: 88px;
+    width: 600px; height: 450px; object-fit: cover; display: none;
+    border-radius: 16px; background: #0a0716;
+    border: 2px solid rgba(154,217,255,.3);
+    box-shadow: 0 20px 50px rgba(0,0,0,.5);
+  }
+  #game-stage.yoga-playing #yoga-camera { display: block; }
+  #yoga-camera-label {
+    position: absolute; right: 40px; top: 104px;
+    font-size: 12px; letter-spacing: .18em; font-weight: 700;
+    color: rgba(255,255,255,.72); text-shadow: 0 2px 6px #000;
+  }
+
+  /* One correction, along the bottom, big enough to read from where the player
+     is standing. Never a list: somebody holding Warrior II cannot act on three
+     things at once. */
+  #yoga-feedback {
+    position: absolute; left: 0; right: 0; bottom: 18px; text-align: center;
+    font-size: 30px; font-weight: 600; min-height: 40px; padding: 9px 0;
+    text-shadow: 0 2px 10px rgba(0,0,0,.85);
+    /* The correction crosses the coach's mat, which is the brightest thing on
+       the screen. Amber text on orange is the one combination on this page
+       that is genuinely hard to read from two metres away, so the line carries
+       its own backing rather than relying on a shadow. */
+    background: linear-gradient(90deg, rgba(8,5,18,0), rgba(8,5,18,.82) 18%,
+                rgba(8,5,18,.82) 82%, rgba(8,5,18,0));
+    transition: color 160ms ease;
+  }
+  #yoga-feedback.praise { color: #5fe3b4; }
+  #yoga-feedback.urgent { color: #ffcc5c; }
+
+  #yoga-result {
+    position: absolute; left: 24px; top: 214px; width: 320px;
+    padding: 16px 22px; border-radius: 16px; opacity: 0;
+    background: linear-gradient(140deg, rgba(46,120,96,.94), rgba(14,32,28,.94));
+    border: 1px solid rgba(95,227,180,.5);
+    transition: opacity 220ms ease, transform 220ms ease;
+    transform: translateY(10px);
+  }
+  #yoga-result.on { opacity: 1; transform: translateY(0); }
+  #yoga-result .band {
+    display: block; font-size: 15px; letter-spacing: .18em; font-weight: 700;
+    color: #b9ffe6;
+  }
+  #yoga-result .value {
+    display: block; font-size: 52px; font-weight: 700; line-height: 1.05;
+  }
+  #yoga-result .which { display: block; font-size: 17px; color: #d6f6ec; }
+
+  #sheet-yoga { background: radial-gradient(circle at 50% 32%, rgba(56,40,96,.6), rgba(9,7,18,.96) 66%); }
+  #sheet-yoga h2 { font-size: 52px; }
+  .yoga-level-grid { display: flex; gap: 20px; margin: 12px 0 6px; }
+  .game-sheet .yoga-level {
+    width: 292px; height: 236px; padding: 22px; display: flex;
+    flex-direction: column; gap: 8px; border-color: rgba(154,217,255,.36);
+    background: linear-gradient(150deg, rgba(38,28,66,.96), rgba(12,9,24,.96));
+  }
+  .yoga-level .glyph { font-size: 44px; }
+  .yoga-level strong { font-size: 26px; }
+  .yoga-level small { font-size: 16px; line-height: 1.35; color: var(--ink-dim); }
+  .game-sheet .yoga-level.selected { border-color: #5fe3b4; color: #fff; }
+  .yoga-results { width: min(680px, 90vw); margin: 4px 0; }
+  .yoga-results .verdict {
+    font-size: 40px; font-weight: 700; color: #5fe3b4; margin-bottom: 10px;
+  }
+  .yoga-results .row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 9px 4px; border-bottom: 1px solid rgba(255,255,255,.09);
+    font-size: 19px; color: var(--ink-dim);
+  }
+  .yoga-results .row b { font-size: 21px; color: #fff; font-weight: 600; }
+  #game-stage.yoga-active #game-debug { top: 112px; right: 20px; bottom: auto; z-index: 8; }
+  /* Pause belongs to a class in progress, not to the level sheet or to
+     Yoga Complete, where it sits on top of the buttons that matter. */
+  #game-stage.yoga-active:not(.yoga-playing) #game-pause { display: none; }
+
   #camera-stage {
     flex: 1; margin: 16px 0 0; position: relative;
     border-radius: 16px; overflow: hidden; background: #05070a;
@@ -1672,6 +1824,49 @@
       <button id="boxing-mode-back">Back to Games</button>
     </div>
 
+
+    <!-- Yoga Coach. The live camera is an element rather than a canvas draw
+         because it is an MJPEG stream the browser decodes for free; putting it
+         through the canvas would cost a full-frame copy sixty times a second
+         to show exactly the same pixels. -->
+    <div id="yoga-hud" aria-live="polite">
+      <div id="yoga-bar">
+        <div>
+          <div id="yoga-segment"></div>
+          <div id="yoga-count"></div>
+        </div>
+        <div class="spacer"></div>
+        <div id="yoga-clock">20:00</div>
+        <div class="spacer"></div>
+        <div id="yoga-score">SCORE &mdash;</div>
+      </div>
+      <div id="yoga-card">
+        <div id="yoga-name"></div>
+        <div id="yoga-sanskrit"></div>
+        <div id="yoga-instruction"></div>
+        <div id="yoga-cue"></div>
+        <div id="yoga-hold"></div>
+      </div>
+      <div id="yoga-result"></div>
+      <div id="yoga-camera-label">YOU</div>
+      <div id="yoga-feedback"></div>
+    </div>
+    <img id="yoga-camera" alt="">
+
+    <!-- Yoga picks a lesson before the shared X-to-start screen, exactly as
+         Boxing picks a mode: an X held over this sheet must not start a class
+         nobody has chosen. -->
+    <div class="game-sheet" id="sheet-yoga">
+      <h2>YOGA COACH</h2>
+      <p>Twenty minutes, warm-up to cooldown. Choose your level.</p>
+      <div class="yoga-level-grid">
+        <button class="yoga-level" data-yoga-difficulty="beginner"><span class="glyph">🌱</span><strong>BEGINNER</strong><small>Gentle standing poses, longer instructions, generous scoring.</small></button>
+        <button class="yoga-level" data-yoga-difficulty="intermediate"><span class="glyph">🌿</span><strong>INTERMEDIATE</strong><small>Longer holds, deeper ranges, balance on both sides.</small></button>
+        <button class="yoga-level" data-yoga-difficulty="advanced"><span class="glyph">🔥</span><strong>ADVANCED</strong><small>Deep holds, close scoring, and the balances at the peak.</small></button>
+      </div>
+      <button id="yoga-back">Back to Games</button>
+    </div>
+
     <!-- Start. Section 20: a preview, a detection state, and a START that
          stays disabled until somebody is really there. -->
     <div class="game-sheet on" id="sheet-start">
@@ -1703,6 +1898,7 @@
       </div>
       <p id="over-detail"></p>
       <div class="boxing-results" id="boxing-results"></div>
+      <div class="yoga-results" id="yoga-results"></div>
       <div class="gesture-help" id="over-gesture-help">
         <span class="step">X</span><span>Cross both arms into an X to play again</span>
       </div>
@@ -5259,8 +5455,9 @@ function syncGestureControls(state) {
   const game = state.game || {};
   const motionFailed = state.motion && state.motion.error;
   const boxingNeedsMode = gameId === "boxing" && !game.mode;
+  const yogaNeedsLevel = gameId === "yoga" && !game.difficulty;
   const next = motionFailed ? "" :
-    game.state === "ready" && !boxingNeedsMode ? "start" :
+    game.state === "ready" && !boxingNeedsMode && !yogaNeedsLevel ? "start" :
     game.state === "over" ? "over" : "";
   if (next !== gestureMode) {
     gestureMode = next;
@@ -5326,6 +5523,7 @@ async function startLibrary() {
         ? `<span class="best">Best ${game.best}</span>` : "";
       const play = game.playable
         ? (game.id === "boxing" ? "CHOOSE MODE" :
+           game.id === "yoga" ? "CHOOSE LEVEL · 20 MIN" :
           `PLAY · ${Math.round((game.round_seconds || 120) / 60)} MIN`)
         : "Coming Soon";
       tile.innerHTML = best +
@@ -5362,6 +5560,7 @@ async function openGame(id, name) {
   gameEl("game-detected").className = "no";
   show("game");
   if (window.BoxingUI) window.BoxingUI.onOpen(id);
+  if (window.YogaUI) window.YogaUI.onOpen(id);
 
   const answer = await gamePost("/api/game/open", { game: id });
   gameOpening = false;
@@ -5401,6 +5600,7 @@ async function openGame(id, name) {
 function adoptGame(id) {
   gameId = id;
   if (window.BoxingUI) window.BoxingUI.onOpen(id);
+  if (window.YogaUI) window.YogaUI.onOpen(id);
   gameEl("game-preview").src = "/api/game/preview?t=" + Date.now();
   show("game");
   openGameStream();
@@ -5463,17 +5663,17 @@ function stopGame() {
   if (gameFrame !== null) { cancelAnimationFrame(gameFrame); gameFrame = null; }
   stopGestureControls();
   if (window.BoxingUI) window.BoxingUI.stop();
+  if (window.YogaUI) window.YogaUI.stop();
   // The preview is an <img> on a multipart stream: it keeps reading the camera
   // for as long as the element has that src, whether or not anybody can see
   // it. Same trap as the camera page's.
   gameEl("game-preview").removeAttribute("src");
   gameState = null;
   resetHandTrails();
-  // Everything the page was drawing goes with the game. Particles and a
-  // shadow left behind would be the first thing painted on the next round's
-  // very first frame, before any pose has arrived.
+  // Everything the page was drawing goes with the game. Particles left behind
+  // would be the first thing painted on the next round's very first frame,
+  // before any pose has arrived.
   resetEffects();
-  resetShadow();
   resetBanner();
   gameId = "";
   // Fire and forget. The manager's watchdog would give the hardware back
@@ -5534,6 +5734,41 @@ function applyGameState(state) {
   const game = state.game;
   const pose = state.pose;
 
+  if (gameId === "yoga" && window.YogaUI) {
+    window.YogaUI.applyState(state);
+    const yogaMotion = state.motion;
+    if (yogaMotion && yogaMotion.error) {
+      gameEl("error-title").textContent = "Camera disconnected";
+      gameEl("error-detail").textContent = yogaMotion.error;
+      showSheet("error");
+    } else if (state.game) {
+      // The level sheet, then the shared start screen, then nothing at all
+      // while the class runs - which is what leaves the coach and the live
+      // feed uncovered - then Yoga Complete.
+      showSheet({ ready: state.game.difficulty ? "start" : "yoga",
+                  paused: "paused", over: "over",
+                  playing: "" }[state.game.state]);
+    }
+    if (state.game && state.game.state === "ready") {
+      // `pose.ready` is both shoulders, which is all Fruit Ninja and Boxing
+      // need. Yoga also needs ankles, and only the session can say whether it
+      // has them - so the two conditions are ANDed here rather than by
+      // redefining readiness for every game in `motion/`.
+      const detected = gameEl("game-detected");
+      const framed = !state.game.framing;
+      const ready = !!(state.pose && state.pose.ready) && framed;
+      detected.textContent = ready ? "Player detected \u2713"
+        : state.game.framing
+          || (state.pose && state.pose.advice) || "Looking for a player\u2026";
+      detected.className = ready ? "yes" : "no";
+      gameEl("start-play").disabled = !ready;
+    }
+    syncGestureControls(state);
+    for (const event of state.events || []) handleGameEvent(event);
+    drawGameDebug(state);
+    return;
+  }
+
   if (gameId === "boxing" && window.BoxingUI) {
     window.BoxingUI.applyState(state);
     const boxingMotion = state.motion;
@@ -5558,11 +5793,6 @@ function applyGameState(state) {
     detected.className = ready ? "yes" : "no";
     gameEl("start-play").disabled = !ready;
   }
-
-  // The player's shadow. Fed from every snapshot rather than every render
-  // frame, because a new pose is the only thing that can change it — the
-  // render loop smooths towards whatever landed here.
-  if (pose && pose.player) updateShadow(pose.player.body, performance.now());
 
   if (game) {
     gameEl("start-round-copy").textContent = ` · ${roundLabel(game.duration)}`;
@@ -5609,6 +5839,10 @@ function applyGameState(state) {
 // the render loop runs sixty times a second — anything driven from a snapshot
 // field instead of from an event ends up firing every frame it is true for.
 function handleGameEvent(e) {
+  if (gameId === "yoga" && window.YogaUI) {
+    window.YogaUI.handleEvent(e);
+    return;
+  }
   if (gameId === "boxing" && window.BoxingUI) {
     window.BoxingUI.handleEvent(e);
     return;
@@ -5825,7 +6059,7 @@ function resetBanner() {
 }
 
 function showSheet(which) {
-  for (const name of ["mode", "start", "paused", "over", "error"]) {
+  for (const name of ["mode", "yoga", "start", "paused", "over", "error"]) {
     gameEl("sheet-" + name).classList.toggle("on", name === which);
   }
 }
@@ -5851,6 +6085,10 @@ function startGameRender() {
 function renderGame(now) {
   const canvas = gameEl("game-canvas");
   const ctx = canvas.getContext("2d");
+  if (gameId === "yoga" && window.YogaUI) {
+    window.YogaUI.render(ctx, now, gameState, gameFps);
+    return;
+  }
   if (gameId === "boxing" && window.BoxingUI) {
     window.BoxingUI.render(ctx, now, gameState, gameFps);
     return;
@@ -5879,8 +6117,7 @@ function renderGame(now) {
   // by the same cut fly at layer 8, in front of everything, where section 31
   // puts them.
   drawWood(ctx);                                   // 1
-  drawPlayerShadow(ctx, now);                      // 2
-  drawSplats(ctx);                                 // 3
+  drawSplats(ctx);                                 // 2
   for (const item of game.fruit || []) {
     // Sliced fruit are skipped: the halves are simulated here, with their own
     // velocities and spins, from the moment the slice event arrived. Drawing
@@ -5927,8 +6164,8 @@ function buildWood() {
   const c = wood.getContext("2d");
 
   // The base: warm brown, lit from above and behind the player, so the middle
-  // of the screen — where the fruit and the shadow are — is the lightest part
-  // and the corners fall away.
+  // of the screen — where the fruit are — is the lightest part and the corners
+  // fall away.
   const base = c.createRadialGradient(GAME_W / 2, GAME_H * 0.42, 60,
                                       GAME_W / 2, GAME_H * 0.5, GAME_W * 0.78);
   base.addColorStop(0, "#63301c");
@@ -5968,9 +6205,8 @@ function buildWood() {
   }
 
   // Section 3's "subtle black grid/panel lines". A wide lattice at very low
-  // alpha — visible enough to give the eye something to judge depth against
-  // when the player's shadow moves over it, faint enough not to be noise
-  // behind a fruit.
+  // alpha — visible enough to give the eye something to judge depth against,
+  // faint enough not to be noise behind a fruit.
   c.strokeStyle = "rgba(0,0,0,0.16)";
   c.lineWidth = 1;
   for (let x = 0; x <= GAME_W; x += 64) {
@@ -5995,456 +6231,6 @@ function buildWood() {
 function drawWood(ctx) {
   if (!woodCanvas) woodCanvas = buildWood();
   ctx.drawImage(woodCanvas, 0, 0);
-}
-
-// ── the player's shadow ─────────────────────────────────────────────
-//
-// Sections 4 and 5. The player's own silhouette, behind the fruit, so that
-// they can see how their body maps into the game — which is the single thing
-// that was hardest about the black-background version, where a hand that left
-// the frame simply stopped existing with no clue as to which way to move.
-//
-// **Built from pose keypoints, not from the camera image.** Two reasons, and
-// the second is the one that decided it. Section 4 forbids showing the room —
-// it is a shared living space and this screen is on all day. But even if it
-// did not, person segmentation is a second model, and the Hailo-10H allows one
-// VDevice for the whole machine: the mask would have to timeshare with the
-// pose model that the blade depends on. A silhouette assembled from joints the
-// accelerator has already produced costs nothing extra.
-//
-// **Drawn small and scaled up, rather than blurred.** The shadow wants soft
-// edges (section 5), and `ctx.filter = "blur(…)"` on a 1280x800 canvas is tens
-// of milliseconds on this hardware — it would halve the frame rate on its own.
-// Painting into a quarter-size buffer and letting `drawImage` scale it back up
-// gives bilinear softening for free, and the cost is a 320x200 fill.
-
-//: The offscreen buffer, upscaled 2x on the way out. Bigger than the 320x200
-//: it started at, because the figure now has a sash and two ribbons on it and
-//: a 4x upscale turned both into a smear — the softening that flattered a
-//: plain silhouette destroys anything with a feature in it.
-const SHADOW_W = 640, SHADOW_H = 400;
-//: Section 5 asked for 30-50% and a plain shadow. The ninja is a *figure*
-//: rather than a shadow, and a figure at 42% reads as a smudge, so it sits a
-//: little higher. Not higher still, for a reason that was measured rather than
-//: guessed: a bomb is a dark sphere, and the first real round was lost to
-//: bombs hiding inside the player's own silhouette.
-const SHADOW_ALPHA = 0.62;
-//: How large the figure is drawn against life size. See the blit at the foot
-//: of `drawPlayerShadow` for why this is not 1.0.
-const SHADOW_SCALE = 0.72;
-//: The ninja's colours. Black rather than grey — at 55% over warm wood a true
-//: black reads as a dark figure, while a grey reads as fog.
-const NINJA_CLOTH = "#0a0a0f";
-const NINJA_SASH = "#b3231f";
-//: The eye slit. Warm rather than white, so it reads as a face in shadow.
-const NINJA_EYES = "#e8cba4";
-// Original generated artwork based on the supplied image as a style reference.
-// The live pose still owns its position, angle and all body geometry.
-const ninjaHead = new Image();
-ninjaHead.src = "/assets/fruit-ninja/ninja-head.png";
-//: EMA weight on each new pose for the shadow only. Much heavier smoothing
-//: than the wrists get (0.55), and it costs nothing that matters: the blade
-//: must not lag the hand, but a shadow that lags by 60 ms is simply a calm
-//: shadow. Anything less and the silhouette shivers, which draws the eye to
-//: exactly the layer that is supposed to stay in the background.
-const SHADOW_SMOOTH = 0.3;
-
-let shadowCanvas = null;
-let shadowJoints = {};     // smoothed, normalised
-let shadowSeenAt = 0;
-
-function resetShadow() { shadowJoints = {}; shadowSeenAt = 0; }
-
-// Fixed anime proportions. Camera distance and a player's build never change
-// these numbers; live pose data supplies only position and segment direction.
-// This is animation retargeting, not a silhouette of the person in the room.
-const NINJA_RIG = Object.freeze({
-  shoulderHalf: 38,
-  hipHalf: 22,
-  torso: 70,
-  headRadius: 25,
-  headLift: 27,
-  upperArm: 52,
-  forearm: 47,
-  thigh: 66,
-  calf: 61,
-  cloth: 20,
-});
-
-// Fold this frame's joints into the smoothed source pose. Joints the Pi omits
-// are dropped rather than frozen; the anime rig gives a missing limb a neutral
-// direction until tracking returns.
-function updateShadow(body, now) {
-  if (!body) return;
-  const next = {};
-  for (const name in body) {
-    const [x, y] = body[name];
-    const was = shadowJoints[name];
-    next[name] = was
-      ? [was[0] + SHADOW_SMOOTH * (x - was[0]), was[1] + SHADOW_SMOOTH * (y - was[1])]
-      : [x, y];
-  }
-  shadowJoints = next;
-  shadowSeenAt = now;
-}
-
-function retargetNinjaPose(source) {
-  const rawPoint = (joint) => joint
-    ? [joint[0] * SHADOW_W, joint[1] * SHADOW_H]
-    : null;
-  const midpoint = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-  const direction = (a, b, fallback) => {
-    const pa = rawPoint(a), pb = rawPoint(b);
-    if (!pa || !pb) return fallback;
-    const dx = pb[0] - pa[0], dy = pb[1] - pa[1];
-    const length = Math.hypot(dx, dy);
-    return length > 2 ? [dx / length, dy / length] : fallback;
-  };
-  const extend = (origin, vector, length) => [
-    origin[0] + vector[0] * length,
-    origin[1] + vector[1] * length,
-  ];
-
-  const rawLeftShoulder = rawPoint(source.left_shoulder);
-  const rawRightShoulder = rawPoint(source.right_shoulder);
-  if (!rawLeftShoulder || !rawRightShoulder) return null;
-
-  const shoulderCentre = midpoint(rawLeftShoulder, rawRightShoulder);
-  const side = direction(source.left_shoulder, source.right_shoulder, [1, 0]);
-  const rawLeftHip = rawPoint(source.left_hip);
-  const rawRightHip = rawPoint(source.right_hip);
-  const rawHipCentre = rawLeftHip && rawRightHip
-    ? midpoint(rawLeftHip, rawRightHip)
-    : null;
-  let down = rawHipCentre
-    ? [rawHipCentre[0] - shoulderCentre[0], rawHipCentre[1] - shoulderCentre[1]]
-    : [0, 1];
-  const downLength = Math.hypot(down[0], down[1]);
-  down = downLength > 2 ? [down[0] / downLength, down[1] / downLength] : [0, 1];
-
-  const hipCentre = extend(shoulderCentre, down, NINJA_RIG.torso);
-  const hipSide = direction(source.left_hip, source.right_hip, side);
-  const rig = {
-    left_shoulder: extend(shoulderCentre, side, -NINJA_RIG.shoulderHalf),
-    right_shoulder: extend(shoulderCentre, side, NINJA_RIG.shoulderHalf),
-    left_hip: extend(hipCentre, hipSide, -NINJA_RIG.hipHalf),
-    right_hip: extend(hipCentre, hipSide, NINJA_RIG.hipHalf),
-  };
-
-  const leftUpper = direction(source.left_shoulder, source.left_elbow,
-                              [-0.74, 0.67]);
-  const rightUpper = direction(source.right_shoulder, source.right_elbow,
-                               [0.74, 0.67]);
-  rig.left_elbow = extend(rig.left_shoulder, leftUpper, NINJA_RIG.upperArm);
-  rig.right_elbow = extend(rig.right_shoulder, rightUpper, NINJA_RIG.upperArm);
-  rig.left_wrist = extend(
-    rig.left_elbow,
-    direction(source.left_elbow, source.left_wrist, [-0.28, 0.96]),
-    NINJA_RIG.forearm);
-  rig.right_wrist = extend(
-    rig.right_elbow,
-    direction(source.right_elbow, source.right_wrist, [0.28, 0.96]),
-    NINJA_RIG.forearm);
-
-  const leftThigh = direction(source.left_hip, source.left_knee, [-0.34, 0.94]);
-  const rightThigh = direction(source.right_hip, source.right_knee, [0.34, 0.94]);
-  rig.left_knee = extend(rig.left_hip, leftThigh, NINJA_RIG.thigh);
-  rig.right_knee = extend(rig.right_hip, rightThigh, NINJA_RIG.thigh);
-  rig.left_ankle = extend(
-    rig.left_knee,
-    direction(source.left_knee, source.left_ankle, [-0.10, 1]),
-    NINJA_RIG.calf);
-  rig.right_ankle = extend(
-    rig.right_knee,
-    direction(source.right_knee, source.right_ankle, [0.10, 1]),
-    NINJA_RIG.calf);
-
-  // The hood touches the shoulders. Nose and ear distance from the camera are
-  // intentionally ignored, eliminating the stretched neck seen previously.
-  const headCentre = extend(shoulderCentre, down, -NINJA_RIG.headLift);
-  rig.nose = headCentre;
-  rig.left_ear = extend(headCentre, side, -NINJA_RIG.headRadius * 0.55);
-  rig.right_ear = extend(headCentre, side, NINJA_RIG.headRadius * 0.55);
-  return rig;
-}
-
-function drawPlayerShadow(ctx, now) {
-  const tracked = shadowJoints;
-  const trackedLs = tracked.left_shoulder, trackedRs = tracked.right_shoulder;
-  // Both shoulders are the minimum for a body worth drawing. With one, the
-  // torso polygon degenerates into a sliver that reads as a glitch rather than
-  // as a person standing side-on.
-  if (!trackedLs || !trackedRs) return;
-  // A player who has just been lost keeps their shadow for a moment and fades
-  // it, rather than blinking out on a single dropped detection.
-  const age = now - shadowSeenAt;
-  const fade = age < 200 ? 1 : Math.max(0, 1 - (age - 200) / 500);
-  if (fade <= 0) return;
-
-  if (!shadowCanvas) {
-    shadowCanvas = document.createElement("canvas");
-    shadowCanvas.width = SHADOW_W; shadowCanvas.height = SHADOW_H;
-  }
-  const s = shadowCanvas.getContext("2d");
-  s.clearRect(0, 0, SHADOW_W, SHADOW_H);
-  s.fillStyle = NINJA_CLOTH;
-  s.strokeStyle = NINJA_CLOTH;
-  s.lineCap = "round";
-  s.lineJoin = "round";
-
-  const joints = retargetNinjaPose(tracked);
-  if (!joints) return;
-  const ls = joints.left_shoulder, rs = joints.right_shoulder;
-  const P = (j) => j;
-  const thick = NINJA_RIG.cloth;
-
-  const [lsx, lsy] = P(ls), [rsx, rsy] = P(rs);
-  const lh = joints.left_hip, rh = joints.right_hip;
-
-  // Tapered cloth limbs carry the soft, athletic outline of the reference;
-  // constant-width skeleton strokes made the old shadow look mechanical.
-  const limb = (a, b, widthA, widthB, bulge = 1,
-                colour = NINJA_CLOTH) => {
-    if (!a || !b) return;
-    const [ax, ay] = P(a), [bx, by] = P(b);
-    const dx = bx - ax, dy = by - ay;
-    const length = Math.max(1, Math.hypot(dx, dy));
-    const nx = -dy / length, ny = dx / length;
-    const bend = (widthA + widthB) * 0.08 * bulge;
-    const cx = (ax + bx) / 2 + nx * bend;
-    const cy = (ay + by) / 2 + ny * bend;
-    const mx = (ax + 2 * cx + bx) / 4;
-    const my = (ay + 2 * cy + by) / 4;
-    s.strokeStyle = colour;
-    s.lineCap = "round";
-    s.lineJoin = "round";
-
-    // The narrow stroke establishes a smooth complete limb. The wider first
-    // half overlaps it with a round cap, making loose cloth gather toward the
-    // body without exposing any polygon corners at shoulders, hips or knees.
-    s.lineWidth = widthB;
-    s.beginPath();
-    s.moveTo(ax, ay);
-    s.quadraticCurveTo(cx, cy, bx, by);
-    s.stroke();
-    s.lineWidth = widthA;
-    s.beginPath();
-    s.moveTo(ax, ay);
-    s.quadraticCurveTo((ax + cx) / 2, (ay + cy) / 2, mx, my);
-    s.stroke();
-  };
-
-  const [lhx, lhy] = P(lh), [rhx, rhy] = P(rh);
-
-  // A low, rounded crotch joins both thighs into the reference image's
-  // billowing harem-trouser silhouette instead of two separate stick legs.
-  const hipMidX = (lhx + rhx) / 2;
-  const hipMidY = (lhy + rhy) / 2;
-  s.fillStyle = NINJA_CLOTH;
-  s.beginPath();
-  s.moveTo(lhx - thick * 0.45, lhy - thick * 0.30);
-  s.quadraticCurveTo(hipMidX, hipMidY + thick * 1.12,
-                     rhx + thick * 0.45, rhy - thick * 0.30);
-  s.quadraticCurveTo(hipMidX, hipMidY - thick * 0.68,
-                     lhx - thick * 0.45, lhy - thick * 0.30);
-  s.closePath(); s.fill();
-
-  // Loose tapered trousers appear when those optional pose joints are in
-  // frame. A missing ankle costs only the calf and pointed foot.
-  for (const [hip, knee, ankle] of [
-    [lh, joints.left_knee, joints.left_ankle],
-    [rh, joints.right_knee, joints.right_ankle],
-  ]) {
-    if (!hip || !knee) continue;
-    limb(hip, knee, thick * 1.28, thick * 0.80, 1.55);
-    if (!ankle) continue;
-    limb(knee, ankle, thick * 0.82, thick * 0.26, 0.92);
-    const [kx, ky] = P(knee), [ax, ay] = P(ankle);
-    const angle = Math.atan2(ay - ky, ax - kx);
-    s.save(); s.translate(ax, ay); s.rotate(angle);
-    s.fillStyle = NINJA_CLOTH;
-    s.beginPath();
-    s.moveTo(-thick * 0.20, -thick * 0.22);
-    s.quadraticCurveTo(thick * 0.48, -thick * 0.34, thick * 0.82, 0);
-    s.quadraticCurveTo(thick * 0.34, thick * 0.34, -thick * 0.20, thick * 0.20);
-    s.closePath(); s.fill(); s.restore();
-  }
-
-  // Sleeves sit behind the tunic. Wide shoulder ends and soft outward curves
-  // give the arms the same loose-cloth weight as the reference poses.
-  limb(ls, joints.left_elbow, thick * 1.02, thick * 0.62, 1.22);
-  limb(joints.left_elbow, joints.left_wrist,
-       thick * 0.64, thick * 0.28, 1.0);
-  limb(rs, joints.right_elbow, thick * 1.02, thick * 0.62, 1.22);
-  limb(joints.right_elbow, joints.right_wrist,
-       thick * 0.64, thick * 0.28, 1.0);
-
-  // Rounded tunic: broad through the chest and tucked into a narrow sash.
-  // Drawing it over the sleeves hides mechanical-looking shoulder joints.
-  const shoulderMidX = (lsx + rsx) / 2;
-  const shoulderTop = Math.min(lsy, rsy) - thick * 0.30;
-  s.beginPath();
-  s.moveTo(lsx - thick * 0.40, lsy + thick * 0.05);
-  s.quadraticCurveTo(shoulderMidX, shoulderTop,
-                     rsx + thick * 0.40, rsy + thick * 0.05);
-  s.bezierCurveTo(rsx + thick * 0.50,
-                  rsy + (rhy - rsy) * 0.38,
-                  rhx + thick * 0.32, rhy - thick * 0.30,
-                  rhx + thick * 0.16, rhy + thick * 0.02);
-  s.quadraticCurveTo((lhx + rhx) / 2, Math.max(lhy, rhy) + thick * 0.30,
-                     lhx - thick * 0.16, lhy + thick * 0.02);
-  s.bezierCurveTo(lhx - thick * 0.32, lhy - thick * 0.30,
-                  lsx - thick * 0.50, lsy + (lhy - lsy) * 0.38,
-                  lsx - thick * 0.40, lsy + thick * 0.05);
-  s.closePath(); s.fill();
-  // ── the ninja, section 5 as the player asked for it ──────────────
-  //
-  // The figure behind the fruit is a hooded ninja rather than a plain grey
-  // silhouette: black cloth, a red sash at the waist, a headband whose two
-  // tails stream behind the head, and an eye slit. Live pose angles animate a
-  // fixed-proportion body; the face is original generated artwork made from
-  // the supplied picture as a style reference. See `ASSET_LICENSES.md`.
-
-  const now8 = now / 1000;
-
-  // Flat black mitts, as in the supplied reference. The bright blade markers
-  // are drawn later and remain the player's precise hand-position feedback.
-  for (const wrist of [joints.left_wrist, joints.right_wrist]) {
-    if (!wrist) continue;
-    const [wx, wy] = P(wrist);
-    s.fillStyle = NINJA_CLOTH;
-    s.beginPath(); s.arc(wx, wy, thick * 0.31, 0, Math.PI * 2); s.fill();
-  }
-
-  // The sash, across the waist and square to the torso, with a tail hanging
-  // off the player's left. Drawn from the hip line where it is known and from
-  // a point below the shoulders where it is not.
-  const waistX = (lhx + rhx) / 2, waistY = (lhy + rhy) / 2;
-  const hipAngle = Math.atan2(rhy - lhy, rhx - lhx);
-  const waistW = Math.hypot(rhx - lhx, rhy - lhy);
-  s.save();
-  s.translate(waistX, Math.min(waistY, SHADOW_H + thick));
-  s.rotate(hipAngle);
-  s.fillStyle = NINJA_SASH;
-  s.fillRect(-waistW * 0.62, -thick * 0.20, waistW * 1.24, thick * 0.44);
-  // The knot and its two short tails, offset to one side so the figure is not
-  // perfectly symmetrical — symmetry is what makes a drawn body look like a
-  // diagram.
-  s.beginPath();
-  s.ellipse(-waistW * 0.3, 0, thick * 0.17, thick * 0.26, 0, 0, Math.PI * 2);
-  s.fill();
-  for (const drop of [0.9, 1.35]) {
-    s.beginPath();
-    s.moveTo(-waistW * 0.3, 0);
-    s.quadraticCurveTo(-waistW * 0.42, thick * drop * 0.6,
-                       -waistW * 0.3 + Math.sin(now8 * 2.2 + drop) * thick * 0.2,
-                       thick * drop);
-    s.lineWidth = thick * 0.16;
-    s.strokeStyle = NINJA_SASH;
-    s.stroke();
-  }
-  s.restore();
-
-  // Neck, hood and headband. Their dimensions come only from NINJA_RIG.
-  const nose = joints.nose;
-  if (nose) {
-    const [nx, ny] = P(nose);
-    const midX = (lsx + rsx) / 2, midY = (lsy + rsy) / 2;
-    s.strokeStyle = NINJA_CLOTH;
-    s.lineWidth = thick * 0.72;
-    s.beginPath(); s.moveTo(midX, midY); s.lineTo(nx, ny); s.stroke();
-
-    const headR = NINJA_RIG.headRadius;
-    const cx = nx, cy = ny;
-    // Which way the head is turned, from the ears when both are visible.
-    // Used only to lean the hood and the eye slit; a wrong guess is a head
-    // slightly askew, not a broken figure.
-    const le = joints.left_ear, re = joints.right_ear;
-    const tilt = (le && re) ? Math.atan2(re[1] - le[1], re[0] - le[0]) : 0;
-
-    s.save();
-    s.translate(cx, cy);
-    s.rotate(tilt + Math.sin(now8 * 2.1) * 0.018);
-
-    if (ninjaHead.complete && ninjaHead.naturalWidth) {
-      // The sprite includes its two left-streaming ribbons. Its anchor is the
-      // centre of the eye opening (not the centre of the transparent image),
-      // so the player's nose remains exactly where the live pose placed it.
-      const headW = headR * 3.2;
-      const headH = headW * ninjaHead.naturalHeight / ninjaHead.naturalWidth;
-      s.drawImage(ninjaHead, -headW * 0.67, -headH * 0.53, headW, headH);
-    } else {
-      // Procedural fallback for the first frame or an asset-load failure.
-      // The hood has a peak at the crown and a short cowl over the shoulders.
-    s.fillStyle = NINJA_CLOTH;
-    s.beginPath();
-    s.ellipse(0, 0, headR * 0.92, headR * 1.12, 0, 0, Math.PI * 2);
-    s.fill();
-    s.beginPath();
-    s.moveTo(-headR * 0.8, headR * 0.5);
-    s.quadraticCurveTo(0, headR * 1.7, headR * 0.8, headR * 0.5);
-    s.quadraticCurveTo(0, headR * 1.05, -headR * 0.8, headR * 0.5);
-    s.fill();
-
-    // The headband, and the two tails that are the whole signature of the
-    // thing. They stream from the back of the head and wave on their own
-    // clock — a ninja standing still with two ribbons hanging limp looks
-    // wrong, and the player's head is mostly still while their arms do the
-    // work.
-    s.fillStyle = NINJA_SASH;
-    s.fillRect(-headR * 0.95, -headR * 0.52, headR * 1.9, headR * 0.34);
-    s.strokeStyle = NINJA_SASH;
-    s.lineCap = "round";
-    for (const [index, len] of [[0, 1.9], [1, 1.45]]) {
-      const wave = Math.sin(now8 * 3.1 + index * 1.7);
-      const wave2 = Math.sin(now8 * 2.3 + index * 2.4);
-      s.lineWidth = headR * (0.26 - index * 0.06);
-      s.beginPath();
-      s.moveTo(-headR * 0.85, -headR * 0.36);
-      s.quadraticCurveTo(-headR * (1.1 + len * 0.4), -headR * (0.5 + wave * 0.5),
-                         -headR * (0.8 + len), -headR * (0.1 + wave2 * 0.75));
-      s.stroke();
-    }
-
-    // The eye slit. One warm band across the mask, split by a bridge, which
-    // at this size is the difference between a face and a smudge.
-    s.fillStyle = NINJA_EYES;
-    s.fillRect(-headR * 0.62, -headR * 0.06, headR * 0.5, headR * 0.26);
-    s.fillRect(headR * 0.12, -headR * 0.06, headR * 0.5, headR * 0.26);
-    }
-    s.restore();
-  }
-
-  ctx.save();
-  ctx.globalAlpha = SHADOW_ALPHA * fade;
-  // The upscale is the blur. `imageSmoothingQuality` is a hint the browser is
-  // free to ignore, but where it is honoured it is the difference between a
-  // soft body and a visibly pixelated one.
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-
-  // **Drawn smaller than life, and anchored to the floor.**
-  //
-  // A player has to stand close enough for their wrists to reach the edges of
-  // the frame, because that is what makes the whole screen reachable — so a
-  // one-to-one silhouette is, correctly, enormous. Measured on the device: it
-  // filled two thirds of the play area, fruit had to be cut *on* it, and both
-  // rounds played so far lost about forty-five seconds to bombs hiding against
-  // black cloth.
-  //
-  // So the figure is scaled about the bottom of the screen and about the
-  // player's own centre line. Feet stay on the floor, the head comes down, and
-  // it reads as somebody standing a few paces back — which is what the arcade
-  // game it is imitating actually shows. The cost is that the ninja's hands no
-  // longer sit exactly under the blades, and that is the right trade: the
-  // blades are bright glowing markers with tails and are what the player
-  // tracks, while the figure is there to show the shape of the movement.
-  // Relative motion is preserved exactly; only the scale changes.
-  const centre = (trackedLs[0] + trackedRs[0]) / 2;
-  const dw = GAME_W * SHADOW_SCALE, dh = GAME_H * SHADOW_SCALE;
-  ctx.drawImage(shadowCanvas, 0, 0, SHADOW_W, SHADOW_H,
-                centre * GAME_W - centre * dw, GAME_H - dh, dw, dh);
-  ctx.restore();
 }
 
 // ── the effects ─────────────────────────────────────────────────────
@@ -7024,12 +6810,11 @@ const SHAPES = {
   // **The one shape that had to be redrawn after the first real round.**
   // A near-black sphere with a thin white highlight was perfectly legible on
   // the black background this game used to have — the highlight was the whole
-  // of it. On warm wood, with the player's own shadow lying across the middle
-  // of the screen, it is camouflage: dark grey on dark brown on dark brown.
-  // Measured, not guessed — the first person to play a full round hit **ten**
-  // bombs, which at five seconds each cost fifty seconds of a hundred and
-  // twenty second round, and a screenshot shows one sitting invisibly in the
-  // middle of their own silhouette.
+  // of it. On warm wood it is camouflage: dark grey on dark brown. Measured,
+  // not guessed — the first person to play a full round hit **ten** bombs,
+  // which at five seconds each cost fifty seconds of a hundred and twenty
+  // second round, and a screenshot shows one sitting invisibly against the
+  // background.
   //
   // So a bomb now announces itself with something the background cannot: a
   // pulsing warning ring and a burning fuse, both drawn additively. The body
@@ -7046,7 +6831,7 @@ const SHAPES = {
     ctx.globalCompositeOperation = "lighter";
     // A soft danger halo, so the *area* around a bomb is brighter than the
     // wood even where the body is darker than it. This is what makes it
-    // visible against the shadow, which is the case that actually failed.
+    // visible against dark grain, which is the case that actually failed.
     const halo = ctx.createRadialGradient(0, 0, r * 0.7, 0, 0, r * 1.9);
     halo.addColorStop(0, `rgba(255,80,40,${0.32 + 0.16 * pulse})`);
     halo.addColorStop(1, "rgba(255,80,40,0)");
@@ -7293,7 +7078,11 @@ function drawSlash(ctx, slash) {
   // `performance.now()`. Subtracting one from the other gives nonsense.
   ctx.save();
   ctx.strokeStyle = "rgba(255,255,255,0.55)";
-  ctx.lineWidth = 5;
+  // The blade's real thickness, so the overlay shows the *capsule* the Pi
+  // swept rather than its centre line. `lineCap = "round"` is what makes the
+  // ends hemispherical, which is exactly what `closest_distance` measures
+  // against a segment — the drawn shape and the tested shape are the same one.
+  ctx.lineWidth = 2 * BLADE_HALF_WIDTH_PX;
   ctx.lineCap = "round";
   ctx.beginPath();
   ctx.moveTo(slash.x1, slash.y1);
@@ -7326,6 +7115,19 @@ const TRAIL_MAX = 48;
 //: Radius of the outer glow. 3x the 34 px it was.
 const HAND_GLOW = 46;
 const HAND_CORE = 15;
+//: How much wider the blade is than the one this game shipped with.
+//:
+//: **The same number widens the collision test**, in
+//: `aipi5/games/fruit_ninja/collision.py::BLADE_HALF_WIDTH` — a streak drawn
+//: 54 px across that only cuts along its centre line is a game lying about
+//: where its blade is, and the complaint it produces ("it went straight
+//: through and nothing happened") is indistinguishable from dropped tracking.
+//: Change one and the other has to move with it.
+const BLADE_WIDTH_SCALE = 3;
+//: The half-width the Pi actually tests with, for the debug overlay only.
+//: Kept equal to `collision.BLADE_HALF_WIDTH` by hand; the snapshot does not
+//: carry it, because nothing the player sees depends on it.
+const BLADE_HALF_WIDTH_PX = 27;
 
 const handTrails = { left_wrist: [], right_wrist: [] };
 
@@ -7387,7 +7189,7 @@ function drawTrail(ctx, trail, colour, now) {
 
     // Squared, so the tail thins fast near the end and stays broad near the
     // head. Linear looked like a wedge rather than a streak.
-    const width = 2 + 16 * life * life;
+    const width = (2 + 16 * life * life) * BLADE_WIDTH_SCALE;
     ctx.strokeStyle = colour + alphaHex(0.55 * life);
     ctx.lineWidth = width;
     ctx.beginPath();
@@ -7404,7 +7206,7 @@ function drawTrail(ctx, trail, colour, now) {
     const life = 1 - Math.min(1, (now - a.t) / TRAIL_MS);
     if (life <= 0.35) continue;
     ctx.globalAlpha = 0.5 * (life - 0.35) / 0.65;
-    ctx.lineWidth = 1 + 4 * life * life;
+    ctx.lineWidth = (1 + 4 * life * life) * BLADE_WIDTH_SCALE;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
@@ -7793,6 +7595,7 @@ function gameCommand(action) {
     resetBanner();
     lastDragonHits = -1;
     if (window.BoxingUI) window.BoxingUI.resetRound();
+    if (window.YogaUI) window.YogaUI.resetRound();
   }
   return gamePost("/api/game/command", { action });
 }
@@ -7828,6 +7631,7 @@ fromHash();
 pollState();
 pollFeed();
 </script>
-<script src="/assets/boxing/boxing.js?v=20260816-7"></script>
+<script src="/assets/boxing/boxing.js?v=20260818-2"></script>
+<script src="/assets/yoga/yoga.js?v=20260817-1"></script>
 </body>
 </html>

@@ -1,0 +1,24 @@
+{
+  "source": "artwork/boxing-poses/transparent-sheets/06-right-straight-head.png",
+  "upscale": 2,
+  "forearm": {
+    "width": 360,
+    "height": 214,
+    "elbow": [
+      0,
+      127.0
+    ],
+    "wrist": [
+      360,
+      88.8
+    ]
+  },
+  "glove": {
+    "width": 196,
+    "height": 166,
+    "wrist": [
+      0,
+      88.4
+    ]
+  }
+}
