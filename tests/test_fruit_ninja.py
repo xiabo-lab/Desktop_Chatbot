@@ -12,7 +12,9 @@ import unittest
 from pathlib import Path
 
 from aipi5.games.fruit_ninja import fruit as fruit_mod
-from aipi5.games.fruit_ninja.fruit import BOMB, KINDS, Fruit, Spawner
+from aipi5.games.fruit_ninja.collision import BLADE_HALF_WIDTH
+from aipi5.games.fruit_ninja.fruit import (BOMB, BY_NAME, KINDS, Fruit,
+                                           Spawner)
 from aipi5.games.fruit_ninja.game import (BOMB_PENALTY_S, MIN_SLASH_SPEED,
                                           ROUND_SECONDS, ULTIMATE_START_AT,
                                           ULTIMATE_WARNING_AT, HighScores,
@@ -186,6 +188,52 @@ class TestSlicing(unittest.TestCase):
         self.session.tick(now=0.033, hands=blades)
         self.assertTrue(left.sliced)
         self.assertTrue(right.sliced)
+
+    def test_the_blade_has_width_and_cuts_beside_a_fruit(self):
+        """The point of `BLADE_HALF_WIDTH`, stated as the case that failed.
+
+        A grape is 32 px of radius. A horizontal swipe 50 px above its centre
+        used to miss it by 18 px and score nothing, while the drawn streak
+        passed straight over it — which the player reads as dropped tracking
+        rather than as a near miss.
+        """
+        grape = BY_NAME["grape"]
+        self.assertLess(grape.radius, 50)
+        self.assertGreater(grape.radius + BLADE_HALF_WIDTH, 50)
+        item = self.place(kind=grape, x=640, y=400)
+        blade = screen_hand("right_wrist", 400, 350, 900, 350)
+        self.session.tick(now=0.033, hands=[blade])
+        self.assertTrue(item.sliced)
+
+    def test_the_blade_still_has_a_limit(self):
+        """Widened, not removed. A swipe well clear of a fruit still misses."""
+        grape = BY_NAME["grape"]
+        item = self.place(kind=grape, x=640, y=400)
+        clear = grape.radius + BLADE_HALF_WIDTH + 20
+        blade = screen_hand("right_wrist", 400, 400 - clear, 900, 400 - clear)
+        self.session.tick(now=0.033, hands=[blade])
+        self.assertFalse(item.sliced)
+
+    def test_a_bomb_does_not_get_the_wider_blade(self):
+        """A hazard is judged by its own edge — see `game._blade_reach`.
+
+        The same swipe that now takes a grape 50 px away must not set off a
+        bomb the player steered around by the same margin, or the wider blade
+        costs as much clock as it wins score.
+        """
+        item = self.place(kind=BOMB, x=640, y=400)
+        near = BOMB.radius + 10
+        blade = screen_hand("right_wrist", 400, 400 - near, 900, 400 - near)
+        self.session.tick(now=0.033, hands=[blade])
+        self.assertFalse(item.sliced)
+        self.assertEqual(self.session.bombs_hit, 0)
+
+    def test_a_bomb_taken_head_on_still_goes_off(self):
+        item = self.place(kind=BOMB, x=640, y=400)
+        blade = screen_hand("right_wrist", 400, 400, 900, 400)
+        self.session.tick(now=0.033, hands=[blade])
+        self.assertTrue(item.sliced)
+        self.assertEqual(self.session.bombs_hit, 1)
 
     def test_a_streak_earns_a_bonus(self):
         for _ in range(4):

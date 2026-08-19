@@ -128,6 +128,25 @@ COMBO_WINDOW_S = 0.7
 COMBO_ANNOUNCE = 3
 
 
+def _blade_reach(item: Fruit) -> float:
+    """How far either side of the hand's path this swing actually cuts.
+
+    Added to the target's radius, so the blade is a swept capsule rather than a
+    line with no thickness — see `collision.BLADE_HALF_WIDTH` for why the
+    tested shape has to match the drawn one.
+
+    **A bomb gets none of it, and that is deliberate.** Widening the blade is
+    meant to stop a good swing scoring nothing; letting the same widening set
+    off a bomb the player steered around would take with one hand what it gives
+    with the other, and turn "the blade got thicker" into "the round got
+    shorter". Generous towards a reward and exact towards a hazard is the
+    convention players read as fair rather than as inconsistent — and a bomb is
+    the one object on screen that is *aimed away from*, so its edge is the one
+    the player is already judging by eye.
+    """
+    return 0.0 if item.is_bomb else collision.BLADE_HALF_WIDTH
+
+
 class State(str, Enum):
     """Where a session is. `str` so it serialises without a converter."""
 
@@ -521,7 +540,7 @@ class Session:
                 if collision.slash_hits_fruit(
                         from_point, to_point,
                         (item.previous_x, item.previous_y), (item.x, item.y),
-                        item.kind.radius):
+                        item.kind.radius + _blade_reach(item)):
                     self._cut(item, from_point, to_point, now)
                     cut_any = True
 

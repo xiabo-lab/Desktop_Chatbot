@@ -29,6 +29,21 @@ from __future__ import annotations
 
 import math
 
+#: Half the width of the blade, in screen pixels, added to a target's radius.
+#:
+#: **The blade used to be a line with no thickness**, and the drawn one was
+#: 18 px across at its head — so a swipe whose bright centre passed a hair to
+#: one side of a grape scored nothing, which reads as the game not registering
+#: a hit that plainly happened. This is what makes the thing being tested the
+#: same shape as the thing being drawn: a capsule of this half-width swept
+#: along the hand's path, which is exactly the tapered streak in `drawTrail`.
+#:
+#: 27 px, because the trail's head is now 54 px wide (`BLADE_WIDTH_SCALE` of 3
+#: applied to the 18 px it was) and half of that is its reach from the centre
+#: line. Moving the two together is the point — a collision radius the player
+#: cannot see is a difficulty setting they cannot learn.
+BLADE_HALF_WIDTH = 27.0
+
 
 def segment_hits_circle(x1: float, y1: float, x2: float, y2: float,
                         cx: float, cy: float, radius: float) -> bool:

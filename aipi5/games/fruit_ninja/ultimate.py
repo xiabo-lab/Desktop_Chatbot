@@ -232,10 +232,14 @@ class UltimateDragon:
         if hand.travel < MIN_TRAVEL:
             return 0
 
+        # The blade's own half-width, as everywhere else — the dragon fruit is
+        # a target and gets the same swept capsule an apple does. It changes
+        # far less here than it does for a grape: 27 px onto an 86 px radius is
+        # a third more reach, against nearly double for the smallest fruit.
         if not collision.slash_hits_fruit(
                 from_point, to_point,
                 (self.previous_x, self.previous_y), (self.x, self.y),
-                self.radius):
+                self.radius + collision.BLADE_HALF_WIDTH):
             return 0
 
         self._cooldowns[hand.name] = now
