@@ -45,7 +45,7 @@ log = logging.getLogger(__name__)
 PAGE = Path(__file__).resolve().parent / "web" / "index.html"
 ASSET_ROOT = PAGE.parent / "assets"
 
-# The generated ninja head is active. The MediaPipe files are retained from
+# The Boxing and Yoga artwork is active. The MediaPipe files are retained from
 # the former palm-click control for provenance but are no longer loaded; the
 # replacement crossed-arms gesture comes from the Hailo pose stream. Keep this
 # deliberately small rather than growing a general static server here.
@@ -128,6 +128,23 @@ GAME_STREAM_MAX_S = 1800.0
 # encode competing with pose inference for a core.
 GAME_PREVIEW_FPS = 5
 GAME_PREVIEW_MAX_S = 600.0
+
+# What the preview may be raised to, by a page that asks for it.
+#
+# Yoga Coach is the reason this is a range rather than a number. Its live feed
+# is not a "yes, that is you" check on a start screen — it is the only way the
+# player can see what they are correcting while they are two metres away from
+# the screen, and five frames a second reads as a broken camera rather than as
+# a mirror. Twelve is where it starts looking live.
+#
+# Still a budget rather than a target, and the budget is a core: an encode of
+# a 560-pixel-wide frame costs a few milliseconds, so fifteen of them is a few
+# percent of one of the Pi's four. Capped here rather than trusted from the
+# query string, because a page — or a curl — asking for 200 would take a core
+# away from the inference this game is built on.
+GAME_PREVIEW_FPS_MAX = 15
+GAME_PREVIEW_WIDTH = 480
+GAME_PREVIEW_WIDTH_MAX = 720
 
 # A preview that nobody is watching is still a reader of the camera. Chromium
 # keeps an <img> stream open as long as the element exists, so this is what
@@ -213,7 +230,7 @@ class _Handler(BaseHTTPRequestHandler):
         elif route.path == "/api/game/settings":
             self._game_settings()
         elif route.path == "/api/game/preview":
-            self._game_preview()
+            self._game_preview(params)
         elif route.path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         else:
@@ -460,7 +477,17 @@ class _Handler(BaseHTTPRequestHandler):
             # message into the screens section 41 asks for.
             self._json({"error": str(exc), "ok": False}, 409)
 
-    def _game_preview(self) -> None:
+    @staticmethod
+    def _bounded(params: dict, name: str, fallback: int,
+                 low: int, high: int) -> int:
+        """One integer from a query string, or the default. Never outside."""
+        try:
+            value = int(params.get(name, [fallback])[0])
+        except (TypeError, ValueError):
+            return fallback
+        return max(low, min(high, value))
+
+    def _game_preview(self, params: dict | None = None) -> None:
         """The start screen's camera preview, from the game's own capture.
 
         A separate route from `/api/camera/stream` because that one reads
@@ -488,12 +515,17 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
-        interval = 1.0 / GAME_PREVIEW_FPS
+        params = params or {}
+        rate = self._bounded(params, "fps", GAME_PREVIEW_FPS,
+                             1, GAME_PREVIEW_FPS_MAX)
+        width = self._bounded(params, "w", GAME_PREVIEW_WIDTH,
+                              240, GAME_PREVIEW_WIDTH_MAX)
+        interval = 1.0 / rate
         deadline = time.monotonic() + GAME_PREVIEW_MAX_S
         try:
             while time.monotonic() < deadline:
                 started = time.monotonic()
-                frame = games.preview_jpeg()
+                frame = games.preview_jpeg(width)
                 if frame is None:
                     # The game closed, or the camera went away. End the
                     # response rather than spinning; the page reconnects if it

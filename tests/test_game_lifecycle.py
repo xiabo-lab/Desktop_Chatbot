@@ -324,9 +324,9 @@ class TestCatalogueAndCommands(GameManagerCase):
     def test_the_catalogue_lists_four_games(self):
         self.assertEqual(len(self.manager.catalogue()), 4)
 
-    def test_fruit_ninja_and_boxing_are_playable(self):
+    def test_three_of_the_four_games_are_playable(self):
         playable = [g["id"] for g in self.manager.catalogue() if g["playable"]]
-        self.assertEqual(playable, ["fruit-ninja", "boxing"])
+        self.assertEqual(playable, ["fruit-ninja", "yoga", "boxing"])
 
     def test_boxing_requires_and_accepts_mode_selection(self):
         self.manager.open("boxing")
@@ -343,9 +343,56 @@ class TestCatalogueAndCommands(GameManagerCase):
         self.manager.command("restart")
         self.assertEqual(self.manager.status()["game"]["difficulty"], "hard")
 
+    def test_yoga_requires_and_accepts_a_level(self):
+        self.manager.open("yoga")
+        status = self.manager.status()
+        self.assertEqual(status["game"]["kind"], "yoga")
+        self.assertEqual(status["game"]["difficulty"], "")
+        # No level chosen means the crossed-arms gesture must stay inert, the
+        # same contract Boxing's mode sheet has.
+        self.assertEqual(self.manager.session.gesture_phase, "select")
+
+        self.manager.command("difficulty-advanced")
+        status = self.manager.status()
+        self.assertEqual(status["game"]["difficulty"], "advanced")
+        self.assertEqual(status["game"]["duration"], 1200.0)
+        self.assertEqual(self.manager.session.gesture_phase, "ready")
+
+    def test_an_unknown_yoga_level_is_refused(self):
+        self.manager.open("yoga")
+        with self.assertRaises(GameError):
+            self.manager.command("difficulty-expert")
+
+    def test_the_three_yoga_levels_keep_separate_records(self):
+        """A beginner 87 and an advanced 87 are not the same achievement."""
+        self.manager.open("yoga")
+        self.manager.command("difficulty-beginner")
+        session = self.manager.session
+        self.assertEqual(
+            self.manager._session_score_key("yoga", session), "yoga:beginner")
+        self.manager.command("difficulty-advanced")
+        self.assertEqual(
+            self.manager._session_score_key("yoga", session), "yoga:advanced")
+
+    def test_yoga_uses_the_same_single_pose_and_camera_lease(self):
+        self.manager.open("yoga")
+        self.assertTrue(self.camera.lent)
+        self.assertEqual(len(FakePose.instances), 1)
+        self.manager.close()
+        self.assertFalse(self.camera.lent)
+
+    def test_switching_between_the_three_games_leaks_nothing(self):
+        for game in ("fruit-ninja", "yoga", "boxing", "yoga", "fruit-ninja"):
+            self.manager.open(game)
+            self.assertTrue(self.camera.lent)
+        self.manager.close()
+        self.assertFalse(self.camera.lent)
+        self.assertEqual(self.camera.calls.count("reclaim"),
+                         self.camera.calls.count("lend:an AI Motion game"))
+
     def test_a_coming_soon_game_refuses_to_open(self):
         with self.assertRaises(GameError) as caught:
-            self.manager.open("yoga")
+            self.manager.open("workout")
         self.assertIn("not built yet", str(caught.exception))
         self.assertFalse(self.camera.lent)
 

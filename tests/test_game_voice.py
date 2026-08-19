@@ -517,7 +517,7 @@ class TestVoiceStart(VoiceStartCase):
         self.assertEqual(outcome, "unavailable")
 
     def test_a_coming_soon_game_is_refused(self):
-        outcome, _ = self.manager.voice_start("yoga")
+        outcome, _ = self.manager.voice_start("workout")
         self.assertEqual(outcome, "unavailable")
         self.assertFalse(self.camera.lent)
 

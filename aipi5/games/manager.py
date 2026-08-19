@@ -34,6 +34,8 @@ import time
 
 from aipi5.games.boxing.game import BoxingSession
 from aipi5.games.fruit_ninja.game import HighScores, Session as FruitSession, State
+from aipi5.games.yoga.game import YogaSession
+from aipi5.games.yoga.lesson import DIFFICULTIES as YOGA_DIFFICULTIES
 from aipi5.motion.gestures import CrossedArmsGesture
 from aipi5.motion.service import MotionUnavailable, PoseService
 
@@ -48,7 +50,8 @@ CATALOGUE: tuple[dict, ...] = (
      "blurb": "Slice the fruit with your hands. Mind the bombs.",
      "playable": True},
     {"id": "yoga", "name": "Yoga Coach", "glyph": "🧘",
-     "blurb": "Hold the pose. Get it checked.", "playable": False},
+     "blurb": "Follow the coach through a twenty-minute class.",
+     "playable": True},
     {"id": "boxing", "name": "Boxing", "glyph": "🥊",
      "blurb": "Train your reactions or fight an adaptive opponent.",
      "playable": True},
@@ -112,7 +115,7 @@ class GameManager:
 
         self._lock = threading.RLock()
         self.scores = HighScores(cfg.scores)
-        self.session: FruitSession | BoxingSession | None = None
+        self.session: FruitSession | BoxingSession | YogaSession | None = None
         self.active: str = ""
         self._pose: PoseService | None = None
         self._held_audio = False
@@ -143,6 +146,9 @@ class GameManager:
                     self.scores.best(f"boxing:{mode}:{difficulty}")
                     for mode in ("training", "fight")
                     for difficulty in ("easy", "normal", "hard"))
+            elif entry["id"] == "yoga":
+                item["best"] = max(self.scores.best(f"yoga:{difficulty}")
+                                   for difficulty in YOGA_DIFFICULTIES)
             else:
                 item["best"] = self.scores.best(self._score_key(entry["id"]))
             item["active"] = (self.active == entry["id"])
@@ -189,6 +195,11 @@ class GameManager:
             if not session.mode:
                 return "boxing"
             return f"boxing:{session.mode}:{session.difficulty}"
+        if game_id == "yoga" and isinstance(session, YogaSession):
+            # Three lessons that share nothing but a name. A beginner's 87 and
+            # an advanced 87 are not the same achievement and must not compete
+            # for the same line on the tile.
+            return f"yoga:{session.difficulty}" if session.difficulty else "yoga"
         seconds = getattr(session, "duration", None)
         return self._score_key(game_id, seconds)
 
@@ -292,6 +303,10 @@ class GameManager:
                     best=max(self.scores.best(f"boxing:{mode}:{difficulty}")
                              for mode in ("training", "fight")
                              for difficulty in ("easy", "normal", "hard")))
+            elif game_id == "yoga":
+                self.session = YogaSession(
+                    best=max(self.scores.best(f"yoga:{difficulty}")
+                             for difficulty in YOGA_DIFFICULTIES))
             else:
                 duration = float(self.round_seconds)
                 self.session = FruitSession(
@@ -401,13 +416,19 @@ class GameManager:
                 self._start_gesture.reset()
                 log.info("Game: Boxing mode set to %s", session.mode)
             elif action.startswith("difficulty-"):
-                if not isinstance(session, BoxingSession):
-                    raise GameError("difficulty is only available in Boxing")
+                if not isinstance(session, (BoxingSession, YogaSession)):
+                    raise GameError("this game has no difficulty setting")
                 try:
                     session.select_difficulty(action.removeprefix("difficulty-"))
                 except ValueError as exc:
                     raise GameError(str(exc)) from exc
-                log.info("Game: Boxing difficulty set to %s", session.difficulty)
+                # Yoga has no difficulty until one is chosen, so choosing one
+                # is what arms the crossed-arms start — the same relationship
+                # Boxing's mode sheet has with it.
+                if isinstance(session, YogaSession):
+                    self._start_gesture.reset()
+                log.info("Game: %s difficulty set to %s",
+                         self.active or "the game", session.difficulty)
             elif action in ("start", "restart"):
                 if not self._ready_to_start() and action == "start":
                     raise GameError("no player is in front of the camera")
@@ -585,6 +606,8 @@ class GameManager:
             if isinstance(session, BoxingSession):
                 session.tick_pose(now, snapshot.person, snapshot.hands,
                                   snapshot.timestamp)
+            elif isinstance(session, YogaSession):
+                session.tick_pose(now, snapshot.person, snapshot.timestamp)
             else:
                 session.tick(now, snapshot.hands.values())
             # `self.active` is checked, not assumed. `_teardown` clears it
@@ -674,11 +697,11 @@ class GameManager:
             return {"active": self.active,
                     "state": session.state.value if session else "ready"}
 
-    def preview_jpeg(self):
+    def preview_jpeg(self, width: int = 480):
         """One camera frame from the running game, or None. See section 20."""
         with self._lock:
             pose = self._pose
-        return pose.preview_jpeg() if pose is not None else None
+        return pose.preview_jpeg(width) if pose is not None else None
 
     def hardware(self) -> dict:
         """Section 44's panel. Proof the AI HAT+ 2 is what is being used."""

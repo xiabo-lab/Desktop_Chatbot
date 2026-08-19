@@ -709,6 +709,50 @@ crossfade keeps transitions readable. Each fighter also eases among left,
 middle and right lanes while preserving anatomical left/right mapping,
 body attachment, baked injuries, hit reactions and knockout states.
 
+### Yoga Coach
+
+Yoga Coach is the third consumer of the shared pose service. Choose
+**Beginner**, **Intermediate** or **Advanced**, then use the same crossed-arms
+X to start and to play again. Each level is an authored twenty-minute class that
+runs warm-up, foundations, standing strength, peak and cooldown, and the poses
+progress within the level rather than staying flat: the first balance pose
+arrives about nine minutes in, after the hips have opened.
+
+The screen shows an animated coach on the left and the player's live Brio feed
+on the right. This is the only game here that puts the room on screen during
+play, and it is not decoration: a player two metres from the panel being told to
+straighten their back cannot see their own back. The correction line, the hold
+ring and the accuracy ring all sit outside the camera panel so nothing covers
+the body being corrected.
+
+**Every pose is fourteen numbers.** `aipi5/games/yoga/poses.py` stores each of
+the 32 poses as bone directions; forward kinematics turns that into the coach
+that is drawn, and the same joints turn into the normalised angles and ratios
+the player is scored against. Nothing is a picture, so the coach cannot
+demonstrate a shape the scorer is not asking for, and the transition between two
+poses is an interpolation of angles rather than a cross-fade.
+
+The coach is drawn from behind, like the Boxing player. That is what makes left
+and right unambiguous: the pose stream is already mirrored, so the coach's left
+arm and the player's left arm are both at the smaller x. Scoring also compares
+every frame against the mirrored pose, so doing Warrior II beautifully on the
+wrong side is reported as "Other side" instead of quietly scored low.
+
+Scoring is joint angles and relative body geometry, never pixels. Tolerance
+bands are the width of the population rather than measurement error, and the
+player's own limb proportions are measured from their Mountain Pose on the ready
+screen and divided out — so a tall player is not permanently told to sink lower.
+Each pose scores 0-100 from accuracy, how much of the hold was actually
+credited, and how steady it was; the hold timer only counts while the pose is
+close, and a pose that cannot be found is left behind with a correction rather
+than failed.
+
+Every pose is standing and square to the camera. That is a measurement
+constraint: shoulder width is the scale everything is divided by, so a body
+turned side-on cannot be measured, and a person on the floor is out of frame for
+a camera on a desk. Floor poses, profile poses and deep twists are therefore out
+of scope; the closing rest is Mountain Breath rather than Savasana.
+
 ### Boxing UI development preview
 
 The Pi camera and Hailo accelerator are not required for layout work:
