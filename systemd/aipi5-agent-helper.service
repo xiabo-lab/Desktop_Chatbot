@@ -36,5 +36,14 @@ TimeoutStopSec=30
 Restart=on-failure
 RestartSec=5
 
-[Install]
-WantedBy=multi-user.target
+# **No [Install] section, deliberately.** This is socket-activated: the .socket
+# unit is what gets enabled, and systemd starts this on the first connection.
+#
+# It used to declare WantedBy=multi-user.target, which was never used and made
+# the unit lie about how it starts. After a power cut somebody reads
+#
+#     aipi5-agent-helper  inactive (enabled=disabled)
+#
+# and reasonably concludes the agent is broken, when nothing has asked the
+# helper for anything yet and everything is fine. A unit should say how it
+# actually starts.

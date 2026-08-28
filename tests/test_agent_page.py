@@ -196,6 +196,32 @@ class TestTheUnits(unittest.TestCase):
                          "the change store is inside the runtime's own "
                          "StateDirectory, which the agent owns")
 
+    def test_the_helper_is_socket_activated_and_says_so(self):
+        """So `inactive` is never mistaken for broken.
+
+        It is started by its socket on the first connection, which means a
+        healthy device shows the service inactive and disabled whenever nothing
+        has asked it for anything. Declaring an [Install] target it never uses
+        made that read as a failure after a power cut.
+        """
+        socket_unit = (UNITS / "aipi5-agent-helper.socket").read_text(
+            encoding="utf-8")
+        self.assertIn("WantedBy=sockets.target", socket_unit)
+        self.assertIn("Requires=aipi5-agent-helper.socket", self.helper)
+        # Directives, not prose: the comment beside them names [Install] in
+        # order to explain why there is not one. Checking the raw text finds
+        # the explanation and calls it the thing being explained.
+        directives = [line.strip() for line in self.helper.splitlines()
+                      if line.strip() and not line.strip().startswith("#")]
+        self.assertNotIn("[Install]", directives,
+                         "a socket-activated service should not declare an "
+                         "install target it never uses")
+
+    def test_the_runtime_by_contrast_does_start_at_boot(self):
+        """It holds the mailbox and the schedule, so it has to be up whether or
+        not anybody has connected."""
+        self.assertIn("WantedBy=multi-user.target", self.service)
+
     def test_the_helper_runs_the_system_interpreter_not_the_venv(self):
         """So `pip install` can never change what root runs."""
         self.assertIn("ExecStart=/usr/bin/python3 /usr/local/lib/aipi5-agent/main.py",

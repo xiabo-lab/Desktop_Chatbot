@@ -949,6 +949,14 @@ The full test suite passed. The assistant restarted and is healthy.</div>
         <td>The device’s test suite is not green. Fix that first — nothing can be patched until it is.</td>
       </tr>
       <tr>
+        <td><code>aipi5-agent-helper</code> is <b>inactive</b></td>
+        <td>Normal, and not a fault. It is started by its socket on the
+        first request, so a healthy device shows it inactive whenever
+        nothing has asked it for anything &mdash; after a reboot, for
+        instance. Check <code>aipi5-agent-helper.socket</code> instead;
+        that one should be active.</td>
+      </tr>
+      <tr>
         <td>“The privileged helper is not answering”</td>
         <td>The root service is down: <code>sudo systemctl status aipi5-agent-helper</code></td>
       </tr>
@@ -971,6 +979,21 @@ The full test suite passed. The assistant restarted and is healthy.</div>
     </tbody>
   </table>
   </div>
+
+  <h3>After a power cut</h3>
+  <p>
+    Ask it: <em>&ldquo;the Pi rebooted, check everything came back.&rdquo;</em>
+    It walks every service and reads the boot log, which is quicker than doing
+    it by hand and catches things you would not have thought to look for
+    &mdash; on the last outage it found an undervoltage warning in the kernel
+    log without being asked about power at all.
+  </p>
+  <p>
+    One thing it cannot tell you: the journal on this device is held in memory,
+    so <strong>everything logged before the reboot is gone</strong>. &ldquo;No
+    errors before the crash&rdquo; means the evidence went with the power, not
+    that nothing happened.
+  </p>
 
   <h3>Checking on it yourself</h3>
   <pre class="term"><b>sudo systemctl status aipi5-agent aipi5-agent-helper</b>
