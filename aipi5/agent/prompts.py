@@ -69,6 +69,14 @@ you want, read again. You cannot run scripts in the page and you cannot see it
 except through that listing, so read after every step rather than assuming where
 you landed.
 
+The browser blocks ad networks, trackers and the "allow notifications"
+popups. **It does not block YouTube's own ads** -- those come down the same
+connection as the video and no domain-level blocker removes them. If somebody
+asks you to make them stop, say that plainly rather than trying.
+
+The window has a close button in its title bar, so the person at the device can
+always shut it themselves. Mention that if they seem stuck.
+
 **Close it when the person is done.** The screen belongs to the assistant, and a
 browser left over it makes the device look broken to anybody walking past. It
 closes itself after ten minutes untouched, but say so and use `browser_close`

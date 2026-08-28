@@ -180,6 +180,76 @@ class TestTheTablesAreDisjoint(unittest.TestCase):
                 with self.assertRaises(Exception):
                     browser_module._check_url(blocked)
 
+    def test_the_browser_window_can_always_be_closed_by_a_person(self):
+        """The fault this replaced: a fullscreen window with no decorations.
+
+        Reported by the owner, who opened YouTube, met something modal, and
+        could not get out -- the agent had finished, so nothing was going to
+        close it for ten minutes. An --app window keeps the appliance look and
+        gains a title bar with a close button.
+
+        Asserted rather than remembered, because --start-fullscreen is the
+        obvious thing for somebody to put back.
+        """
+        # The argv strings, not the prose: the comment beside them names
+        # --start-fullscreen in order to explain why it is gone.
+        source = (HELPER / "browser.py").read_text(encoding="utf-8")
+        flags = [line for line in source.splitlines()
+                 if line.strip().startswith('"--')]
+        self.assertFalse([f for f in flags if "--start-fullscreen" in f],
+                         "a fullscreen agent browser cannot be closed by the "
+                         "person standing at the device")
+        # A plain window, so the person gets a close button, a tab close, a
+        # Back button and an address bar rather than only the first.
+        self.assertFalse([f for f in flags if "--kiosk" in f])
+        self.assertIn("four ways out", source,
+                      "the reason this window is undecorated-free should stay "
+                      "written down next to the flags")
+
+    def test_the_browser_blocks_ads_from_a_list_root_owns(self):
+        """Scoped to this browser, and not editable by the agent."""
+        source = (HELPER / "browser.py").read_text(encoding="utf-8")
+        self.assertIn("--proxy-pac-url", source)
+        import policy as helper_policy
+        self.assertTrue(str(helper_policy.ADBLOCK_PAC)
+                        .replace("\\", "/").startswith("/usr/local/lib/"))
+
+    def test_the_blocklist_does_not_break_the_device_or_youtube(self):
+        """Blocking googlevideo would not remove YouTube's ads, it would
+        remove YouTube -- which is exactly why Pi-hole is the wrong tool here.
+
+        And a list that caught api.openai.com would stop the agent thinking.
+        """
+        # The patterns themselves, not the file: the comment at the top names
+        # googlevideo precisely to explain why blocking it is the wrong idea.
+        raw = (HELPER / "adblock.pac").read_text(encoding="utf-8")
+        body = raw[raw.index("var blocked"):raw.index("];", raw.index("var blocked"))]
+        patterns = [chunk.strip().strip(",").strip('"')
+                    for line in body.splitlines()[1:]
+                    for chunk in line.split(",")
+                    if chunk.strip().startswith('"')]
+        self.assertGreater(len(patterns), 30, "the list looks truncated")
+
+        import re
+        def blocks(host):
+            for pattern in patterns:
+                escaped = re.escape(pattern).replace(r"\*", ".*")
+                if re.fullmatch(escaped, host):
+                    return True
+            return False
+
+        for essential in ("www.youtube.com",
+                          "r1---sn-4g5e6nz7.googlevideo.com",
+                          "api.openai.com", "api.open-meteo.com",
+                          "aipi5.tail250c52.ts.net", "en.wikipedia.org"):
+            with self.subTest(allow=essential):
+                self.assertFalse(blocks(essential),
+                                 f"{essential} must keep working")
+        for advert in ("pagead2.googlesyndication.com", "ads.doubleclick.net",
+                       "cdn.taboola.com", "cdn.onesignal.com"):
+            with self.subTest(block=advert):
+                self.assertTrue(blocks(advert))
+
     def test_the_browser_cannot_be_asked_to_run_code(self):
         """The methods that turn a browser back into an interpreter.
 

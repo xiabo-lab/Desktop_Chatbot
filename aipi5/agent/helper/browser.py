@@ -127,8 +127,35 @@ class Browser:
                 # assistant owns it is a fight nobody wins.
                 "--use-fake-device-for-media-stream",
                 "--deny-permission-prompts",
-                "--start-fullscreen",
-                "--window-size=1280,800", "--window-position=0,0",
+                # Ad and tracker blocking, scoped to this browser. See
+                # adblock.pac for why it is a PAC file and not Pi-hole.
+                #
+                # **Handed over as a data: URL, not a file:// one.** Chromium
+                # accepts `--proxy-pac-url=file://…` without complaint and then
+                # ignores it -- measured here: an ad host still loaded, and the
+                # only way to tell was that it loaded. A data: URL is honoured,
+                # and a blocked host fails with ERR_PROXY_CONNECTION_FAILED.
+                "--proxy-pac-url=" + _pac_url(),
+                # **An ordinary window, deliberately -- not --start-fullscreen
+                # and not --app.**
+                #
+                # This used to start full-screen, which on this device means no
+                # decorations at all: a page that traps somebody -- an
+                # advertisement, a consent wall, anything modal -- trapped them
+                # until the agent closed it or ten minutes went by. The owner
+                # opened YouTube, met exactly that, and had no way out. It is
+                # the same fault as a kiosk window with no way back, which this
+                # project has now had twice.
+                #
+                # An --app window would fix it with one close button, and was
+                # tried. A plain window is better: the person gets a close
+                # button, a tab close button, a Back button and an address bar
+                # -- four ways out instead of one. Tidiness is worth less than
+                # that. The agent drives it the same either way.
+                #
+                # 770 rather than 800 so the title bar fits on a screen that is
+                # exactly 800 tall, and the close button is never off-screen.
+                "--window-size=1280,770", "--window-position=0,0",
                 "about:blank"]
 
         env = {"XDG_RUNTIME_DIR": f"/run/user/{policy.OWNER_UID}",
@@ -166,6 +193,14 @@ class Browser:
             self.stop()
             raise Refused("the browser started but never answered")
         self._attach()
+
+    def closed_by_hand(self):
+        """True when the person at the device closed the window themselves.
+
+        Not an error. The helper notices on the next operation and reports "no
+        page is open", which is exactly what happened.
+        """
+        return self.proc is not None and self.proc.poll() is not None
 
     def stop(self):
         if self.alive:
@@ -292,6 +327,23 @@ def shutdown():
     with _lock:
         if _browser is not None:
             _browser.stop()
+
+
+def _pac_url():
+    """The blocklist as a data: URL, or "" when it is not installed.
+
+    Empty rather than fatal: a browser with no ad blocking is worth more than
+    no browser, and the installer not having been re-run is a likely and
+    recoverable state.
+    """
+    try:
+        raw = policy.ADBLOCK_PAC.read_bytes()
+    except OSError as exc:
+        log.warning("no ad blocklist at %s (%s); the browser will not filter",
+                    policy.ADBLOCK_PAC, exc)
+        return ""
+    encoded = base64.b64encode(raw).decode("ascii")
+    return "data:application/x-ns-proxy-autoconfig;base64," + encoded
 
 
 def _check_url(url):

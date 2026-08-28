@@ -657,6 +657,41 @@ Screenshot: agent-20260827-100255.jpg in the phone’s Files screen.</div>
     device look broken to anyone walking past.
   </p>
 
+  <h3>If a page traps you</h3>
+  <p>
+    It cannot. The window is an ordinary browser window with a title bar, so
+    there are four ways out and none of them needs the agent: the <b>&times;</b>
+    at the top right closes the window, the <b>&times;</b> on the tab closes the
+    page, <b>&larr;</b> goes back, and the address bar takes you elsewhere.
+  </p>
+  <p>
+    It used to open full-screen with no controls at all, which meant a modal
+    advertisement or a consent wall held the screen until the agent closed it or
+    ten minutes went by. That was a real fault, and it is fixed.
+  </p>
+
+  <h3>Advertising</h3>
+  <p>
+    The browser blocks the large ad networks, the tracking scripts and the
+    &ldquo;allow notifications&rdquo; popups &mdash; around seventy domains, in a
+    list only <code>root</code> can edit.
+  </p>
+  <div class="note warn">
+    <span class="label">What no blocker will stop</span>
+    <p>
+      <strong>YouTube&rsquo;s own ads.</strong> They arrive on the same
+      connection as the video, from the same servers &mdash; so no domain-level
+      blocker removes them, <strong>Pi-hole included</strong>. Blocking those
+      hosts does not remove the advertisement; it removes YouTube.
+    </p>
+    <p>
+      uBlock Origin would work, because it filters inside the page rather than
+      at the network. It cannot be installed here: Debian ships the Manifest V2
+      build, and this Chromium refuses those &mdash; silently, without even a
+      line in the log.
+    </p>
+  </div>
+
   <h3>What it cannot open</h3>
   <p>
     Only <code>http://</code> and <code>https://</code>. Not <code>file://</code>,
@@ -920,6 +955,10 @@ The full test suite passed. The assistant restarted and is healthy.</div>
       <tr>
         <td>The screen is blank for ~15 seconds</td>
         <td>The assistant restarted. The kiosk browser is tied to it and comes back by itself.</td>
+      </tr>
+      <tr>
+        <td>A page you cannot get out of</td>
+        <td>Use the window&rsquo;s own controls &mdash; close, back, or the address bar. You never need the agent to leave a page.</td>
       </tr>
       <tr>
         <td>An approval expired before you saw it</td>

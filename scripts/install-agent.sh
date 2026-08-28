@@ -107,6 +107,16 @@ for source_file in "${helper_files[@]}"; do
   chmod 0644 "$LIB_DIR/$file"
 done
 
+# The ad and tracker blocklist, root-owned beside the policy so the agent can
+# neither widen nor disable it. See adblock.pac for why this is a PAC file and
+# not Pi-hole -- the short version is that Pi-hole cannot block YouTube ads,
+# because they come from the same host as the video.
+if [[ -f "$HELPER_SRC/adblock.pac" ]]; then
+  sed 's/$//' "$HELPER_SRC/adblock.pac" > "$LIB_DIR/adblock.pac"
+  chown root:root "$LIB_DIR/adblock.pac"
+  chmod 0644 "$LIB_DIR/adblock.pac"
+fi
+
 # The written procedures, beside the code and owned the same way. **Read-only
 # to the agent by construction**: there is no operation that writes one, so a
 # web page the agent was asked to read cannot leave an instruction behind for

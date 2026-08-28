@@ -192,6 +192,11 @@ NEVER = (
 # pages the agent is asked to visit.
 BROWSER_PROFILE = OWNER_HOME / ".cache" / "aipi5-agent-browser"
 
+#: Ad and tracker blocking for that browser, installed beside this file and
+#: owned by root -- so the agent cannot widen or disable it, the same way it
+#: cannot edit the allowlists above.
+ADBLOCK_PAC = Path("/usr/local/lib/aipi5-agent/adblock.pac")
+
 #: Where a screenshot of a page goes: the folder the phone's Files screen
 #: already reads, so a picture is something the person can simply look at.
 TRANSFER_DIR = OWNER_HOME / "Downloads" / "AIPI5"
