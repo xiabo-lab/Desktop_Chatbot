@@ -139,7 +139,9 @@ def parse_feed(xml_text: str, limit: int = 20) -> list[Story]:
         log.warning("feed is not parseable XML: %s", exc)
         return []
 
-    feed_title = clean(_text(root.find("channel") or root, "title"))
+    channel = root.find("channel")
+    feed_title = clean(_text(channel if channel is not None else root,
+                             "title"))
 
     entries = root.findall("./channel/item")
     if not entries:
