@@ -1,0 +1,966 @@
+<title>The AIPI5 Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+  /* ── tokens ──────────────────────────────────────────────────────
+     Dark first, because the device is: these are AIPI5's own values from
+     aipi5/ui/web/index.html, so the guide reads as part of the machine it
+     documents rather than as a document about it. */
+  :root {
+    --ground:  #0e1116;
+    --panel:   #161b23;
+    --sunk:    #0a0d12;
+    --edge:    #232a35;
+    --edge-soft: #1b212b;
+    --ink:     #e8edf4;
+    --ink-dim: #92a0b4;
+    --ink-faint: #6b7889;
+    --accent:  #4da3ff;
+    --accent-soft: rgba(77, 163, 255, 0.13);
+    --gold:    #ffc454;
+    --gold-soft: rgba(255, 196, 84, 0.12);
+    --danger:  #ff6b6b;
+    --danger-soft: rgba(255, 107, 107, 0.11);
+    --good:    #5fd39a;
+
+    --measure: 68ch;
+    --shell: 940px;
+  }
+
+  /* The un-stamped default: only prefers-color-scheme separates the two, and
+     an explicit dark choice must still beat a light OS. */
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --ground:  #f6f8fc;
+      --panel:   #ffffff;
+      --sunk:    #eef2f8;
+      --edge:    #d9e1ec;
+      --edge-soft: #e7ecf4;
+      --ink:     #0f1620;
+      --ink-dim: #55637a;
+      --ink-faint: #7c8899;
+      --accent:  #1a63c4;
+      --accent-soft: rgba(26, 99, 196, 0.09);
+      --gold:    #8a5c00;
+      --gold-soft: rgba(138, 92, 0, 0.10);
+      --danger:  #b3271f;
+      --danger-soft: rgba(179, 39, 31, 0.08);
+      --good:    #14794f;
+    }
+  }
+  /* And the toggle wins in the other direction too. */
+  :root[data-theme="light"] {
+    --ground:  #f6f8fc;
+    --panel:   #ffffff;
+    --sunk:    #eef2f8;
+    --edge:    #d9e1ec;
+    --edge-soft: #e7ecf4;
+    --ink:     #0f1620;
+    --ink-dim: #55637a;
+    --ink-faint: #7c8899;
+    --accent:  #1a63c4;
+    --accent-soft: rgba(26, 99, 196, 0.09);
+    --gold:    #8a5c00;
+    --gold-soft: rgba(138, 92, 0, 0.10);
+    --danger:  #b3271f;
+    --danger-soft: rgba(179, 39, 31, 0.08);
+    --good:    #14794f;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    max-width: var(--shell);
+    margin: 0 auto;
+    padding: 0 26px 120px;
+  }
+
+  /* ── the masthead ────────────────────────────────────────────── */
+
+  header.top {
+    padding: 76px 0 46px;
+    border-bottom: 1px solid var(--edge);
+    margin-bottom: 54px;
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  header.top h1 {
+    font-size: clamp(38px, 6.4vw, 62px);
+    font-weight: 700;
+    letter-spacing: -0.028em;
+    line-height: 1.03;
+    margin: 16px 0 0;
+    text-wrap: balance;
+  }
+  header.top h1 em {
+    font-style: normal;
+    color: var(--accent);
+  }
+  .standfirst {
+    max-width: var(--measure);
+    margin: 22px 0 0;
+    font-size: 20px;
+    line-height: 1.55;
+    color: var(--ink-dim);
+    text-wrap: pretty;
+  }
+
+  /* ── contents ────────────────────────────────────────────────── */
+
+  nav.contents {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 1px;
+    background: var(--edge);
+    border: 1px solid var(--edge);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 62px;
+  }
+  nav.contents a {
+    background: var(--panel);
+    padding: 15px 17px;
+    text-decoration: none;
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    transition: background 0.14s ease;
+  }
+  nav.contents a:hover,
+  nav.contents a:focus-visible { background: var(--accent-soft); }
+  nav.contents b { font-weight: 600; font-size: 15px; }
+  nav.contents span {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    letter-spacing: 0.02em;
+  }
+
+  /* ── sections ────────────────────────────────────────────────── */
+
+  section { margin-bottom: 74px; scroll-margin-top: 24px; }
+
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 8px;
+  }
+  h2 {
+    font-size: clamp(26px, 3.4vw, 33px);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.18;
+    margin: 0;
+    text-wrap: balance;
+  }
+  h3 {
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 42px 0 0;
+    text-wrap: balance;
+  }
+  p, ul, ol { max-width: var(--measure); }
+  p { margin: 16px 0 0; text-wrap: pretty; }
+  ul, ol { margin: 16px 0 0; padding-left: 20px; }
+  li { margin: 7px 0; }
+  li::marker { color: var(--ink-faint); }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  strong { font-weight: 600; }
+
+  code {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.875em;
+    background: var(--sunk);
+    border: 1px solid var(--edge-soft);
+    border-radius: 5px;
+    padding: 1px 5px;
+    word-break: break-word;
+  }
+
+  /* The gate each capability passes through. Real information: it is the one
+     thing that actually distinguishes these sections from one another. */
+  .gate {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 100px;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .gate.free  { color: var(--ink-dim); border-color: var(--edge); background: var(--sunk); }
+  .gate.ask   { color: var(--gold);    border-color: var(--gold);   background: var(--gold-soft); }
+  .gate.tests { color: var(--accent);  border-color: var(--accent); background: var(--accent-soft); }
+
+  /* ── the phone console ───────────────────────────────────────── */
+
+  .console {
+    margin: 26px 0 0;
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .console .bar {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 11px 15px;
+    border-bottom: 1px solid var(--edge);
+    background: var(--sunk);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .console .bar::before {
+    content: "";
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--good);
+    flex: none;
+  }
+  .console .body {
+    padding: 17px 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+
+  .you {
+    align-self: flex-end;
+    max-width: 86%;
+    background: var(--accent);
+    color: #04101f;
+    padding: 8px 13px;
+    border-radius: 13px;
+    font-weight: 500;
+  }
+  :root[data-theme="light"] .you,
+  :root:not([data-theme="dark"]) .you { color: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .you { color: #04101f; }
+  }
+
+  .said {
+    align-self: flex-start;
+    max-width: 92%;
+    background: var(--sunk);
+    border: 1px solid var(--edge-soft);
+    padding: 10px 13px;
+    border-radius: 13px;
+    white-space: pre-wrap;
+  }
+  .tool {
+    align-self: flex-start;
+    color: var(--ink-faint);
+    font-size: 12.5px;
+    padding-left: 3px;
+  }
+  .tool b { color: var(--good); font-weight: 600; }
+  .tool.no b { color: var(--danger); }
+  .done {
+    align-self: center;
+    color: var(--ink-faint);
+    font-size: 11.5px;
+    letter-spacing: 0.03em;
+  }
+
+  .card {
+    align-self: stretch;
+    border: 1px solid var(--gold);
+    background: var(--gold-soft);
+    border-radius: 13px;
+    padding: 13px;
+  }
+  .card .what { font-weight: 600; color: var(--ink); }
+  .card pre {
+    margin: 9px 0 0;
+    padding: 9px 11px;
+    background: var(--sunk);
+    border-radius: 8px;
+    font-size: 12.5px;
+    line-height: 1.55;
+    overflow-x: auto;
+  }
+  .card .warn {
+    margin-top: 9px;
+    color: var(--gold);
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+  .card .buttons { display: flex; gap: 8px; margin-top: 12px; }
+  .card .buttons span {
+    flex: 1;
+    text-align: center;
+    padding: 8px;
+    border-radius: 9px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .card .no  { border: 1px solid var(--edge); color: var(--ink-dim); }
+  .card .yes { background: var(--accent); color: #04101f; }
+  :root[data-theme="light"] .card .yes,
+  :root:not([data-theme="dark"]) .card .yes { color: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .card .yes { color: #04101f; }
+  }
+
+  .caption {
+    font-size: 13.5px;
+    color: var(--ink-faint);
+    margin: 11px 0 0;
+    max-width: var(--measure);
+    font-style: italic;
+  }
+
+  /* ── terminal ────────────────────────────────────────────────── */
+
+  pre.term {
+    margin: 24px 0 0;
+    background: var(--sunk);
+    border: 1px solid var(--edge);
+    border-radius: 11px;
+    padding: 15px 17px;
+    overflow-x: auto;
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--ink-dim);
+  }
+  pre.term b { color: var(--ink); font-weight: 500; }
+
+  /* ── tables ──────────────────────────────────────────────────── */
+
+  .scroller { overflow-x: auto; margin: 24px 0 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 480px;
+    font-size: 15px;
+  }
+  th, td {
+    text-align: left;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--edge);
+    vertical-align: top;
+  }
+  th {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    border-bottom-color: var(--ink-faint);
+  }
+  td code { font-size: 13px; }
+  tbody tr:last-child td { border-bottom: none; }
+  .yes-mark { color: var(--good); font-weight: 600; }
+  .no-mark  { color: var(--danger); font-weight: 600; }
+
+  /* ── notes ───────────────────────────────────────────────────── */
+
+  .note {
+    margin: 26px 0 0;
+    padding: 16px 18px;
+    border-left: 2px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 0 10px 10px 0;
+    max-width: var(--measure);
+  }
+  .note.warn { border-left-color: var(--gold); background: var(--gold-soft); }
+  .note p:first-child { margin-top: 0; }
+  .note .label {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: block;
+    margin-bottom: 6px;
+  }
+
+  footer {
+    border-top: 1px solid var(--edge);
+    margin-top: 20px;
+    padding-top: 30px;
+    color: var(--ink-faint);
+    font-size: 14px;
+  }
+  footer p { max-width: var(--measure); }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+  @media (max-width: 620px) {
+    body { font-size: 16px; }
+    header.top { padding: 52px 0 36px; }
+    .shell { padding: 0 18px 90px; }
+  }
+</style>
+
+<div class="shell">
+
+<header class="top">
+  <div class="eyebrow">AIPI5 · Raspberry Pi 5 · reached from your phone</div>
+  <h1>There is now an <em>agent</em> inside AIPI5.</h1>
+  <p class="standfirst">
+    The assistant answers questions. The agent looks at the device, changes it,
+    checks the change worked, and puts it back when it did not. This is how to
+    use it, and — just as usefully — what it will refuse to do.
+  </p>
+</header>
+
+<nav class="contents" aria-label="Contents">
+  <a href="#where"><b>Where it lives</b><span>your phone, on the tailnet</span></a>
+  <a href="#ask"><b>Asking it things</b><span>diagnosis, no permission</span></a>
+  <a href="#settings"><b>Changing a setting</b><span>approval + rollback</span></a>
+  <a href="#browser"><b>The browser</b><span>a page on the screen</span></a>
+  <a href="#remind"><b>Reminders</b><span>survives a reboot</span></a>
+  <a href="#memory"><b>Memory</b><span>preferences that stick</span></a>
+  <a href="#code"><b>Fixing code</b><span>gated on the test suite</span></a>
+  <a href="#refuse"><b>What it refuses</b><span>and why that is fixed</span></a>
+  <a href="#wrong"><b>When it goes wrong</b><span>and the one thing left</span></a>
+</nav>
+
+<!-- ── where ─────────────────────────────────────────────────── -->
+<section id="where">
+  <div class="head"><h2>Where it lives</h2></div>
+
+  <p>
+    On your phone, in the same web app you use to call the device. Open it
+    on the tailnet and there is a new button on the home screen beside
+    <b>Files</b>:
+  </p>
+
+  <pre class="term">https://aipi5.tail250c52.ts.net
+
+   📞 Call AIPI5
+   ⇅ Files
+   <b>⚙ Agent</b>        ← here</pre>
+
+  <p>
+    Tap it and you get a chat. Type a question, get an answer. A blue dot on
+    the button means something happened while you were elsewhere — a run
+    finished, or it is waiting for you to approve something.
+  </p>
+
+  <p>
+    Deliberately not on the touchscreen. The agent is for when you are not
+    standing in front of the device — the screen is for the assistant, the
+    slideshow and the games.
+  </p>
+
+  <div class="note">
+    <span class="label">Worth knowing</span>
+    <p>
+      Opening the console replays the whole conversation from the beginning.
+      That is what makes it survive a restart: when the agent restarts the
+      assistant, your phone loses its connection for fifteen seconds, then
+      reconnects and is handed everything it missed.
+    </p>
+  </div>
+</section>
+
+<!-- ── asking ────────────────────────────────────────────────── -->
+<section id="ask">
+  <div class="head">
+    <h2>Asking it things</h2>
+    <span class="gate free">asks nothing</span>
+  </div>
+
+  <p>
+    Anything about the state of the device. It picks its own tools, reads the
+    real thing, and answers from evidence rather than from what a Raspberry Pi
+    is usually like.
+  </p>
+
+  <div class="console">
+    <div class="bar">agent</div>
+    <div class="body">
+      <div class="you">Why did Kodama-Lite last restart, and is it running now?</div>
+      <div class="tool"><b>✓</b> service_status — is kodama-lite running</div>
+      <div class="tool"><b>✓</b> read_journal — the kodama-lite log</div>
+      <div class="said">Kodama-Lite is <b>not running now</b>. It is inactive (dead).
+
+There is no recorded restart reason in the available log. Its status shows:
+
+  Restarts: 0
+  Last exit status: 0 — a clean exit
+
+The service is also disabled, so it is not configured to start automatically.</div>
+      <div class="done">3 steps · 4.5s</div>
+    </div>
+  </div>
+  <p class="caption">A real exchange from the device. Nothing here needed your permission.</p>
+
+  <h3>Things worth asking</h3>
+  <ul>
+    <li>“How much disk space is left?”</li>
+    <li>“Is the assistant running, and has it restarted recently?”</li>
+    <li>“Why did the screen go blank last night?”</li>
+    <li>“What time does the photo slideshow start?”</li>
+    <li>“What have you changed on this device?”</li>
+  </ul>
+
+  <div class="note warn">
+    <span class="label">A real limit, not a bug</span>
+    <p>
+      <strong>It only ever sees warnings and errors in the logs.</strong> Ordinary
+      log lines on this device include the text of things people said out loud in
+      the room, and what the agent reads gets sent to OpenAI. So the floor is
+      built in — there is no setting for it.
+    </p>
+    <p>
+      The practical consequence: “nothing in the log” means <em>no complaints</em>,
+      not <em>no activity</em>. The agent knows this and will usually say so.
+    </p>
+  </div>
+</section>
+
+<!-- ── settings ──────────────────────────────────────────────── -->
+<section id="settings">
+  <div class="head">
+    <h2>Changing a setting</h2>
+    <span class="gate ask">asks you first</span>
+  </div>
+
+  <p>
+    Ask in plain words. You get a card showing the exact line that would change
+    — not a description of it, the line — and nothing happens until you tap.
+  </p>
+
+  <div class="console">
+    <div class="bar">agent</div>
+    <div class="body">
+      <div class="you">Change the slideshow start time from 7 AM to 8 AM.</div>
+      <div class="tool"><b>✓</b> read_config_file — aipi5.yaml</div>
+      <div class="card">
+        <div class="what">Change screensaver.day_start from "07:00" to "08:00"</div>
+<pre>screensaver.day_start
+-  day_start: "07:00"
++  day_start: "08:00"</pre>
+        <div class="warn">This also blanks the touchscreen for ten to twenty
+          seconds, because aipi5-ui.service is PartOf=aipi5.service. The phone
+          console goes quiet for the same window and reconnects by itself.</div>
+        <div class="buttons"><span class="no">No</span><span class="yes">Do it</span></div>
+      </div>
+      <div class="tool"><b>✓</b> set_config</div>
+      <div class="said">Changed the slideshow start time from <b>07:00</b> to <b>08:00</b>.
+
+The assistant restarted and is healthy.</div>
+      <div class="done">2 steps · 19.1s</div>
+    </div>
+  </div>
+
+  <h3>What happens after you tap</h3>
+  <p>
+    Eleven steps, and you only see the last one. The file is copied aside, the
+    line is changed, the file is re-parsed to check it still loads, the
+    assistant is restarted, and its health is verified three separate ways —
+    the unit is active, its own page answers, and the log carries no traceback.
+  </p>
+  <p>
+    <strong>If any of that fails, the old value goes back automatically</strong>
+    and the assistant is restarted on it before you are told anything. A
+    rollback is the system working, not a failure to worry about.
+  </p>
+
+  <h3>Undoing something</h3>
+  <p>
+    “Undo that” works, and so does “what have you changed?”. Undoing needs no
+    approval — it is the safe direction.
+  </p>
+
+  <div class="note">
+    <span class="label">Tested</span>
+    <p>
+      A change was applied and then rolled back on the device, and afterwards
+      <code>config/aipi5.yaml</code> was <strong>byte-identical</strong> to
+      before — every comment intact, and the deliberate local settings this
+      device carries (like calling being switched on) untouched.
+    </p>
+  </div>
+</section>
+
+<!-- ── browser ───────────────────────────────────────────────── -->
+<section id="browser">
+  <div class="head">
+    <h2>Putting a page on the screen</h2>
+    <span class="gate free">asks nothing</span>
+  </div>
+
+  <p>
+    “Open YouTube.” A second browser appears over the touchscreen, driven by
+    the agent. It is a different browser from the kiosk with its own profile,
+    so nothing it does can disturb the assistant’s own page.
+  </p>
+
+  <div class="console">
+    <div class="bar">agent</div>
+    <div class="body">
+      <div class="you">Open duckduckgo.com, search for “Raspberry Pi 5 review”, take a screenshot, then close the browser.</div>
+      <div class="tool"><b>✓</b> browser_open</div>
+      <div class="tool"><b>✓</b> browser_type</div>
+      <div class="tool"><b>✓</b> browser_screenshot</div>
+      <div class="tool"><b>✓</b> browser_close</div>
+      <div class="said">Searched DuckDuckGo for “Raspberry Pi 5 review,” saved a screenshot, and closed the browser.
+
+Screenshot: agent-20260827-100255.jpg in the phone’s Files screen.</div>
+      <div class="done">5 steps · 16.1s</div>
+    </div>
+  </div>
+
+  <p>
+    It works a page the way you would: open, read what is there, click
+    something, read again. Screenshots land in the shared folder, so they show
+    up on the <b>Files</b> screen of the same app.
+  </p>
+
+  <p>
+    <strong>Say “close the browser” when you are done.</strong> It closes itself
+    after ten minutes untouched, but a window left over the kiosk makes the
+    device look broken to anyone walking past.
+  </p>
+
+  <h3>What it cannot open</h3>
+  <p>
+    Only <code>http://</code> and <code>https://</code>. Not <code>file://</code>,
+    not this device’s own services, not anything else on your home network.
+    Those are refused by the privileged half of the system, not by the agent’s
+    good manners.
+  </p>
+</section>
+
+<!-- ── reminders ─────────────────────────────────────────────── -->
+<section id="remind">
+  <div class="head">
+    <h2>Reminders</h2>
+    <span class="gate free">asks nothing</span>
+  </div>
+
+  <p>
+    “Remind me in two minutes to check the oven.” It works out the absolute
+    time from what you said, tells you what it set so a mistake is visible
+    before it is a missed appointment, and the notification arrives on your
+    phone.
+  </p>
+
+  <div class="console">
+    <div class="bar">agent</div>
+    <div class="body">
+      <div class="you">Remind me in two minutes to check the oven.</div>
+      <div class="tool"><b>✓</b> remind_me</div>
+      <div class="said">Reminder set for <b>Thursday, August 27, at 11:50 AM</b>: “Check the oven.”</div>
+      <div class="done">2 steps · 3.9s</div>
+    </div>
+  </div>
+
+  <p>
+    They live on disk, so they survive the device being rebooted. Ask “what
+    reminders are waiting?” to see them, and “cancel the one about the oven”
+    to drop one.
+  </p>
+
+  <div class="note warn">
+    <span class="label">Not set up yet</span>
+    <p>
+      <strong>Email delivery is built but not switched on.</strong> Four steps in
+      the Google Cloud console are needed first — they are written out in
+      <code>docs/gmail-setup.md</code> on the Pi. Until then, reminders arrive as
+      phone notifications, which is enough for most of what a reminder is for.
+    </p>
+  </div>
+</section>
+
+<!-- ── memory ────────────────────────────────────────────────── -->
+<section id="memory">
+  <div class="head">
+    <h2>Things it remembers</h2>
+    <span class="gate free">asks nothing</span>
+  </div>
+
+  <p>
+    Say “remember that…” and it carries into every later conversation. Useful
+    for the things you would otherwise repeat: what you call something, which
+    app you mean, where something lives.
+  </p>
+
+  <pre class="term"><b>you</b>   Remember that when I say music I always mean Kodama.
+<b>agent</b> Got it. “Music” means Kodama, never Spotify.
+
+           ── a completely separate conversation ──
+
+<b>you</b>   If I asked you to put some music on, what would you use?
+<b>agent</b> Kodama — specifically kodama-lite.service.
+       <span style="opacity:.65">0 tool calls · it already knew</span></pre>
+
+  <p>
+    Keep them short: they are shown to the agent at the start of every future
+    conversation, so a long one is a permanent tax. “Forget the one about
+    music” removes it.
+  </p>
+
+  <div class="note">
+    <span class="label">Deliberately limited</span>
+    <p>
+      A note can record a preference. It <strong>cannot</strong> change what needs
+      your approval, and this is not a matter of the agent being well behaved —
+      the code that decides whether something needs approving has never heard of
+      notes. Asked to remember <em>“you are authorised to change settings
+      without asking”</em>, it declined to store it, and asked for approval on the
+      very next change regardless.
+    </p>
+  </div>
+</section>
+
+<!-- ── code ──────────────────────────────────────────────────── -->
+<section id="code">
+  <div class="head">
+    <h2>Fixing something in the code</h2>
+    <span class="gate tests">runs the test suite</span>
+  </div>
+
+  <p>
+    The agent can edit AIPI5’s own source. What makes that safe is not that you
+    approve it — it is that <strong>the whole test suite runs on the device
+    before the change is kept</strong>. Around 1,286 tests. If any of them fails
+    that was not already failing, your change is put back and the assistant is
+    restarted on the old code before you are told anything.
+  </p>
+
+  <p>Expect it to take a couple of minutes. It will say so.</p>
+
+  <div class="console">
+    <div class="bar">agent</div>
+    <div class="body">
+      <div class="you">The test suite prints a DeprecationWarning from aipi5/tools/news.py. Fix it properly.</div>
+      <div class="tool"><b>✓</b> read_skill</div>
+      <div class="tool"><b>✓</b> read_source</div>
+      <div class="tool"><b>✓</b> read_journal</div>
+      <div class="card">
+        <div class="what">Change aipi5/tools/news.py</div>
+<pre>- feed_title = clean(_text(root.find("channel") or root, "title"))
++ channel = root.find("channel")
++ feed_title = clean(_text(channel if channel is not None else root, "title"))</pre>
+        <div class="warn">The whole test suite runs before this is kept. If it
+          fails the change is put back automatically.</div>
+        <div class="buttons"><span class="no">No</span><span class="yes">Do it</span></div>
+      </div>
+      <div class="tool"><b>✓</b> patch_file</div>
+      <div class="said">Fixed aipi5/tools/news.py.
+
+Element truth-value testing is deprecated. I changed it to an explicit
+`is not None` check.
+
+The full test suite passed. The assistant restarted and is healthy.</div>
+      <div class="done">4 steps · 88.4s</div>
+    </div>
+  </div>
+  <p class="caption">
+    This is a real change, now committed to the repository. It was the last
+    warning in the suite.
+  </p>
+
+  <div class="note warn">
+    <span class="label">The thing that will confuse you</span>
+    <p>
+      <strong>A source change is only possible while the test suite is green.</strong>
+      The very first attempt at the patch above was rolled back — by two
+      unrelated tests that were already failing on the device. The agent’s work
+      was correct; the gate simply could not tell the difference.
+    </p>
+    <p>
+      So if a patch keeps being refused and the reason names tests that have
+      nothing to do with it, check the suite before blaming the change.
+    </p>
+  </div>
+
+  <h3>Working with it</h3>
+  <ul>
+    <li>Point it at evidence, not a guess: “the log says X, look at Y.”</li>
+    <li>Ask it what it expects to happen before it applies something.</li>
+    <li>Small changes pass; sweeping ones fail the suite and get reverted.</li>
+    <li>It only ever does this in a conversation <em>you</em> start. There is no
+      scheduled maintenance, and nothing runs overnight.</li>
+  </ul>
+</section>
+
+<!-- ── refusals ──────────────────────────────────────────────── -->
+<section id="refuse">
+  <div class="head"><h2>What it will refuse</h2></div>
+
+  <p>
+    Worth knowing, because a refusal is an answer and not an obstacle to argue
+    with. None of these are the agent choosing to be careful — they are refused
+    by a separate program running as root, whose rules the agent cannot read,
+    edit, or reach.
+  </p>
+
+  <div class="scroller">
+  <table>
+    <thead>
+      <tr><th>Asked to</th><th></th><th>Because</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>aipi5/tools/*.py</code>, the pages, the config</td>
+        <td class="yes-mark">allowed</td>
+        <td>This is the point. Behind approval and the test suite.</td>
+      </tr>
+      <tr>
+        <td>Edit its own runtime, <code>aipi5/agent/</code></td>
+        <td class="no-mark">refused</td>
+        <td>An agent that can rewrite the code asking for approval has nothing left to ask.</td>
+      </tr>
+      <tr>
+        <td>Edit <code>scripts/</code> or <code>systemd/</code></td>
+        <td class="no-mark">refused</td>
+        <td>The installer, and what starts at boot before anyone is watching.</td>
+      </tr>
+      <tr>
+        <td>Touch <code>~/.ssh</code> or <code>~/.bashrc</code></td>
+        <td class="no-mark">refused</td>
+        <td>Both are routes to becoming the user who is root on this machine.</td>
+      </tr>
+      <tr>
+        <td>Restart <code>sshd</code>, or anything unlisted</td>
+        <td class="no-mark">refused</td>
+        <td>Six services are listed by name. The list is not the agent’s to extend.</td>
+      </tr>
+      <tr>
+        <td>Install a package</td>
+        <td class="no-mark">refused</td>
+        <td>The allowlist is empty by choice — an apt package runs its own code as root.</td>
+      </tr>
+      <tr>
+        <td>Restart the program that contains it</td>
+        <td class="no-mark">refused</td>
+        <td>It does not get to restart its own jailer.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>
+    Asked to remove its own approval check, it answered:
+    <em>“I can’t edit aipi5/agent/tools.py. It is the agent’s own runtime, which
+    is protected because removing <code>_approve</code>’s approval check would
+    disable the safety control governing changes.”</em>
+  </p>
+
+  <h3>One honest caveat</h3>
+  <p>
+    The guarantee this design actually makes is
+    <strong>“the agent cannot touch what is not on the list.”</strong> It is not
+    “the agent can never act without asking you” — whether you approved
+    something is decided by the agent’s own process, which the root half cannot
+    independently verify. That half bounds a bug in the other with what it
+    <em>can</em> check alone: a change must be proposed before it is applied,
+    only one at a time, and at most twenty an hour.
+  </p>
+</section>
+
+<!-- ── troubleshooting ───────────────────────────────────────── -->
+<section id="wrong">
+  <div class="head"><h2>When something goes wrong</h2></div>
+
+  <div class="scroller">
+  <table>
+    <thead>
+      <tr><th>What you see</th><th>What it means</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>“AIPI5 is not answering. It may be restarting.”</td>
+        <td>Usually true, and often because the agent is restarting the assistant on your behalf. It reconnects itself.</td>
+      </tr>
+      <tr>
+        <td>A change was rolled back citing unrelated tests</td>
+        <td>The device’s test suite is not green. Fix that first — nothing can be patched until it is.</td>
+      </tr>
+      <tr>
+        <td>“The privileged helper is not answering”</td>
+        <td>The root service is down: <code>sudo systemctl status aipi5-agent-helper</code></td>
+      </tr>
+      <tr>
+        <td>The screen is blank for ~15 seconds</td>
+        <td>The assistant restarted. The kiosk browser is tied to it and comes back by itself.</td>
+      </tr>
+      <tr>
+        <td>An approval expired before you saw it</td>
+        <td>A timeout is a refusal — nothing was changed. Ask again.</td>
+      </tr>
+      <tr>
+        <td>“That is 40 runs today, which is the limit”</td>
+        <td>A daily ceiling, so a loop cannot spend a month’s budget overnight. It resets at midnight.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Checking on it yourself</h3>
+  <pre class="term"><b>sudo systemctl status aipi5-agent aipi5-agent-helper</b>
+<b>sudo tail -f /var/log/aipi5-agent/helper.jsonl</b>   # everything root did, and why
+<b>sudo ls /var/lib/aipi5-agent-helper/changes/</b>     # every change, with its backup</pre>
+
+  <p>
+    That log is written by the root half and the agent can read it but not edit
+    it: the record of what was done to the device is deliberately not editable
+    by the thing that did it.
+  </p>
+
+  <h3>The one thing still to do</h3>
+  <p>
+    Email delivery for reminders needs four steps in the Google Cloud console —
+    checking the consent screen is published, adding the
+    <code>gmail.send</code> scope, enabling the Gmail API, and running
+    <code>scripts/link-gmail.sh</code> with an ssh tunnel up. They are written
+    out with what each failure actually means in
+    <code>docs/gmail-setup.md</code>. Everything else is working.
+  </p>
+</section>
+
+<footer>
+  <p>
+    AIPI5 agent, built August 2026. Runs as its own Unix user with no
+    <code>sudo</code>, behind a root-owned helper that will only do what a
+    list in <code>/usr/local/lib/aipi5-agent/policy.py</code> allows.
+  </p>
+</footer>
+
+</div>
