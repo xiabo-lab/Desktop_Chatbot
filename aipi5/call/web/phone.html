@@ -79,6 +79,105 @@
     overflow: hidden;
   }
   #files.on { display: flex; }
+
+  /* ── the agent console ───────────────────────────────────────────
+     A chat, which is a shape this page has not had before. Three things bite
+     on iOS and each of them is a fix rather than a preference:
+
+     * `user-select: none` is set on `html, body` above, which on iOS makes a
+       textarea impossible to select in or paste into. It has to be undone here
+       and only here.
+     * anything under 16px makes iOS zoom the viewport on focus, and
+       `maximum-scale=1.0` in the viewport meta has been ignored since iOS 10.
+       So 17px, chosen to be safely over the line.
+     * `100vh` is the height with the keyboard *absent*; `100dvh` follows the
+       visual viewport, so the composer stays above the keyboard instead of
+       under it. */
+  #agent {
+    flex: 1; display: none; flex-direction: column; min-height: 0;
+    max-height: 100dvh;
+    padding: calc(env(safe-area-inset-top) + 16px) 14px
+             calc(env(safe-area-inset-bottom) + 10px);
+    overflow: hidden;
+  }
+  #agent.on { display: flex; }
+
+  #agent-state {
+    font-size: 13px; color: var(--ink-dim); min-height: 18px;
+    padding: 2px 4px 6px; display: flex; align-items: center; gap: 7px;
+  }
+  #agent-state .spin {
+    width: 9px; height: 9px; border-radius: 5px; background: var(--accent);
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+
+  #agent-log {
+    flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    display: flex; flex-direction: column; gap: 9px; padding: 2px 0 8px;
+  }
+  .ev { max-width: 88%; padding: 9px 12px; border-radius: 14px; font-size: 16px;
+        line-height: 1.42; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ev.you { align-self: flex-end; background: var(--accent); color: #06121f; }
+  .ev.say { align-self: flex-start; background: var(--panel);
+            border: 1px solid var(--panel-edge); }
+  /* Tool activity is deliberately quiet: it is there so the person can see it
+     is working and on what, not so they can read along. The model's own
+     reasoning never appears here at all. */
+  .ev.tool { align-self: flex-start; background: none; padding: 1px 6px;
+             font-size: 13px; color: var(--ink-dim); display: flex; gap: 7px; }
+  .ev.tool b { font-weight: 600; color: #b7c4d6; }
+  .ev.bad { align-self: flex-start; background: #2a1618;
+            border: 1px solid #4a2327; color: #ffb4b4; font-size: 15px; }
+  .ev.done { align-self: center; font-size: 12px; color: var(--ink-dim);
+             background: none; padding: 4px; }
+
+  #agent-compose {
+    flex: 0 0 auto; display: flex; gap: 8px; align-items: flex-end;
+    padding-top: 8px; border-top: 1px solid var(--panel-edge);
+  }
+  #agent-text {
+    flex: 1; resize: none; max-height: 120px;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--panel-edge); border-radius: 13px;
+    padding: 10px 12px; font-family: inherit;
+    font-size: 17px; line-height: 1.35;
+    user-select: text; -webkit-user-select: text;
+  }
+  #agent-text:focus { outline: none; border-color: var(--accent); }
+  #agent-send {
+    flex: 0 0 auto; width: 44px; height: 44px; border-radius: 22px;
+    font-size: 20px; padding: 0;
+  }
+  /* The approval card. Deliberately not a row in the transcript: this is the
+     one thing on the screen that is waiting for the person rather than telling
+     them something, so it sits above the composer and stays there until it is
+     answered. */
+  #agent-approval {
+    flex: 0 0 auto; margin: 8px 0 4px; padding: 12px;
+    background: var(--panel); border: 1px solid var(--accent);
+    border-radius: 14px;
+  }
+  #agent-approval[hidden] { display: none; }
+  #agent-approval-what { font-size: 16px; font-weight: 600; line-height: 1.35; }
+  #agent-approval-detail {
+    margin: 9px 0 0; padding: 8px 10px; background: #0b0e13;
+    border-radius: 9px; font-size: 13px; line-height: 1.45;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; overflow-x: auto; user-select: text;
+    -webkit-user-select: text;
+  }
+  #agent-approval-warning {
+    margin-top: 9px; font-size: 13px; color: #ffcf8f; line-height: 1.4;
+  }
+  #agent-approval-row { display: flex; gap: 9px; margin-top: 12px; }
+  #agent-approval-row button { flex: 1; height: 46px; font-size: 16px; }
+  #agent-deny { background: var(--panel); border: 1px solid var(--panel-edge); }
+
+  #agent-badge {
+    display: inline-block; width: 9px; height: 9px; border-radius: 5px;
+    background: var(--accent); margin-left: 8px; vertical-align: middle;
+  }
   .bar-top {
     display: flex; align-items: center; gap: 12px; flex: 0 0 auto;
     margin-bottom: 14px;
@@ -255,6 +354,42 @@
        made on page load — so it is a button rather than something automatic. -->
   <button id="allow-ring" hidden>Let AIPI5 ring this phone</button>
   <button id="open-files">⇅ Files</button>
+  <button id="open-agent">⚙ Agent<span id="agent-badge" hidden></span></button>
+</div>
+
+<!-- The agent console. Text, on a page that until now had exactly one text
+     input and it was a file picker. Everything the agent knows lives in
+     another process under another user; this is a view of its mailbox. -->
+<div id="agent">
+  <div class="bar-top">
+    <button class="plain" id="agent-back">‹ Back</button>
+    <h2>Agent</h2>
+    <button class="plain" id="agent-stop" hidden>Stop</button>
+  </div>
+
+  <div id="agent-state"></div>
+  <div id="agent-log"></div>
+
+  <!-- Shown only while something is waiting. Both answers are explicit: there
+       is no way to dismiss this card, because dismissing it would look like an
+       answer and the timeout that follows is a refusal the person did not
+       knowingly give. -->
+  <div id="agent-approval" hidden>
+    <div id="agent-approval-what"></div>
+    <pre id="agent-approval-detail" hidden></pre>
+    <div id="agent-approval-warning" hidden></div>
+    <div id="agent-approval-row">
+      <button id="agent-deny" type="button">No</button>
+      <button id="agent-approve" type="button">Do it</button>
+    </div>
+  </div>
+
+
+  <form id="agent-compose" autocomplete="off">
+    <textarea id="agent-text" rows="1" enterkeyhint="send"
+              placeholder="Ask about this device…"></textarea>
+    <button id="agent-send" type="submit">↑</button>
+  </form>
 </div>
 
 <!-- Sending and fetching files, on the same connection and the same token as
@@ -736,6 +871,272 @@ function sendOneFile(file, prefix, done, failed) {
 
 el("open-files").addEventListener("click", () => showFiles(true));
 el("files-back").addEventListener("click", () => showFiles(false));
+
+// ── the agent console ────────────────────────────────────────────────
+//
+// Two ways the phone learns what the agent is doing, each doing what it is
+// good at.
+//
+// While the console is open, `agentPoll()` holds a GET for up to twenty
+// seconds — the same shape as `poll()` during a call, and for the same reason:
+// an event posted on the Pi reaches the screen in a millisecond rather than on
+// the next tick of a timer.
+//
+// While it is closed, `idleCheck()` is already asking `/call/v1/state` every
+// four seconds for the incoming-call check, and that answer now carries the
+// agent's snapshot. So a run finishing while somebody is on the dialler puts a
+// dot on the Agent button without a second connection existing for it.
+//
+// The cursor is the whole of the reconnection story. The mailbox lives in
+// `aipi5-agent.service`, which is *not* the service the agent is most often
+// asked to restart, so when the assistant goes down the phone loses its
+// connection, retries, asks from the cursor it already had, and is handed
+// everything that happened while it was away.
+
+let agentOpen = false;
+let agentCursor = 0;
+let agentPolling = false;
+let agentRun = "";
+let agentSeen = -1;
+
+function showAgent(on) {
+  agentOpen = !!on;
+  el("agent").classList.toggle("on", agentOpen);
+  el("home").style.display = agentOpen ? "none" : "";
+  if (agentOpen) {
+    el("agent-badge").hidden = true;
+    agentPoll();
+    // Not `autofocus`: raising the keyboard the instant the screen opens
+    // covers the transcript somebody came to read.
+  }
+}
+
+function agentFromState(state) {
+  const agent = state && state.agent;
+  if (!agent) return;
+  agentRun = agent.run || "";
+  el("agent-stop").hidden = !agent.busy || !agentOpen;
+  if (agentOpen) return;
+  // Something happened since this phone last looked at the console.
+  if (agentSeen < 0) agentSeen = agent.rev || 0;
+  const unseen = (agent.rev || 0) !== agentSeen || agent.busy;
+  el("agent-badge").hidden = !unseen;
+}
+
+async function agentPoll() {
+  if (agentPolling) return;
+  agentPolling = true;
+  try {
+    while (agentOpen && token) {
+      let batch;
+      try {
+        const response = await api("/agent/v1/poll?since=" + agentCursor);
+        batch = await response.json();
+      } catch (err) {
+        // The assistant restarting is the expected case here, and it is
+        // exactly what the agent may have been asked to do. Wait and ask
+        // again from the same cursor.
+        agentState(String(err.message || err), true);
+        await new Promise((done) => setTimeout(done, 1500));
+        continue;
+      }
+      agentCursor = batch.cursor || agentCursor;
+      for (const event of batch.events || []) drawEvent(event);
+      if (batch.agent) {
+        agentRun = batch.agent.run || "";
+        agentSeen = batch.agent.rev || agentSeen;
+        el("agent-stop").hidden = !batch.agent.busy;
+        if (!batch.agent.busy) agentState("");
+        // The snapshot is the authority on whether anything is still waiting.
+        // A card left on screen after the run ended is a button that answers
+        // a question nobody is asking any more.
+        if (!batch.agent.pending && agentApprovalToken) hideApproval("");
+        else if (batch.agent.pending &&
+                 batch.agent.pending.token !== agentApprovalToken) {
+          showApproval(batch.agent.pending);
+        }
+      }
+    }
+  } finally {
+    agentPolling = false;
+  }
+}
+
+function agentState(text, bad) {
+  const bar = el("agent-state");
+  bar.textContent = "";
+  if (!text) return;
+  if (!bad) {
+    const dot = document.createElement("span");
+    dot.className = "spin";
+    bar.appendChild(dot);
+  }
+  bar.appendChild(document.createTextNode(text));
+}
+
+// `textContent` everywhere, never `innerHTML`. Some of what is drawn here is a
+// log line from the device, and a log line is somewhere an attacker's string
+// can end up.
+function agentRow(kind, text) {
+  const row = document.createElement("div");
+  row.className = "ev " + kind;
+  row.textContent = text;
+  const log = el("agent-log");
+  log.appendChild(row);
+  // Cap the transcript the way the kiosk's feed does. A run that made forty
+  // checks is forty rows nobody scrolls back through.
+  while (log.childNodes.length > 200) log.removeChild(log.firstChild);
+  log.scrollTop = log.scrollHeight;
+  return row;
+}
+
+function drawEvent(event) {
+  switch (event.type) {
+    case "agent.ask":
+      agentRow("you", event.text || "");
+      break;
+    case "agent.say":
+      agentRow("say", event.text || "");
+      break;
+    case "agent.state":
+      agentState(event.state === "finishing" ? "Writing the answer…"
+                                             : "Thinking…");
+      break;
+    case "agent.tool": {
+      if (event.state === "running") {
+        agentState("Checking " + (event.summary || "…"));
+        break;
+      }
+      const row = agentRow("tool", "");
+      const mark = document.createElement("b");
+      mark.textContent = event.ok ? "✓" : "✗";
+      row.appendChild(mark);
+      row.appendChild(document.createTextNode(
+        (event.name || "") + (event.summary ? " — " + event.summary : "")));
+      break;
+    }
+    case "agent.approval":
+      showApproval(event);
+      break;
+    case "agent.approval.gone":
+      hideApproval(event.outcome);
+      break;
+    case "agent.error":
+      agentRow("bad", event.error || "Something went wrong.");
+      break;
+    case "agent.done": {
+      agentState("");
+      el("agent-stop").hidden = true;
+      const bits = [];
+      if (event.stopped) bits.push(event.stopped);
+      if (event.steps) bits.push(event.steps + " steps");
+      if (event.tool_calls) bits.push(event.tool_calls + " checks");
+      if (event.seconds) bits.push(event.seconds + "s");
+      if (bits.length) agentRow("done", bits.join(" · "));
+      break;
+    }
+    default:
+      break;   // an event type this build does not know about is not an error
+  }
+}
+
+async function agentSay(message) {
+  try {
+    const response = await api("/agent/v1/say", {
+      method: "POST", body: JSON.stringify(message),
+    });
+    const answer = await response.json();
+    if (!answer.ok && answer.error) agentRow("bad", answer.error);
+    return answer;
+  } catch (err) {
+    agentRow("bad", String(err.message || err));
+    return { ok: false };
+  }
+}
+
+let agentApprovalToken = "";
+
+function showApproval(event) {
+  agentApprovalToken = event.token || "";
+  el("agent-approval-what").textContent = event.what || "Approve this?";
+
+  const detail = el("agent-approval-detail");
+  detail.textContent = event.detail || "";
+  detail.hidden = !event.detail;
+
+  const warning = el("agent-approval-warning");
+  warning.textContent = event.warning || "";
+  warning.hidden = !event.warning;
+
+  el("agent-approval").hidden = false;
+  el("agent-approve").disabled = false;
+  el("agent-deny").disabled = false;
+  // The card is below the transcript, so a new one arriving while the person
+  // is scrolled up would be silently off-screen.
+  el("agent-log").scrollTop = el("agent-log").scrollHeight;
+}
+
+function hideApproval(outcome) {
+  el("agent-approval").hidden = true;
+  agentApprovalToken = "";
+  if (outcome === "timeout") {
+    agentRow("bad", "Nobody answered in time, so nothing was changed.");
+  }
+}
+
+function answerApproval(allow) {
+  if (!agentApprovalToken) return;
+  // Disabled immediately rather than on the reply: the run is blocked on this
+  // answer, the round trip is not instant, and a second tap on "Do it" would
+  // arrive as an approval for whatever came next.
+  el("agent-approve").disabled = true;
+  el("agent-deny").disabled = true;
+  agentRow("you", allow ? "Approved" : "No");
+  agentSay({ type: "agent.answer", token: agentApprovalToken, allow: allow });
+}
+
+el("agent-approve").addEventListener("click", () => answerApproval(true));
+el("agent-deny").addEventListener("click", () => answerApproval(false));
+
+// Tapped an approval notification. The service worker sends this when the app
+// was already open; `?agent=1` covers the cold-open case below.
+navigator.serviceWorker?.addEventListener("message", (event) => {
+  if ((event.data || {}).type === "open-agent") showAgent(true);
+});
+if (new URLSearchParams(location.search).get("agent") === "1") {
+  // After the token has been read, so the console has something to poll with.
+  setTimeout(() => showAgent(true), 0);
+}
+
+el("open-agent").addEventListener("click", () => showAgent(true));
+el("agent-back").addEventListener("click", () => showAgent(false));
+el("agent-stop").addEventListener("click", () => {
+  agentSay({ type: "agent.stop", run: agentRun });
+});
+
+el("agent-compose").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const box = el("agent-text");
+  const text = box.value.trim();
+  if (!text) return;
+  box.value = "";
+  box.style.height = "auto";
+  agentSay({ type: "agent.ask", text: text });
+});
+
+// Grow with the text, up to the CSS cap. Enter sends; Shift+Enter is a
+// newline, which is what anybody who has used a chat expects.
+el("agent-text").addEventListener("input", (event) => {
+  const box = event.target;
+  box.style.height = "auto";
+  box.style.height = Math.min(box.scrollHeight, 120) + "px";
+});
+el("agent-text").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    el("agent-compose").dispatchEvent(new Event("submit", { cancelable: true }));
+  }
+});
 el("files-refresh").addEventListener("click", loadFiles);
 el("files-send").addEventListener("click", () => el("files-picker").click());
 el("files-picker").addEventListener("change", (event) => {
@@ -1311,6 +1712,7 @@ async function idleCheck() {
       showIncoming("", false);
     }
     filesFromState(state);
+    agentFromState(state);
   } catch (err) { /* offline; the next tick tries again */ }
 }
 el("hang").addEventListener("click", () => endCall("you hung up"));

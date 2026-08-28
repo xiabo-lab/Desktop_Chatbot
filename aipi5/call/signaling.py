@@ -23,11 +23,15 @@ participant in a conversation two people think is private. It is refused.
 from __future__ import annotations
 
 import enum
-import itertools
 import logging
 import threading
 import time
 import uuid
+
+# POLL_TIMEOUT_S and MAX_MAILBOX moved out with the mailbox and are re-exported
+# from here: `aipi5/call/server.py` sizes its socket timeout off the first and
+# has no other reason to know a mailbox is now a separate module.
+from aipi5.call.mailbox import MAX_MAILBOX, POLL_TIMEOUT_S, Mailbox  # noqa: F401
 
 log = logging.getLogger(__name__)
 
@@ -37,19 +41,6 @@ log = logging.getLogger(__name__)
 PI = "pi"
 PHONE = "phone"
 ROLES = (PI, PHONE)
-
-# How long a held GET waits before answering with nothing. Short enough that a
-# phone which has gone to sleep or lost its network is noticed within a
-# reasonable time, long enough that a two-minute silent call is not a hundred
-# round trips. Also bounds how long a request thread is parked, which matters:
-# `ThreadingHTTPServer` gives each one a thread.
-POLL_TIMEOUT_S = 25.0
-
-# A mailbox that is never collected must not grow without limit. A call
-# generates tens of messages, so this is two orders of magnitude of headroom
-# and still bounded — the failure it prevents is a phone that vanished
-# mid-handshake leaving its ICE candidates queued forever.
-MAX_MAILBOX = 256
 
 # How long a ringing call waits for the Pi to answer before giving up. The Pi's
 # page polls state twice a second and answers automatically, so this only ever
@@ -139,15 +130,14 @@ class SignalingHub:
                  phone_silent_s: float = PHONE_SILENT_S,
                  call_out_timeout_s: float = CALL_OUT_TIMEOUT_S):
         self._lock = threading.Condition()
-        self._sequence = itertools.count(1)
-        self._mailboxes: dict[str, list[tuple[int, dict]]] = {r: [] for r in ROLES}
+        #: The seats and their delivery. Its own lock, so a poll parked for
+        #: twenty-five seconds does not share one with the state machine.
+        self._box = Mailbox(ROLES)
         self._state = CallState.IDLE
         self._session = ""
         self._caller = ""
         self._since = 0.0
         self._deadline = 0.0
-        #: monotonic time each seat last asked for its messages.
-        self._seen: dict[str, float] = {}
         self.ring_timeout_s = ring_timeout_s
         self.connect_timeout_s = connect_timeout_s
         self.phone_silent_s = phone_silent_s
@@ -333,15 +323,13 @@ class SignalingHub:
             return True
 
     def _post_locked(self, to: str, message: dict) -> None:
-        box = self._mailboxes[to]
-        box.append((next(self._sequence), message))
-        if len(box) > MAX_MAILBOX:
-            # The oldest go first. A peer this far behind has lost the
-            # handshake anyway, and the alternative is unbounded memory held
-            # for a phone that is not coming back.
-            del box[:-MAX_MAILBOX]
-            log.warning("the %s mailbox overflowed; dropping the oldest", to)
-        self._lock.notify_all()
+        """Deliver while holding the hub lock.
+
+        Still named `_locked` because that is the contract at every call site:
+        the *hub* lock is held. The mailbox takes its own inside, and never
+        calls back out here, so the ordering has no cycle in it.
+        """
+        self._box.post(to, message)
 
     def collect(self, role: str, since: int,
                 timeout: float = POLL_TIMEOUT_S) -> tuple[list[dict], int]:
@@ -351,37 +339,17 @@ class SignalingHub:
         and moves even when the batch is empty, so a caller cannot get stuck
         re-reading the same tail.
         """
-        if role not in ROLES:
-            return [], since
-        deadline = time.monotonic() + timeout
-        with self._lock:
-            # Asking for messages is what proves a peer is still there. Marked
-            # on entry rather than on return, so a poll that waits out its
-            # whole timeout still counts as the phone being present.
-            self._seen[role] = time.monotonic()
-            while True:
-                pending = [(seq, m) for seq, m in self._mailboxes[role]
-                           if seq > since]
-                if pending:
-                    return [m for _, m in pending], pending[-1][0]
-                left = deadline - time.monotonic()
-                if left <= 0:
-                    # Nothing arrived. The cursor is unchanged, which is
-                    # correct — there is nothing new to have consumed.
-                    return [], since
-                self._lock.wait(min(left, 1.0))
+        return self._box.collect(role, since, timeout)
 
     # ── housekeeping ─────────────────────────────────────────────────
 
     def _reset_locked(self) -> None:
-        for role in ROLES:
-            self._mailboxes[role] = []
+        self._box.reset()
         self._state = CallState.IDLE
         self._session = ""
         self._caller = ""
         self._since = 0.0
         self._deadline = 0.0
-        self._seen = {}
 
     def _phone_gone_locked(self) -> bool:
         """True when a connected call's phone has stopped asking for messages.
@@ -392,7 +360,7 @@ class SignalingHub:
         """
         if self._state not in (CallState.CONNECTED, CallState.RECONNECTING):
             return False
-        last = self._seen.get(PHONE)
+        last = self._box.last_seen(PHONE)
         if last is None:
             return False
         return (time.monotonic() - last) > self.phone_silent_s

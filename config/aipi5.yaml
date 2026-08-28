@@ -87,6 +87,17 @@ openai:
   context_idle_s: 600
   max_output_tokens: 400
 
+  # The agent loop's model, empty meaning the same one conversation uses.
+  # Worth setting separately: gpt-5.6-luna refuses a tools array unless
+  # reasoning_effort is "none" (see _variants in aipi5/llm/client.py), and an
+  # agent loop is nothing but tool calls.
+  agent_model: ""
+  agent_timeout_s: 120.0
+  # **Not max_output_tokens.** That is 400, tuned for a sentence somebody
+  # listens to. An agent that has to plan its next step in 400 tokens stops
+  # planning and starts looping.
+  agent_max_output_tokens: 2000
+
 weather:
   # Open-Meteo: no API key, no account, and no per-request quota to run out of
   # in the middle of a screensaver. The URL is configurable so a household with
@@ -605,6 +616,61 @@ files:
   reserve_gb: 2.0
   # The Pi has four cores and one uplink; two at once is already generous.
   max_concurrent: 2
+
+# ── the agent ────────────────────────────────────────────────────────
+#
+# The second intelligence in this device. The assistant answers questions and
+# calls a fixed set of safe tools; the agent investigates, plans, acts, checks
+# the result and can undo it. It is reached from the phone's console over
+# Tailscale, not from the screen.
+#
+# **Off here, on where it is deployed** — the same shape as `call.enabled`
+# above, and kept that way by `deploy.sh`'s PROTECTED rule, because a checkout
+# of this repository must not stand up a privileged service by being deployed.
+#
+# **What the agent may read, write, restart or install is deliberately NOT in
+# this file.** Those lists live in `/usr/local/lib/aipi5-agent/policy.py`,
+# owned by root and installed by `scripts/install-agent.sh` running by hand. If
+# they were here the agent could widen its own permissions using the very
+# `write_config` those permissions govern, and a routine deploy could change
+# what root does without anybody deciding to.
+#
+# Requires `scripts/install-agent.sh` to have been run once as root: it creates
+# the `aipi5-agent` user, the privileged helper and both sockets.
+agent:
+  enabled: false
+
+  # Where the runtime listens for the phone's requests, proxied by the call
+  # server. A Unix socket rather than a port: the filesystem permission is the
+  # authentication, so there is no shared secret to distribute between two
+  # processes running as different users, and both ends can check SO_PEERCRED.
+  socket: /run/aipi5-agent/api.sock
+  helper_socket: /run/aipi5-agent-helper.sock
+
+  # Every one of these is a way for a run to end. A loop that cannot finish is
+  # the failure mode of an agent, and it costs real money while it happens.
+  #
+  # When any of them is hit the loop makes one more request with no tools
+  # offered, so the run ends in a sentence — "I ran out of steps, and here is
+  # what I found" — rather than simply stopping mid-thought.
+  max_steps: 24
+  max_tool_calls: 40
+  max_runtime_s: 900
+  max_tokens: 400000
+
+  # A day's worth of runs. The other ceilings bound one run; this bounds a bad
+  # night. Resets at local midnight.
+  daily_run_limit: 40
+
+  # How long the phone parks on a held GET. Comfortably inside the call
+  # server's own socket timeout (POLL_TIMEOUT_S + 15), so a poll that waits out
+  # its whole window trips nothing underneath it.
+  poll_timeout_s: 20
+
+  # Stage 2, and unused until there is something to approve: how long a change
+  # waits for somebody to say yes. A timeout is a refusal, never an assumption.
+  approval_timeout_s: 300
+
 
 assistant:
   # Everything the router does not recognise goes to the model. Turning this

@@ -57,6 +57,32 @@ class Reply:
         return self.ok and bool(self.text.strip())
 
 
+@dataclass
+class Step:
+    """One request and what came back, for a caller that owns its own history.
+
+    `Reply` is the answer to a *turn* — a sentence, and the tool names that were
+    used getting to it. This is the answer to a single *request*: whatever text
+    arrived, the tool calls the model wants made, and the assistant message in
+    the exact shape the API will take back.
+    """
+
+    text: str = ""
+    ok: bool = True
+    error: str = ""
+    ms: float = 0.0
+    #: The SDK's own tool-call objects, with `.id` and `.function`.
+    tool_calls: list = field(default_factory=list)
+    #: `_as_dict(message)` — append this to history verbatim. Rebuilding it
+    #: loses the tool-call ids, which the API then rejects.
+    message: dict | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+
 class LlmUnavailable(RuntimeError):
     """There is no usable client at all — no key, or the SDK is not installed.
 
@@ -250,6 +276,57 @@ class OpenAIClient:
                      ms=(time.monotonic() - started) * 1000)
 
     # ── the one place a request is actually made ─────────────────────
+
+    def step(self, messages: list[dict], tools: list[dict] | None = None,
+             *, max_tokens: int | None = None,
+             model: str | None = None, timeout: float | None = None) -> Step:
+        """One request. No conversation object, no history management.
+
+        `respond()` owns a *turn*: it holds a `Conversation`, runs the tool loop
+        to `MAX_TOOL_ROUNDS` and returns a sentence to speak. The agent needs
+        the request without the turn — its history is not a conversation, its
+        ceiling is not three, and what it does between calls is its own.
+
+        Everything hard is still shared. `_request` carries the two negotiated
+        request shapes, and the second of them matters here more than anywhere:
+        `gpt-5.6-luna` refuses a tools array unless `reasoning_effort` is
+        `"none"`, and an agent loop is nothing but tool calls. Re-implementing
+        this would rediscover that the slow way.
+
+        Never raises. The agent loop has to be able to report a failed step and
+        decide whether to try again.
+        """
+        started = time.monotonic()
+        try:
+            response = self._request(
+                messages=messages,
+                tools=tools or None,
+                max_tokens=max_tokens or self.cfg.agent_max_output_tokens,
+                model=model or self.cfg.agent,
+                timeout=timeout if timeout is not None else self.cfg.agent_timeout_s,
+            )
+        except Exception as exc:                    # noqa: BLE001
+            ms = (time.monotonic() - started) * 1000.0
+            log.warning("agent step failed after %.0f ms: %s", ms, exc)
+            return Step(ok=False, ms=ms,
+                        error=_explain(exc, model or self.cfg.agent))
+
+        ms = (time.monotonic() - started) * 1000.0
+        try:
+            message = response.choices[0].message
+        except (AttributeError, IndexError):
+            return Step(ok=False, ms=ms,
+                        error="the model returned no message")
+        usage = getattr(response, "usage", None)
+        return Step(
+            text=(getattr(message, "content", None) or "").strip(),
+            ok=True,
+            ms=ms,
+            tool_calls=list(getattr(message, "tool_calls", None) or []),
+            message=_as_dict(message),
+            prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+            completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+        )
 
     def _request(self, *, messages, tools, max_tokens, model=None, timeout=None):
         """Send, retrying the token parameter and the network once each.

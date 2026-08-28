@@ -31,24 +31,40 @@ self.addEventListener("push", (event) => {
   } catch (err) {
     data = {};
   }
-  if (data.type !== "call") return;
+  if (!["call", "approval", "reminder"].includes(data.type)) return;
 
-  const title = data.title || "AIPI5 is calling";
-  const body = data.body || "Tap to answer";
+  // An approval is the opposite kind of notification to a ring. A missed call
+  // is worthless afterwards, so it clears itself; a missed approval is a
+  // change that did not happen and a person who should know why, so it stays
+  // on the lock screen until it is dealt with.
+  const approval = data.type === "approval";
+  const reminder = data.type === "reminder";
+  const title = data.title || (approval ? "AIPI5 needs your approval"
+                             : reminder ? "AIPI5 reminder"
+                                        : "AIPI5 is calling");
+  const body = data.body || (approval ? "Tap to see what it wants to change"
+                           : reminder ? ""
+                                      : "Tap to answer");
 
   event.waitUntil(self.registration.showNotification(title, {
     body,
     icon: "/icon-180.png",
     badge: "/icon-180.png",
-    // `renotify` with a stable tag: a second ring for the same call replaces
+    // `renotify` with a stable tag: a second push for the same thing replaces
     // the first rather than stacking, and still alerts. Without the tag a
     // retried push would leave a column of identical notifications.
-    tag: "aipi5-call",
+    // A reminder gets its own tag per reminder, so two set for the same
+    // morning do not replace each other -- unlike a ring, where a second push
+    // for the same call should collapse into the first.
+    tag: approval ? "aipi5-approval"
+       : reminder ? "aipi5-reminder-" + (data.token || "")
+                  : "aipi5-call",
     renotify: true,
-    // The call is worthless once it has stopped ringing, so the notification
-    // should not sit there afterwards inviting a tap that answers nothing.
-    requireInteraction: false,
-    data: { session: data.session || "", at: Date.now() },
+    // A missed call is worthless afterwards. A missed reminder is the whole
+    // point, so it stays on the lock screen until it is dealt with.
+    requireInteraction: approval || reminder,
+    data: { session: data.session || "", at: Date.now(),
+            kind: data.type, token: data.token || "" },
   }));
 });
 
@@ -64,8 +80,11 @@ self.addEventListener("notificationclick", (event) => {
       if ("focus" in client) {
         // Tell the page which call this was, so it can pick up without waiting
         // for its next poll.
-        client.postMessage({ type: "answer-call",
-                             session: (event.notification.data || {}).session });
+        const info = event.notification.data || {};
+        client.postMessage(
+          (info.kind === "approval" || info.kind === "reminder")
+            ? { type: "open-agent", token: info.token || "" }
+            : { type: "answer-call", session: info.session });
         return client.focus();
       }
     }
@@ -73,7 +92,10 @@ self.addEventListener("notificationclick", (event) => {
     // phone.html about why the fragment is not stripped — so a cold open from
     // here lands on a page that can authenticate.
     if (self.clients.openWindow) {
-      return self.clients.openWindow("/?ring=1");
+      const info = event.notification.data || {};
+      return self.clients.openWindow(
+        (info.kind === "approval" || info.kind === "reminder")
+          ? "/?agent=1" : "/?ring=1");
     }
   })());
 });

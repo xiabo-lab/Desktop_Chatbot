@@ -1,0 +1,40 @@
+[Unit]
+Description=AIPI5 agent privileged helper
+Documentation=file:/home/fuwenxu/AIPI5/aipi5/agent/helper/main.py
+Requires=aipi5-agent-helper.socket
+After=aipi5-agent-helper.socket
+
+[Service]
+Type=simple
+
+# **The system interpreter, and code under /usr/local/lib -- neither of them in
+# the repository or the venv.** `scripts/install-agent.sh` copies the helper
+# into place and `scripts/deploy.sh` deliberately does not run it, so a routine
+# deploy cannot change what root executes, and `pip install` cannot either.
+ExecStart=/usr/bin/python3 /usr/local/lib/aipi5-agent/main.py
+Environment=PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+
+# Where the audit log and the change backups live. Root-owned, group-readable
+# by the agent: it may read the record of what was done to the device, and may
+# not edit it.
+LogsDirectory=aipi5-agent
+LogsDirectoryMode=0750
+# **Its own, not the runtime's.** These used to share a name, and
+# systemd gives a StateDirectory to the user its unit runs as -- which
+# was the agent, leaving it able to edit the backups it would be rolled
+# back from, and so to write configuration as root with nobody asked.
+StateDirectory=aipi5-agent-helper
+StateDirectoryMode=0750
+
+# Deliberately lightly hardened. This process exists to take privileged action;
+# sandboxing away the privileges it is for would either break it or, worse,
+# read as a control while quietly being disabled by the exceptions needed to
+# make it work. The real boundary is `policy.py`, not a sandbox.
+PrivateTmp=yes
+NoNewPrivileges=no
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

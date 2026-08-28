@@ -342,5 +342,91 @@ class TestTheVoiceLoopNoLongerOwnsIt(unittest.TestCase):
                 f"a dead microphone stops it running")
 
 
+
+class TestDeliveringAgentReminders(unittest.TestCase):
+    """The assistant sends what the agent scheduled, exactly once.
+
+    It lives here rather than in the agent because it has to: the VAPID keys
+    are under `~/.config/aipi5`, in a home the agent user cannot traverse.
+
+    The duplicate this guards was real. `AgentProxy.snapshot()` caches for two
+    seconds so the phone's idle poll does not wake the agent constantly; this
+    job runs every second, so it saw the same reminder twice before the
+    acknowledgement landed, and a phone received "check the oven" twice one
+    second apart.
+    """
+
+    def setUp(self):
+        from aipi5.core.housekeeping import Housekeeping
+
+        self.pushed = []
+        self.acked = []
+        test = self
+
+        class Push:
+            def ring(self, device, payload):
+                test.pushed.append((device, payload))
+                return True, "sent"
+
+        class Subs:
+            def names(self):
+                return ["a phone"]
+
+        class Call:
+            push = Push()
+            subscriptions = Subs()
+
+        class Agent:
+            # Deliberately never changes: a cached snapshot that keeps
+            # reporting the same reminder is exactly the failure.
+            def snapshot(self):
+                return {"notify": [{"id": "m-1", "text": "check the oven",
+                                    "deliver": "push"}]}
+
+            def say(self, message):
+                test.acked.append(message)
+                return 200, {"ok": True}
+
+        class Assistant:
+            agent = Agent()
+            call = Call()
+
+        self.keeper = Housekeeping.__new__(Housekeeping)
+        self.keeper.assistant = Assistant()
+        self.keeper._rung_for = ""
+        self.keeper._sent = set()
+        self.keeper._failures = 0
+
+    def test_a_reminder_is_delivered_once_however_often_it_is_offered(self):
+        for _ in range(5):
+            self.keeper._agent_reminders()
+        self.assertEqual(1, len(self.pushed),
+                         "the same reminder went out more than once")
+
+    def test_the_agent_is_told_it_was_delivered(self):
+        self.keeper._agent_reminders()
+        self.assertEqual(1, len(self.acked))
+        self.assertEqual("agent.delivered", self.acked[0]["type"])
+        self.assertEqual("m-1", self.acked[0]["id"])
+        self.assertTrue(self.acked[0]["ok"])
+
+    def test_what_is_pushed_says_what_the_reminder_said(self):
+        self.keeper._agent_reminders()
+        _, payload = self.pushed[0]
+        self.assertEqual("reminder", payload["type"])
+        self.assertEqual("check the oven", payload["body"])
+
+    def test_nothing_happens_when_there_is_no_agent(self):
+        self.keeper.assistant.agent = None
+        self.keeper._agent_reminders()
+        self.assertEqual([], self.pushed)
+
+    def test_the_memory_of_what_was_sent_does_not_grow_for_ever(self):
+        """Pruned to what is still due, or it is a leak in a service that
+        runs for months."""
+        self.keeper._sent = {f"m-old-{n}" for n in range(500)}
+        self.keeper._agent_reminders()
+        self.assertEqual({"m-1"}, self.keeper._sent)
+
 if __name__ == "__main__":
     unittest.main()

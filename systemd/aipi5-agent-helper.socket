@@ -1,0 +1,24 @@
+[Unit]
+Description=AIPI5 agent privileged helper socket
+Documentation=file:/home/fuwenxu/AIPI5/aipi5/agent/helper/main.py
+
+[Socket]
+ListenStream=/run/aipi5-agent-helper.sock
+
+# The socket is created by systemd, before the helper starts, already owned
+# correctly. Doing it here rather than in the service means there is no window
+# in which the socket exists with the wrong mode -- which would be a window in
+# which anybody on the machine could ask root to do things.
+SocketUser=root
+SocketGroup=aipi5-agent
+SocketMode=0660
+
+# One operation per connection, and the helper serves them one at a time. A
+# backlog rather than parallelism: these are seconds-long privileged actions,
+# not a web server, and "one mutation in flight" is easier to guarantee when
+# there is one worker.
+Backlog=16
+Accept=no
+
+[Install]
+WantedBy=sockets.target

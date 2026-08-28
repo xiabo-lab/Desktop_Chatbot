@@ -117,6 +117,13 @@ class Housekeeping:
         self._weather_ok: bool | None = None
         self._ticks = 0
         self._failures = 0
+        #: The approval token the phone has already been rung about, so a
+        #: question waiting five minutes is one notification and not three
+        #: hundred.
+        self._rung_for = ""
+        #: And the reminders already delivered, for the same reason at a
+        #: shorter timescale. Pruned to what is still due, so it cannot grow.
+        self._sent: set[str] = set()
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="aipi5-housekeeping",
@@ -181,9 +188,102 @@ class Housekeeping:
             self._guard("re-checking degraded subsystems",
                         self.assistant.recheck_degraded)
 
+        # The agent, when there is one. Cheap: the proxy caches its snapshot
+        # for two seconds, so this is one Unix-socket round trip every few
+        # ticks and nothing at all when the agent is not installed.
+        self._guard("checking for an agent approval", self._agent_approval)
+        self._guard("delivering agent reminders", self._agent_reminders)
+
         # Last, and always: it reconciles the call state and publishes the UI
         # snapshot, so it should carry whatever the three above just changed.
         self._guard("publishing state", self.assistant.on_call_change)
+
+    def _agent_reminders(self) -> None:
+        """Send whatever the agent has scheduled for now.
+
+        Here for the same reason the approval push is: the VAPID keys live
+        under `~/.config/aipi5`, in a home the agent user cannot traverse. The
+        agent decides *what* and *when*; this decides nothing and only sends.
+
+        That is worth more than tidiness. It means a compromised agent can
+        schedule a notification and still cannot reach the account that sends
+        one, because it never had the credentials to begin with.
+        """
+        agent = getattr(self.assistant, "agent", None)
+        call = getattr(self.assistant, "call", None)
+        if agent is None or call is None:
+            return
+        snapshot = agent.snapshot() or {}
+        due = snapshot.get("notify") or []
+
+        # **The snapshot is cached for two seconds** so the phone's four-second
+        # idle poll does not wake the agent constantly. This job runs every
+        # second, so it sees the same reminder twice before the acknowledgement
+        # takes effect -- measured on the device, which delivered "check the
+        # oven" to a phone twice, one second apart.
+        #
+        # Remembering what has gone out is the fix rather than dropping the
+        # cache: it also covers an acknowledgement that failed to arrive, which
+        # no amount of freshness would.
+        self._sent = {i for i in self._sent
+                      if i in {d.get("id") for d in due}} or set()
+
+        for item in due:
+            ident, text = item.get("id", ""), item.get("text", "")
+            if not ident or ident in self._sent:
+                continue
+            self._sent.add(ident)
+            sent, detail = False, "no phone is set up to be rung"
+            for device in call.subscriptions.names():
+                sent, detail = call.push.ring(device, {
+                    "type": "reminder", "title": "AIPI5 reminder",
+                    "body": text[:150], "token": ident})
+                if sent:
+                    break
+            log.info("reminder %s: %s", ident, "sent" if sent else detail)
+            agent.say({"type": "agent.delivered", "id": ident,
+                       "ok": bool(sent), "detail": detail[:200]})
+
+    def _agent_approval(self) -> None:
+        """Ring the phone when the agent is waiting for somebody to answer.
+
+        **This lives here rather than in the agent because it has to.** The
+        VAPID keys and the push subscriptions are under `~/.config/aipi5`,
+        owned by fuwenxu, in a home the agent user cannot traverse — that
+        separation is the whole point of the agent running as somebody else. So
+        the assistant, which can read them, watches the agent's snapshot and
+        does the ringing.
+
+        Without it the approval timeout is a promise that cannot be kept: a
+        backgrounded web app on iOS does not poll, so a question asked while
+        the phone is in a pocket would simply expire unseen.
+        """
+        agent = getattr(self.assistant, "agent", None)
+        if agent is None:
+            return
+        snapshot = agent.snapshot()
+        pending = (snapshot or {}).get("pending")
+        if not pending:
+            self._rung_for = ""
+            return
+
+        token = pending.get("token", "")
+        if not token or token == self._rung_for:
+            return                      # already rung for this one
+        self._rung_for = token
+
+        call = getattr(self.assistant, "call", None)
+        if call is None:
+            return
+        for device in call.subscriptions.names():
+            sent, detail = call.push.ring(device, {
+                "type": "approval",
+                "title": "AIPI5 needs your approval",
+                "body": pending.get("what", "")[:120],
+                "token": token,
+            })
+            log.info("approval push to %s: %s", device,
+                     "sent" if sent else detail)
 
     def _guard(self, what: str, call):
         """Run one job, swallowing anything it throws. Returns its result."""

@@ -1,0 +1,83 @@
+[Unit]
+Description=AIPI5 agent runtime
+Documentation=file:/home/fuwenxu/AIPI5/aipi5/agent/runtime.py
+Requires=aipi5-agent.socket
+After=aipi5-agent.socket aipi5-agent-helper.socket network-online.target
+
+# **No ordering edge onto anything in fuwenxu's user session, and none wanted.**
+# systemd breaks an ordering cycle by deleting a job from it, and this project
+# has already lost a boot that way -- see the long comment in systemd/aipi5.service.
+# The agent needs the assistant for nothing: it reaches the device through the
+# privileged helper, and the phone reaches it through a proxy that answers 503
+# while it is down.
+
+[Service]
+Type=simple
+User=aipi5-agent
+Group=aipi5-agent
+
+# It runs the repository's code out of the repository's venv, but as a user who
+# cannot write a byte of either. ProtectHome=tmpfs hides /home entirely and the
+# bind mount puts back exactly one directory, read-only.
+ExecStart=/home/fuwenxu/AIPI5/.venv/bin/python -m aipi5.agent.runtime
+WorkingDirectory=/home/fuwenxu/AIPI5
+Environment=PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+Environment=AIA_HOME=/home/fuwenxu/AI_Assit
+
+# The key, handed over by systemd rather than read from the repository. It
+# arrives at $CREDENTIALS_DIRECTORY/openai, owned by this user, mode 0400, in a
+# tmpfs that is unmounted when the service stops.
+LoadCredential=openai:/etc/aipi5-agent/openai.key
+
+StateDirectory=aipi5-agent
+StateDirectoryMode=0750
+
+# ── the sandbox ──────────────────────────────────────────────────────
+#
+# This is the boundary, and it is a kernel mount namespace rather than a rule
+# somebody has to remember to check.
+#
+# ProtectHome=tmpfs is the one that matters. /home/fuwenxu is mode 700 already,
+# but this makes the point structural: the agent cannot see the home directory
+# at all, so it cannot drop a unit file in ~/.config/systemd/user/ or append to
+# ~/.bashrc and become fuwenxu -- who carries NOPASSWD: ALL and is therefore
+# root. Every file it touches goes through the helper, and the helper's
+# allowlist is the only place path policy lives.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindReadOnlyPaths=/home/fuwenxu/AIPI5
+BindReadOnlyPaths=/home/fuwenxu/AI_Assit
+# Quoted: the filename has a space in it, and unquoted systemd splits on it
+# and logs "path is not absolute, ignoring: API.txt" -- a directive that
+# looks present and does nothing.
+InaccessiblePaths=-"/home/fuwenxu/AIPI5/openai API.txt"
+ReadWritePaths=/var/lib/aipi5-agent
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+# AF_UNIX for the two sockets, AF_INET/AF_INET6 to reach the API. Nothing else.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# MemoryDenyWriteExecute is deliberately NOT set: some numpy and ctypes import
+# paths need W+X, and the failure is an obscure crash at import rather than a
+# clear refusal.
+
+MemoryMax=768M
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

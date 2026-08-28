@@ -246,6 +246,10 @@ class _Handler(BaseHTTPRequestHandler):
             # it to build a subscription. It is a public key; publishing it is
             # what it is for.
             self._json({"key": self.call.push.keys.public()})
+        elif route.path == "/agent/v1/poll":
+            self._agent_poll(route.query)
+        elif route.path == "/agent/v1/state":
+            self._agent_state()
         elif route.path == "/manifest.webmanifest":
             self._manifest()
         elif route.path == "/call/v1/poll":
@@ -339,7 +343,8 @@ class _Handler(BaseHTTPRequestHandler):
                   "/call/v1/subscribe": self._subscribe,
                   "/call/v1/pickup": self._pickup,
                   "/call/v1/files/ticket": self._file_ticket,
-                  "/call/v1/files/delete": self._file_delete}
+                  "/call/v1/files/delete": self._file_delete,
+                  "/agent/v1/say": self._agent_say}
         handler = routes.get(path)
         if handler is None:
             self._json({"error": "not found"}, 404)
@@ -389,6 +394,51 @@ class _Handler(BaseHTTPRequestHandler):
             ],
         }).encode("utf-8"), "application/manifest+json")
 
+    # ── the agent console ───────────────────────────────────────────
+    #
+    # Three routes, and each is the same two lines: authenticate the phone the
+    # way every other route here does, then forward. Nothing about the agent is
+    # decided in this process — the transcript, the run and the mailbox are all
+    # on the other side of a Unix socket, owned by a user this one is not.
+    #
+    # That is why a restart of the assistant costs the phone a connection and
+    # nothing else: it re-polls from its cursor and everything that happened
+    # while it was away is still queued.
+
+    def _agent_missing(self) -> bool:
+        if self.call.agent is not None:
+            return False
+        self._json({"error": "the agent is not installed on this device"}, 503)
+        return True
+
+    def _agent_poll(self, query: str) -> None:
+        if self._device() is None or self._agent_missing():
+            return
+        since = 0
+        for key, values in parse_qs(query).items():
+            if key == "since" and values:
+                try:
+                    since = int(values[0])
+                except ValueError:
+                    since = 0
+        status, payload = self.call.agent.poll(since)
+        self._json(payload, status)
+
+    def _agent_state(self) -> None:
+        if self._device() is None or self._agent_missing():
+            return
+        snapshot = self.call.agent.snapshot()
+        if snapshot is None:
+            self._json({"error": "the agent is not answering"}, 503)
+            return
+        self._json(snapshot)
+
+    def _agent_say(self) -> None:
+        if self._device() is None or self._agent_missing():
+            return
+        status, payload = self.call.agent.say(self._payload)
+        self._json(payload, status)
+
     def _state(self) -> None:
         device = self._device()
         if device is None:
@@ -404,6 +454,12 @@ class _Handler(BaseHTTPRequestHandler):
         # on the poll it is already making while idle.
         state["files_rev"] = (self.call.files.revision()
                               if self.call.files is not None else 0)
+        # And so a pending run — or, from stage 2, an approval waiting for an
+        # answer — raises a mark on the home screen while the person is
+        # somewhere else in the app. Cached in the proxy for two seconds, so
+        # this costs the agent nothing on a poll happening anyway.
+        state["agent"] = (self.call.agent.snapshot()
+                          if self.call.agent is not None else None)
         self._json(state)
 
     def _ring(self) -> None:
@@ -695,10 +751,15 @@ class CallServer:
     """
 
     def __init__(self, cfg, *, hub: SignalingHub, devices,
-                 on_change=lambda: None, files=None):
+                 on_change=lambda: None, files=None, agent=None):
         self.cfg = cfg
         self.hub = hub
         self.devices = devices
+        # The agent console, or None where the agent is not installed. Same
+        # shape as `files` above: this module owns no agent logic, it
+        # authenticates the phone and forwards. Everything the agent knows
+        # lives in another process under another user.
+        self.agent = agent
         # The transfer folder, or None where file transfer is not configured.
         # This module owns no filesystem logic: it authenticates, and asks.
         self.files = files

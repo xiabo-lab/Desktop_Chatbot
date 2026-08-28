@@ -1,0 +1,25 @@
+[Unit]
+Description=AIPI5 agent API socket
+Documentation=file:/home/fuwenxu/AIPI5/aipi5/agent/runtime.py
+
+[Socket]
+ListenStream=/run/aipi5-agent/api.sock
+
+# The call server runs as fuwenxu and is the only thing that talks to this, so
+# the socket is owned by the agent and readable by fuwenxu's group. systemd
+# creates it before the runtime starts, already owned correctly -- there is no
+# window in which it exists with the wrong mode.
+SocketUser=aipi5-agent
+SocketGroup=fuwenxu
+SocketMode=0660
+
+# The directory too, or the socket cannot be created and the failure looks like
+# the runtime refusing to start.
+RuntimeDirectory=aipi5-agent
+RuntimeDirectoryMode=0755
+
+Backlog=32
+Accept=no
+
+[Install]
+WantedBy=sockets.target

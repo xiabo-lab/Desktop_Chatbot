@@ -68,6 +68,7 @@ from aia.ui.retention import Retention
 
 from aipi5 import __version__
 from aipi5.call.server import CallServer
+from aipi5.agent.proxy import AgentProxy
 from aipi5.call.signaling import SignalingHub
 from aipi5.call.tokens import TrustedDevices
 from aipi5.core import config as config_mod
@@ -263,10 +264,19 @@ class Assistant:
         # before the call server, which is handed it.
         self.files = FileStore(settings.files)
         self.files.start()
+        # The agent console, when the agent is installed. This is a socket path
+        # and a timeout and nothing else — `aipi5-agent.service` owns the
+        # runtime, under a user this process is not, and the assistant holds no
+        # part of it. A restart of *this* service therefore costs the phone its
+        # connection and none of its transcript, which matters because
+        # "restart the assistant" is the commonest thing the agent is asked to
+        # do. See aipi5/agent/runtime.py.
+        self.agent = (AgentProxy(settings.agent.socket)
+                      if settings.agent.enabled else None)
         self.call = CallServer(settings.call, hub=self.call_hub,
                                devices=self.call_devices,
                                on_change=self.on_call_change,
-                               files=self.files)
+                               files=self.files, agent=self.agent)
         #: What the call was doing last time we looked, so a transition can be
         #: acted on once rather than on every poll.
         self._call_live = False
@@ -318,6 +328,10 @@ class Assistant:
         self.games = GameManager(
             settings.games, motion_cfg=settings.motion,
             camera=self.camera, audio=self.audio, screen=self.screen,
+            # The fourth thing a game borrows: her voice. The Yoga Coach reads
+            # each pose's instruction aloud; `_game_speak` is late-bound
+            # because the speaker is not built until `start()`.
+            speak=self._game_speak,
             on_change=self.publish) if settings.games.enabled else None
         # The periodic maintenance, on its own clock rather than the voice
         # loop's. See `core/housekeeping.py` for the failure that caused it to
@@ -347,6 +361,21 @@ class Assistant:
         self._llm_detail = ""
 
     # ── startup ──────────────────────────────────────────────────────
+
+    def _game_speak(self, text: str) -> None:
+        """Say a line on a game's behalf, and never at its expense.
+
+        Non-blocking, and silent rather than fatal if the speaker is not up:
+        the pose loop calls this, and a class that stops animating while the
+        coach talks is worse than a class nobody hears.
+        """
+        speaker = getattr(self, "speaker", None)
+        if speaker is None:
+            return
+        try:
+            speaker.say(text, "en", blocking=False)
+        except Exception:  # noqa: BLE001
+            log.warning("a game could not be spoken for", exc_info=True)
 
     def start(self) -> bool:
         """Bring everything up. False only when something critical failed."""
@@ -763,6 +792,11 @@ class Assistant:
                        "service": self.settings.kodama.service},
             "call": self.call.describe(),
             "files": self.files.describe(),
+            # None when the agent is not installed, which the settings page
+            # shows as "not installed" rather than as a broken agent.
+            "agent": ({"enabled": True, "socket": str(self.agent.socket_path),
+                       "reachable": self.agent.available()}
+                      if self.agent is not None else {"enabled": False}),
             "checks": self.report.as_dict() if self.report else {},
         }
 
@@ -819,9 +853,26 @@ class Assistant:
         # A camera description reached the screen through the tool result; the
         # spoken reply is the model's summary of it, and both belong on the
         # display. The description is what the tool put there.
+        #
+        # The picture goes with it. Section 19 asks for the description on the
+        # display; what the Talk page now shows is the photograph the
+        # description was made from, and the only thing that knows which of the
+        # files on tmpfs that is, is the camera that just wrote it.
         if self.vision is not None and "describe_camera_image" in reply.tool_calls:
-            self.ui_state.describe_camera(self.vision.last_description)
+            self.ui_state.describe_camera(self.vision.last_description,
+                                          self._last_capture_at())
         return reply.text
+
+    def _last_capture_at(self) -> float | None:
+        """When the newest still was taken, or None if there is not one.
+
+        A token, not a path. It is what the page hangs off
+        `/api/camera/capture?t=` to stop Chromium drawing the previous
+        photograph under the current answer — see `_camera_capture` in
+        `aipi5/ui/server.py`.
+        """
+        still = self.camera.last_capture
+        return still.taken_at if still is not None else None
 
     # ── shutdown ─────────────────────────────────────────────────────
 
@@ -1372,17 +1423,29 @@ def handle_button(assistant, action: str, language: str, turn=None) -> None:
                                  language)
         role = "aia:news"
     elif action == "camera":
-        role = "aia:camera"
-        # The camera page draws this over the live preview and fades it ten
-        # seconds after the speaking stops. Published with an id so a second
-        # identical description of an unchanged room still reads as a new
-        # answer rather than as the old one still being on screen.
+        # `aia`, not `aia:camera`. The camera no longer has a page of its own
+        # to speak on — the button is on the Talk page and the answer belongs
+        # in the conversation there, beside the picture it was made from. A
+        # role of its own is for a page speaking about its own subject, which
+        # the weather and news summaries still are; this is now somebody asking
+        # the assistant a question by pressing a button instead of saying it.
+        # See `_feed` in aipi5/ui/server.py for the filter this passes.
+        role = "aia"
+        # The Talk page draws this beside the capture and fades it ten seconds
+        # after the speaking stops. Published with an id so a second identical
+        # description of an unchanged room still reads as a new answer rather
+        # than as the old one still being on screen.
         #
         # `answer` already publishes it when the model actually called the
         # vision tool, so this only fills in the case where it answered
         # without looking. Detected by the id rather than by the text: writing
         # it unconditionally bumped the id twice for one press, which showed
         # the overlay, restarted its ten-second fade, and showed it again.
+        #
+        # No picture on this branch, and that is the point of it: the model
+        # answered without a capture, so there is nothing taken just now to
+        # draw. Passing the last one would put a photograph of whenever that
+        # was under a sentence that never looked at it.
         before = assistant.ui_state.snapshot()["camera_description_id"]
         reply = assistant.answer(
             "What do you see?" if language == "en" else "你看到了什么？", language)

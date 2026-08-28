@@ -106,6 +106,29 @@ class OpenAIConfig:
     context_idle_s: float = 600.0
     max_output_tokens: int = 400
 
+    # The agent loop's own settings. Separate because the two jobs are not
+    # alike: conversation is one request whose answer is read aloud, and the
+    # agent is a loop of tool calls whose answer is read on a phone.
+    agent_model: str = ""
+    agent_timeout_s: float = 120.0
+    # **Deliberately not `max_output_tokens`.** That is 400, tuned for sentences
+    # somebody listens to. An agent that has to plan its next step in 400 tokens
+    # stops planning and starts looping.
+    agent_max_output_tokens: int = 2000
+
+    @property
+    def agent(self) -> str:
+        """Which model runs the agent loop.
+
+        Empty means the conversational one, the same way `vision` works, so
+        changing `model` in the YAML changes both — which is what somebody
+        editing one line expects. Worth setting separately: `gpt-5.6-luna`
+        refuses a tools array unless `reasoning_effort` is `"none"` (see
+        `_variants` in `aipi5/llm/client.py`), and an agent loop is nothing but
+        tool calls.
+        """
+        return self.agent_model or self.model
+
     @property
     def vision(self) -> str:
         """Which model sees pictures.
@@ -409,6 +432,41 @@ def _max_upload_bytes() -> int:
 
 
 @dataclass(frozen=True)
+class AgentConfig:
+    """The agent layer. Off in the repository, on where it is deployed.
+
+    **The allowlists are deliberately not here.** What the agent may read,
+    write, restart or install lives in `/usr/local/lib/aipi5-agent/policy.py`,
+    root-owned and installed by hand. If it were in this file the agent could
+    widen its own permissions with the same `write_config` those permissions
+    govern, and a routine deploy could change what root does without anybody
+    deciding to.
+    """
+
+    enabled: bool = False
+    #: Where `AgentRuntime` listens for the phone's requests, proxied by the
+    #: call server. A Unix socket rather than a port: the filesystem permission
+    #: is the authentication, and there is no secret to distribute between two
+    #: processes running as different users.
+    socket: Path = Path("/run/aipi5-agent/api.sock")
+    helper_socket: Path = Path("/run/aipi5-agent-helper.sock")
+    #: Ceilings for one run. A loop that cannot end is the failure mode here,
+    #: and every one of these is a way of ending.
+    max_steps: int = 24
+    max_tool_calls: int = 40
+    max_runtime_s: float = 900.0
+    max_tokens: int = 400_000
+    #: How long a run may wait for somebody to answer an approval. Stage 2.
+    approval_timeout_s: float = 300.0
+    #: The held GET the phone parks on. Comfortably inside the call server's own
+    #: socket timeout, so a poll that waits its full window trips nothing below.
+    poll_timeout_s: float = 20.0
+    #: A day's worth of runs, so a loop that survives every other ceiling still
+    #: cannot spend the month's budget overnight.
+    daily_run_limit: int = 40
+
+
+@dataclass(frozen=True)
 class FilesConfig:
     """The folder the phone can put things in, and the limits around it.
 
@@ -462,6 +520,7 @@ class Settings:
     kodama: KodamaLaunchConfig = field(default_factory=KodamaLaunchConfig)
     call: CallConfig = field(default_factory=CallConfig)
     files: FilesConfig = field(default_factory=FilesConfig)
+    agent: AgentConfig = field(default_factory=AgentConfig)
     assistant: AssistantConfig = field(default_factory=AssistantConfig)
 
     #: Where this was loaded from, for the settings page.
@@ -659,6 +718,7 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
     kodama = _require_mapping(raw.get("kodama"), "kodama")
     call = _require_mapping(raw.get("call"), "call")
     files = _require_mapping(raw.get("files"), "files")
+    agent = _require_mapping(raw.get("agent"), "agent")
     assistant = _require_mapping(raw.get("assistant"), "assistant")
 
     feeds = news.get("feeds") or list(_DEFAULT_FEEDS)
@@ -692,6 +752,11 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
             context_idle_s=_positive(openai.get("context_idle_s", 600.0), 600.0,
                                      "openai.context_idle_s"),
             max_output_tokens=max(1, int(openai.get("max_output_tokens", 400))),
+            agent_model=str(openai.get("agent_model", "") or ""),
+            agent_timeout_s=_positive(openai.get("agent_timeout_s", 120.0), 120.0,
+                                      "openai.agent_timeout_s"),
+            agent_max_output_tokens=max(1, int(
+                openai.get("agent_max_output_tokens", 2000))),
         ),
         weather=WeatherConfig(
             provider=str(weather.get("provider", "open-meteo")),
@@ -860,6 +925,25 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
             reserve_bytes=int(_positive(files.get("reserve_gb", 2.0), 2.0,
                                         "files.reserve_gb") * 1024 ** 3),
             max_concurrent=max(1, int(files.get("max_concurrent", 2))),
+        ),
+        agent=AgentConfig(
+            enabled=bool(agent.get("enabled", False)),
+            # `_path`, not `_secret_path`: these are runtime sockets under
+            # /run, created by systemd, and nothing about them is a credential.
+            socket=Path(str(agent.get("socket",
+                                      "/run/aipi5-agent/api.sock"))),
+            helper_socket=Path(str(agent.get("helper_socket",
+                                             "/run/aipi5-agent-helper.sock"))),
+            max_steps=max(1, int(agent.get("max_steps", 24))),
+            max_tool_calls=max(1, int(agent.get("max_tool_calls", 40))),
+            max_runtime_s=_positive(agent.get("max_runtime_s", 900.0), 900.0,
+                                    "agent.max_runtime_s"),
+            max_tokens=max(1000, int(agent.get("max_tokens", 400_000))),
+            approval_timeout_s=_positive(agent.get("approval_timeout_s", 300.0),
+                                         300.0, "agent.approval_timeout_s"),
+            poll_timeout_s=_positive(agent.get("poll_timeout_s", 20.0), 20.0,
+                                     "agent.poll_timeout_s"),
+            daily_run_limit=max(1, int(agent.get("daily_run_limit", 40))),
         ),
         assistant=AssistantConfig(
             llm_enabled=bool(assistant.get("llm_enabled", True)),
