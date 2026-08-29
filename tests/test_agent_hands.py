@@ -46,6 +46,7 @@ class Recorder:
         self.offset = 0.0
         self.overlay = False
         self.overlay_error = ""
+        self.cursor_shown = False
         self.handed_over = False
         self.last_url = ""
         self.last_used = time.monotonic()
@@ -214,8 +215,41 @@ class TestWhatAHandCanDo(HelperFixture):
                                "Input.dispatchMouseEvent")]
         self.assertEqual(order[0], "Overlay.highlightRect")
         drawn = self.overlay_calls()[0]
-        self.assertGreater(drawn["width"], browser_module.CURSOR_SIZE,
-                           "a click should be a bigger mark than a move")
+        self.assertEqual((drawn["width"], drawn["height"]),
+                         browser_module.CURSOR_CLOSED,
+                         "a click should draw the closed shape")
+
+    def test_open_and_closed_are_told_apart_by_shape(self):
+        """The pointer is drawn with `Overlay`, which has rectangles and quads
+        and no image of any kind -- drawing a hand would need script in the
+        page, which is the one thing this design will not have. So the shape
+        carries the state: upright for an open palm, squat for a fist."""
+        open_w, open_h = browser_module.CURSOR_OPEN
+        shut_w, shut_h = browser_module.CURSOR_CLOSED
+        self.assertGreater(open_h, open_w, "an open hand stands upright")
+        self.assertGreaterEqual(shut_w, shut_h, "a fist is squat")
+        self.assertNotEqual(browser_module.CURSOR_OPEN,
+                            browser_module.CURSOR_CLOSED)
+
+    def test_the_pointer_leaves_when_the_hand_does(self):
+        """A pointer left behind says a hand is being followed when none is,
+        and somebody will move their arm waiting for it."""
+        browser_module.hand_move({"x": 0.5, "y": 0.5})
+        self.assertTrue(self.browser.cursor_shown)
+        browser_module.hand_hide({})
+        self.assertIn("Overlay.hideHighlight",
+                      [method for method, _ in self.browser.calls])
+        self.assertFalse(self.browser.cursor_shown)
+
+    def test_hiding_a_pointer_that_is_already_gone_costs_nothing(self):
+        """Sent once when the hand leaves, but the guard belongs here too --
+        an extra call every frame would be an extra round trip every frame."""
+        browser_module.hand_move({"x": 0.5, "y": 0.5})
+        browser_module.hand_hide({})
+        before = len(self.browser.calls)
+        for _ in range(4):
+            browser_module.hand_hide({})
+        self.assertEqual(len(self.browser.calls), before)
 
     def test_an_overlay_that_refuses_is_asked_once(self):
         """A browser that will not draw costs a pointer, not a hand.
@@ -479,7 +513,8 @@ class TestWhatAGestureMayAskFor(unittest.TestCase):
 
     def test_the_placed_gestures_are_exactly_the_ones_needing_a_place(self):
         placed = set(AgentService.PLACED)
-        self.assertEqual(placed, {"click", "move"})
+        self.assertEqual(placed, {"click", "move"},
+                         "`hide` needs no coordinate: it is the end of one")
         self.assertTrue(placed <= set(AgentService.GESTURES))
 
     def test_a_pointer_may_move_faster_than_a_gesture_may_fire(self):

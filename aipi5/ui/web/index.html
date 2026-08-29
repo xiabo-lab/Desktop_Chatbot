@@ -5423,12 +5423,13 @@ async function sendHand(gesture, at) {
   // move is the latest of a continuous stream and the next one is along in a
   // tenth of a second, so dropping it costs nothing. A sweep happens once,
   // deliberately, and is the thing the person is waiting for.
-  if (gesture === "move") {
+  const pointer = gesture === "move" || gesture === "hide";
+  if (pointer) {
     if (handControl.moving) return;
     handControl.moving = true;
   }
   const startedRequest = performance.now();
-  if (gesture !== "move") handStats.fired.push(gesture);
+  if (!pointer) handStats.fired.push(gesture);
   try {
     await fetch("/api/agent/gesture", {
       method: "POST",
@@ -5441,7 +5442,7 @@ async function sendHand(gesture, at) {
     handControl.rtt = performance.now() - startedRequest;
     handStats.rtt += handControl.rtt;
     handStats.rttN += 1;
-    if (gesture === "move") handControl.moving = false;
+    if (pointer) handControl.moving = false;
   }
 }
 
@@ -5608,6 +5609,13 @@ async function readHandOnce(feed) {
       // instead of holding it still has to hold it still anyway.
       handControl.armed = true;
       handControl.stillSince = 0;
+      // And the pointer goes with it. One message, not one a frame: a pointer
+      // left on the page says a hand is being followed when none is, and
+      // somebody will move their arm waiting for it.
+      if (Number.isFinite(handControl.sentX)) {
+        handControl.sentX = handControl.sentY = NaN;
+        sendHand("hide");
+      }
     }
     return;
   }

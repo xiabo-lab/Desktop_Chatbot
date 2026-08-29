@@ -229,6 +229,10 @@ class AgentService:
         #: Rate-limited separately below, because the whole point of it is to
         #: keep up with a moving hand.
         "move": ("browser_hand_move", {}),
+        #: Not a gesture either -- the *absence* of one. Sent when the hand
+        #: leaves, so the pointer does not sit there claiming to follow an arm
+        #: that is no longer in front of the camera.
+        "hide": ("browser_hand_hide", {}),
     }
 
     #: Gestures that carry a place on the page rather than only a name.
@@ -250,12 +254,17 @@ class AgentService:
         if action is None:
             return {"ok": False, "detail": f"unknown gesture {name!r}"}
         now = time.monotonic()
-        gap = self.MOVE_INTERVAL_S if name == "move" else self.GESTURE_INTERVAL_S
+        # `hide` is paced with the pointer, not with the gestures: it is the
+        # end of a pointer's life, and waiting half a second to stop showing a
+        # hand that has gone is exactly the lag it exists to avoid.
+        gap = (self.MOVE_INTERVAL_S if name in ("move", "hide")
+               else self.GESTURE_INTERVAL_S)
         with self._gesture_lock:
-            last = self._move_at if name == "move" else self._gesture_at
+            last = (self._move_at if name in ("move", "hide")
+                    else self._gesture_at)
             if now - last < gap:
                 return {"ok": False, "detail": "too soon after the last one"}
-            if name == "move":
+            if name in ("move", "hide"):
                 self._move_at = now
             else:
                 # A move does not restart the gesture clock, but every real

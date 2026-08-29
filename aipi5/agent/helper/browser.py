@@ -110,6 +110,9 @@ class Browser:
         self.overlay = False
         #: Why there is no pointer, when there is none. See `_cursor`.
         self.overlay_error = ""
+        #: Whether the pointer is on the page now, so hiding it when the hand
+        #: leaves costs nothing when it is already gone.
+        self.cursor_shown = False
         #: (measured_at, (width, height)) for the content area. See _viewport.
         self.viewport = None
         #: Where the page was when it was last scrolled, or None. Lets a
@@ -698,19 +701,40 @@ def hand_scroll(args):
         return answer
 
 
-#: The pointer dot, in CSS pixels. Big enough to find on a 1280x800 panel
-#: from across a room, small enough not to cover what it is pointing at.
-CURSOR_SIZE = 26
-CURSOR_CLICK_SIZE = 46
+#: The pointer, in CSS pixels, in two shapes.
+#:
+#: **These are rectangles, and they are rectangles because that is all there
+#: is.** The pointer is drawn with `Overlay`, which is the only way to mark
+#: this page without running script in it -- and script in the page is
+#: `Runtime.evaluate`, the one capability the whole design exists to keep out
+#: of reach. `Overlay` draws rectangles and quads; it has no image and no path.
+#: So a drawn hand would cost the boundary, and the shape carries the state
+#: instead: upright and narrow for an open palm, square and squat for a fist,
+#: which is the difference between the two the eye actually reads at a glance.
+CURSOR_OPEN = (30, 42)          # taller than wide, like a hand held up
+CURSOR_CLOSED = (34, 30)        # squat and square, like a fist
 
-#: Filled amber with a dark outline. Chosen to sit on top of both a white page
-#: and a dark one, which a single flat colour does not.
+#: Filled amber with a dark outline, chosen to sit on both a white page and a
+#: dark one, which a single flat colour does not. The fist is the same yellow
+#: rather than a new colour: it is the same hand, and only its shape has
+#: changed.
 CURSOR_FILL = {"r": 255, "g": 193, "b": 7, "a": 0.55}
 CURSOR_EDGE = {"r": 20, "g": 20, "b": 20, "a": 0.9}
-CURSOR_CLICK_FILL = {"r": 76, "g": 217, "b": 100, "a": 0.55}
+CURSOR_CLOSED_FILL = {"r": 255, "g": 179, "b": 0, "a": 0.8}
 
 
-def _cursor(browser, x, y, size=CURSOR_SIZE, fill=None):
+def _hide_cursor(browser):
+    """Take the pointer off the page. Never fatal."""
+    if not browser.overlay or not browser.cursor_shown:
+        return
+    try:
+        browser.call("Overlay.hideHighlight", timeout=5.0)
+    except Refused:
+        pass
+    browser.cursor_shown = False
+
+
+def _cursor(browser, x, y, closed=False):
     """Draw the pointer at (x, y). Never fatal -- it is feedback, not control.
 
     **Drawn with `Overlay.highlightRect`, and that choice is the point.**
@@ -755,13 +779,15 @@ def _cursor(browser, x, y, size=CURSOR_SIZE, fill=None):
             browser.overlay = None
             browser.overlay_error = str(exc)[:120]
             return
+    width, height = CURSOR_CLOSED if closed else CURSOR_OPEN
     try:
         browser.call("Overlay.highlightRect",
-                     {"x": int(x - size / 2), "y": int(y - size / 2),
-                      "width": size, "height": size,
-                      "color": fill or CURSOR_FILL,
+                     {"x": int(x - width / 2), "y": int(y - height / 2),
+                      "width": width, "height": height,
+                      "color": CURSOR_CLOSED_FILL if closed else CURSOR_FILL,
                       "outlineColor": CURSOR_EDGE},
                      timeout=5.0)
+        browser.cursor_shown = True
     except Refused:
         # A navigation clears the overlay and can refuse the call that races
         # it. The next move redraws; asking again here would only double the
@@ -800,6 +826,20 @@ def hand_move(args):
                 "cursor": bool(browser.overlay)}
 
 
+def hand_hide(args):
+    """Take the pointer off the page -- the hand has gone.
+
+    A pointer left behind is worse than none: it says a hand is being tracked
+    when none is, and somebody will move their arm expecting it to follow.
+    """
+    with _lock:
+        browser = _get(start=False)
+        if not browser.alive:
+            raise Refused("no page is open")
+        _hide_cursor(browser)
+        return {"cursor": False}
+
+
 def hand_click(args):
     """Click where the palm was, as a closed fist."""
     with _lock:
@@ -807,10 +847,10 @@ def hand_click(args):
         if not browser.alive:
             raise Refused("no page is open")
         x, y = _point(args, browser)
-        # The dot goes green and grows, so the click is visible even when the
-        # thing clicked does nothing. Drawn before the press, so it is on
-        # screen while the page is busy handling it.
-        _cursor(browser, x, y, CURSOR_CLICK_SIZE, CURSOR_CLICK_FILL)
+        # The hand closes, so the click is visible even when the thing
+        # clicked does nothing. Drawn before the press, so it is on screen
+        # while the page is busy handling it.
+        _cursor(browser, x, y, closed=True)
         for kind in ("mousePressed", "mouseReleased"):
             browser.call("Input.dispatchMouseEvent",
                          {"type": kind, "x": x, "y": y,
@@ -1014,6 +1054,7 @@ OPS = {
     "browser_hand_over": hand_over,
     "browser_hand_scroll": hand_scroll,
     "browser_hand_move": hand_move,
+    "browser_hand_hide": hand_hide,
     "browser_hand_click": hand_click,
     "browser_hand_history": hand_history,
     "browser_screenshot": screenshot,
