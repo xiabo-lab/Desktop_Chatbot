@@ -68,6 +68,7 @@ from aia.ui.retention import Retention
 
 from aipi5 import __version__
 from aipi5.call.server import CallServer
+from aipi5.agent.hands import HandFeed
 from aipi5.agent.proxy import AgentProxy
 from aipi5.call.signaling import SignalingHub
 from aipi5.call.tokens import TrustedDevices
@@ -304,6 +305,16 @@ class Assistant:
             day_mode=settings.screensaver.day_mode,
             night_mode=settings.screensaver.night_mode,
             timezone=settings.location.timezone)
+        # Hand control's half of the camera. Built whether or not the agent is
+        # installed -- it does nothing at all until something tells it a
+        # browser is open, and that only ever comes from the agent.
+        #
+        # **After the screensaver manager, because it needs it.** Holding the
+        # camera stops presence detection, so without the hold the idle timer
+        # sees a room that has gone quiet and blanks the screen on somebody
+        # who is standing right there reading a page.
+        self.hands = HandFeed(self.camera if settings.camera.enabled else None,
+                              screen=self.screen)
         self.watcher: PresenceWatcher | None = None
         # What the idle screen switches off. The camera goes away with the
         # screensaver and comes back with a touch — the whole of that handoff,
@@ -349,6 +360,7 @@ class Assistant:
                          countdown=self.countdown, files=self.files,
                          photos=self.photos, screen=self.screen,
                          agent=self.agent,
+                         hands=self.hands,
                          games=self.games,
                          # A touch on the screensaver has to reopen the camera,
                          # and it cannot wait for the voice loop to notice.

@@ -193,10 +193,30 @@ class Housekeeping:
         # ticks and nothing at all when the agent is not installed.
         self._guard("checking for an agent approval", self._agent_approval)
         self._guard("delivering agent reminders", self._agent_reminders)
+        self._guard("following the agent's browser", self._agent_hands)
 
         # Last, and always: it reconciles the call state and publishes the UI
         # snapshot, so it should carry whatever the three above just changed.
         self._guard("publishing state", self.assistant.on_call_change)
+
+    def _agent_hands(self) -> None:
+        """Give hand control the camera while the agent has a page up.
+
+        Here, and not in the web server, because taking the Brio away from
+        presence detection is a decision about the whole device rather than
+        about one HTTP request -- and because this is already the one place
+        that watches the agent once a second.
+
+        The feed itself decides nothing: it is handed one fact and never
+        raises. A game or a call holding the camera simply means it does not
+        get one, which is the right order of precedence.
+        """
+        hands = getattr(self.assistant, "hands", None)
+        if hands is None:
+            return
+        agent = getattr(self.assistant, "agent", None)
+        snapshot = (agent.snapshot() or {}) if agent is not None else {}
+        hands.sync(bool((snapshot.get("browser") or {}).get("open")))
 
     def _agent_reminders(self) -> None:
         """Send whatever the agent has scheduled for now.

@@ -106,6 +106,10 @@ class Browser:
         self.last_url = ''
         #: (measured_at, (width, height)) for the content area. See _viewport.
         self.viewport = None
+        #: Where the page was when it was last scrolled, or None. Lets a
+        #: scroll say whether the *previous* one took effect without waiting
+        #: for this one to finish gliding. See `hand_scroll`.
+        self.scrolled_to = None
 
     # ── lifecycle ───────────────────────────────────────────────────
 
@@ -385,6 +389,7 @@ def sweep():
             here = _browser.last_url
         if here and here != _browser.last_url:
             _browser.last_url = here
+            _browser.scrolled_to = None
             _browser.last_used = time.monotonic()
             return False
 
@@ -657,23 +662,33 @@ def hand_scroll(args):
             raise Refused("no page is open")
         width, height = _viewport(browser)
         delta = SCROLL_STEP * steps * (-1 if direction == "up" else 1)
-        before = _scroll_offset(browser)
+        # **Measured against the last scroll, not against a sleep.**
+        #
+        # `Input.dispatchMouseEvent` reports success for a wheel event the page
+        # then ignores -- a scroller that swallows wheels, a document already
+        # at the end -- so saying "scrolled" without checking would make a hand
+        # being ignored look like a hand that is working.
+        #
+        # But the obvious check does not work. Reading the offset straight
+        # after the event catches a smooth scroll mid-glide and returns zero
+        # every time; an earlier version slept 350 ms to let it settle, which
+        # bought a truer number with a third of a second of a hand that could
+        # do nothing else, on the operation a person repeats most.
+        #
+        # Comparing this scroll's starting offset with the *previous* one costs
+        # nothing and answers the same question one gesture later, which for
+        # somebody sweeping repeatedly is soon enough to matter and never worth
+        # waiting for.
+        here = _scroll_offset(browser)
+        moved = None if browser.scrolled_to is None else here - browser.scrolled_to
+        browser.scrolled_to = here
         browser.call("Input.dispatchMouseEvent",
                      {"type": "mouseWheel", "x": width / 2, "y": height / 2,
                       "deltaX": 0, "deltaY": delta})
-        # Smooth scrolling means the page is still moving when the call
-        # returns, so the offset read immediately afterwards is wherever it
-        # had reached, not where it will stop.
-        time.sleep(0.35)
-        after = _scroll_offset(browser)
-        # **Reported, not assumed.** `Input.dispatchMouseEvent` returns success
-        # for a wheel event the page then ignores -- a scroller that swallows
-        # wheels, or a document already at the end. Saying "scrolled" when
-        # nothing moved would make a hand that is being ignored look like a
-        # hand that is working, and the person would go on waving it.
-        return {"scrolled": direction, "steps": steps,
-                "moved": round(after - before),
-                "at": round(after)}
+        answer = {"scrolled": direction, "steps": steps, "at": round(here)}
+        if moved is not None:
+            answer["moved_last_time"] = round(moved)
+        return answer
 
 
 def hand_move(args):
@@ -714,7 +729,12 @@ def hand_click(args):
             browser.call("Input.dispatchMouseEvent",
                          {"type": kind, "x": x, "y": y,
                           "button": "left", "clickCount": 1})
-        _settle(browser, 1.5)
+        # The agent's own `click` settles, because it reads the page
+        # afterwards and wants the page it navigated to. This one returns
+        # nothing to read: the person is looking at the window and will see
+        # the result themselves. Waiting a second and a half to tell them what
+        # they can already see would only be a second and a half in which
+        # their hand did nothing.
         return {"clicked": {"x": round(x), "y": round(y)}}
 
 

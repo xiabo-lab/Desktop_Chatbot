@@ -107,6 +107,13 @@ CALL_MAX_BODY = 64 * 1024
 #
 # It is also enough. This is a webcam pointed at a room on a 1280x800 panel —
 # 6 fps looks live, and the alternative costs the thing the screen is for.
+#: The gesture reader's stream. Thirty is the camera's own rate on two
+#: buffers with a continuous reader, measured -- see `aipi5/agent/hands.py`,
+#: which explains why the assistant's own preview cannot go near it.
+HAND_FPS = 30
+HAND_FPS_MAX = 60
+HAND_WIDTH = 480
+
 PREVIEW_FPS = 6
 
 #: As fast as `/api/camera/stream` may be asked to go. Hand tracking wants
@@ -214,6 +221,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._news(params)
         elif route.path == "/api/camera/stream":
             self._camera_stream(params)
+        elif route.path == "/api/hand/stream":
+            self._hand_stream(params)
         elif route.path == "/api/camera/capture":
             self._camera_capture()
         elif route.path == "/api/call/poll":
@@ -1078,6 +1087,53 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._send(200, body, "image/jpeg")
 
+    def _hand_stream(self, params: dict | None = None) -> None:
+        """The camera at speed, for the gesture reader. See `agent/hands.py`.
+
+        A separate route from `/api/camera/stream` for the reason that one is
+        slow: that reads `Camera`, whose every read drains the V4L2 queue and
+        waits for a live frame, and which is *lent* while this feed holds the
+        device -- so it would answer 503 here anyway. This serves whatever the
+        capture thread decoded most recently, which costs a resize and an
+        encode and takes nothing from anyone.
+        """
+        feed = getattr(self.ui, "hands", None)
+        if feed is None or not feed.active:
+            self._json({"error": feed.error if feed else "no hand feed",
+                        "active": False}, 503)
+            return
+
+        boundary = "aipi5hand"
+        self.send_response(200)
+        self.send_header("Content-Type",
+                         f"multipart/x-mixed-replace; boundary={boundary}")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+        params = params or {}
+        rate = self._bounded(params, "fps", HAND_FPS, 1, HAND_FPS_MAX)
+        width = self._bounded(params, "w", HAND_WIDTH, 240, 640)
+        interval = 1.0 / rate
+        deadline = time.monotonic() + PREVIEW_MAX_S
+        try:
+            while time.monotonic() < deadline:
+                started = time.monotonic()
+                frame = feed.preview_jpeg(width)
+                if frame is None:
+                    # The browser closed and the camera went back. End the
+                    # response; the page reopens it if it is wanted again.
+                    break
+                self.wfile.write(
+                    f"--{boundary}\r\nContent-Type: image/jpeg\r\n"
+                    f"Content-Length: {len(frame)}\r\n\r\n".encode("ascii"))
+                self.wfile.write(frame)
+                self.wfile.write(b"\r\n")
+                time.sleep(max(0.0, interval - (time.monotonic() - started)))
+        except (BrokenPipeError, ConnectionResetError):
+            log.debug("hand feed client went away")
+        except OSError as exc:
+            log.debug("hand feed stream ended: %s", exc)
+
     def _camera_stream(self, params: dict | None = None) -> None:
         """The live preview, as multipart JPEG.
 
@@ -1146,7 +1202,7 @@ class WebUI:
                  weather=None, news=None, camera=None, call=None,
                  on_call_change=lambda: None, countdown=None, files=None,
                  photos=None, screen=None, games=None, on_wake=lambda why: None,
-                 agent=None):
+                 agent=None, hands=None):
         self.cfg = cfg
         self.state = state
         # Called the moment a `wake` arrives, before it is queued for the voice
@@ -1164,6 +1220,10 @@ class WebUI:
         # exactly one thing on it: forwarding a hand gesture to the agent's
         # browser. See `_gesture_post`.
         self.agent = agent
+        # The camera at speed while the agent's browser is up. Held by this
+        # server only so `/api/hand/stream` can reach it; what decides whether
+        # it runs is `Housekeeping`, once a second.
+        self.hands = hands
         # The daytime slideshow's photographs and the object that decides
         # which screensaver is due. Both optional, so a test can build a
         # server without either.

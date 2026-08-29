@@ -42,6 +42,8 @@ class Recorder:
         self.calls = []
         self.size = viewport                   # what CDP would report
         self.viewport = (time.monotonic(), viewport)   # the module's cache
+        self.scrolled_to = None
+        self.offset = 0.0
         self.handed_over = False
         self.last_url = ""
         self.last_used = time.monotonic()
@@ -51,7 +53,8 @@ class Recorder:
         if method == "Page.getLayoutMetrics":
             width, height = self.size
             return {"cssLayoutViewport": {"clientWidth": width,
-                                          "clientHeight": height}}
+                                          "clientHeight": height},
+                    "visualViewport": {"pageY": self.offset}}
         if method == "Page.getNavigationHistory":
             return {"currentIndex": 1,
                     "entries": [{"id": 1, "url": "https://a", "title": "A"},
@@ -161,6 +164,39 @@ class TestWhatAHandCanDo(HelperFixture):
 
         browser_module.hand_scroll({"direction": "down"})
         self.assertGreater(self.mouse_events()[-1]["deltaY"], 0)
+
+    def test_a_scroll_does_not_wait_for_the_page_to_stop_gliding(self):
+        """It reports whether the *previous* scroll moved, not this one.
+
+        Reading the offset straight after the wheel event catches a smooth
+        scroll mid-glide and returns zero every time -- measured on the device,
+        where `moved` read 0 on every call while the page was plainly moving.
+        Waiting it out cost 350 ms on the operation a person repeats most, so
+        the question is answered one gesture later instead.
+        """
+        first = browser_module.hand_scroll({"direction": "down"})
+        self.assertNotIn("moved_last_time", first,
+                         "it claimed to know about a scroll that never happened")
+
+        # The page moved between the two calls, as `Recorder` now reports.
+        self.browser.scrolled_to = 0.0
+        self.browser.offset = 520.0
+        second = browser_module.hand_scroll({"direction": "down"})
+        self.assertEqual(second["moved_last_time"], 520)
+        self.assertEqual(second["at"], 520)
+
+    def test_a_scroll_never_sleeps(self):
+        """The whole point of the change. Guarded because the obvious fix for
+        a mid-glide reading is a sleep, and it would be added back."""
+        slept = []
+        original = browser_module.time.sleep
+        browser_module.time.sleep = lambda s: slept.append(s)
+        try:
+            browser_module.hand_scroll({"direction": "down"})
+            browser_module.hand_move({"x": 0.5, "y": 0.5})
+        finally:
+            browser_module.time.sleep = original
+        self.assertEqual(slept, [], "a hand was made to wait")
 
     def test_a_scroll_must_name_a_direction_and_a_sane_number_of_steps(self):
         for args in ({}, {"direction": "sideways"}, {"direction": "up",

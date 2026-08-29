@@ -5320,24 +5320,28 @@ try {
 // states -- real feedback, in the window being looked at, drawn by the site's
 // own CSS.
 //
-// **Five frames a second, and that is the ceiling.** The stream was asked for
-// twelve and measured at 4.9 whatever it was asked for, at every width -- and
-// that is `Camera._read` working correctly rather than failing. It drains the
-// V4L2 queue empty and waits for the next frame the sensor produces, because
-// the queued buffers were filled just after the *previous* read and a plain
-// read is most of half a second stale. Freshness costs throughput, and for a
-// pointer following a hand freshness is the half worth having: a stale frame
-// puts the cursor where the hand was, which is worse than fewer of them.
+// **Thirty frames a second, and the first version had two.** Reading
+// `/api/camera/stream` gave 2.4 fps, and the reason was measured inside the
+// assistant rather than guessed: 278 ms of every frame was spent waiting for
+// the camera lock, because the presence detector and the preview each perform
+// their own drain-read and one waits out the other. The read itself was 138 ms
+// -- two grabs at the 69 ms the Brio falls to in a dim room -- and the encode,
+// the part a smaller width would have helped, was 1.5 ms.
 //
-// So the numbers below are set to the rate that exists. A sweep is read over a
-// full second rather than the 700 ms that felt right for twelve frames, and
-// sampling is a little slower than the stream so inference is not run twice on
-// the same picture.
+// A sweep lasts about a second, so the reader was deciding from two samples and
+// mostly declining to. It now reads `/api/hand/stream`, which is a borrowed
+// camera on a continuous capture thread: 30 fps, and *fresher* frames than the
+// drain gave, because a queue that is always being emptied never holds a stale
+// one. See `aipi5/agent/hands.py`.
 
-const HAND_SAMPLE_MS = 130;         // just under the ~5/s the camera gives
-const HAND_TRAIL_MS = 1000;         // about five samples, at that rate
-const HAND_SWEEP_TRAVEL = 0.24;     // of the frame, before it counts as one
-const HAND_SWEEP_DOMINANCE = 1.7;   // how much straighter than the other axis
+// Sampling is deliberately slower than the stream. MediaPipe's hand model on
+// this CPU is the expensive part now, not the camera, and running it 30 times a
+// second would spend a core to watch a hand that has barely moved between
+// frames. Twelve is comfortably more than a sweep needs and leaves the Pi alone.
+const HAND_SAMPLE_MS = 80;          // ~12/s, from a 30/s stream
+const HAND_TRAIL_MS = 600;          // about seven samples, at that rate
+const HAND_SWEEP_TRAVEL = 0.20;     // of the frame, before it counts as one
+const HAND_SWEEP_DOMINANCE = 1.5;   // how much straighter than the other axis
 const HAND_FIST_FRAMES = 2;         // a blink of a fist is not a click
 const HAND_MOVE_MIN = 0.012;        // do not resend a pointer that has not moved
 const HAND_LOST_MS = 900;
@@ -5386,7 +5390,10 @@ async function sendHand(gesture, at) {
 function readSweep(now) {
   const trail = handControl.trail;
   while (trail.length && now - trail[0].t > HAND_TRAIL_MS) trail.shift();
-  if (trail.length < 3) return "";
+  // Four, not three: at twelve samples a second a sweep produces
+  // seven or eight, and three points is a number a hand reaches
+  // while reaching for a cup.
+  if (trail.length < 4) return "";
 
   const first = trail[0], last = trail[trail.length - 1];
   const dx = last.x - first.x, dy = last.y - first.y;
@@ -5493,9 +5500,18 @@ function syncHandControl(state) {
     // nothing to hide behind a stylesheet that could later stop hiding it.
     handControl.feed = new Image();
   }
-  // Asking for more than the camera can give costs nothing and leaves
-  // the ceiling where it belongs -- in Python, next to the camera.
-  handControl.feed.src = "/api/camera/stream?fps=12&t=" + Date.now();
+  handControl.feed.src = "/api/hand/stream?fps=30&t=" + Date.now();
+  // The feed is acquired by the assistant a moment after the browser opens --
+  // a borrowed camera takes a second to start -- so a stream asked for too
+  // early gets a 503 and an `<img>` that never loads. Retry until it does.
+  handControl.feed.onerror = () => {
+    if (!handControl.on) return;
+    setTimeout(() => {
+      if (handControl.on) {
+        handControl.feed.src = "/api/hand/stream?fps=30&t=" + Date.now();
+      }
+    }, 1500);
+  };
   handControl.timer = setInterval(readHand, HAND_SAMPLE_MS);
 }
 
