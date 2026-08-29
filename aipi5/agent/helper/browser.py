@@ -879,6 +879,31 @@ def hand_move(args):
                 "cursor": bool(browser.overlay)}
 
 
+def practice_page(args):
+    """Open the hand-control practice sheet. Takes nothing, aims nowhere.
+
+    A page with a scroll track down the side, arrows across the top, five
+    targets to close your hand on, and a line of text that says what it just
+    understood. It exists because on a real website a gesture that *nearly*
+    worked and one that did nothing look identical.
+
+    See `practice.py` for why it is a `data:` URL rather than a page served
+    from the assistant, which would be the obvious thing and is refused for
+    good reason.
+    """
+    import practice
+
+    with _lock:
+        browser = _get()
+        browser.call("Page.navigate", {"url": practice.data_url()})
+        _settle(browser, 2.0)
+        # The address is the whole page, base64. Not worth carrying back, and
+        # `last_url` is compared on every sweep.
+        browser.last_url = "the hand control practice sheet"
+        return {"opened": "the practice sheet",
+                "detail": "five targets, four sheets, and a scroll track"}
+
+
 def hand_hide(args):
     """Take the pointer off the page -- the hand has gone.
 
@@ -1108,6 +1133,7 @@ OPS = {
     "browser_hand_scroll": hand_scroll,
     "browser_hand_move": hand_move,
     "browser_hand_hide": hand_hide,
+    "browser_practice": practice_page,
     "browser_hand_click": hand_click,
     "browser_hand_history": hand_history,
     "browser_screenshot": screenshot,

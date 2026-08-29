@@ -19,6 +19,7 @@ how it runs on the device.
 
 from __future__ import annotations
 
+import re
 import sys
 import time
 import unittest
@@ -572,6 +573,78 @@ class TestTheSweepThatClosedItTooSoon(unittest.TestCase):
 
         self.assertTrue(browser_module.sweep())
         self.assertFalse(browser.alive)
+
+
+class TestThePracticeSheet(unittest.TestCase):
+    """A page for practising the gestures, and the reasons for its shape.
+
+    It exists because on a real website a gesture that *nearly* worked and one
+    that did nothing look identical -- there is no feedback for a sweep that
+    fell short of the threshold, or a click two centimetres low.
+    """
+
+    def test_it_is_a_data_url_and_takes_no_arguments(self):
+        """**A security decision, not a convenience.**
+
+        The obvious thing is to serve it from the assistant and open
+        `http://127.0.0.1:8092/practice`. `_check_url` refuses exactly that: the
+        UI server has unauthenticated POST routes because only the kiosk can
+        reach it, so a page in the *agent's* browser reaching loopback would
+        turn "open a web page" into "restart the assistant".
+        """
+        import practice
+
+        url = practice.data_url()
+        self.assertTrue(url.startswith("data:text/html;base64,"))
+        # Nothing the caller says can steer it anywhere.
+        self.assertEqual(practice.data_url(), url)
+        with self.assertRaises(ops.Refused):
+            browser_module._check_url("http://127.0.0.1:8092/practice")
+
+    def test_the_page_cannot_reach_anything(self):
+        """An opaque origin is the point, so nothing in it should try.
+
+        A `data:` page cannot fetch, read a file, or reach localhost -- but a
+        page that *tried* would be a page somebody later "fixed" by serving it
+        from somewhere with an origin, which is the thing being avoided.
+        """
+        import practice
+
+        for reaching in ("fetch(", "XMLHttpRequest", "import(", "src=\"http",
+                         "127.0.0.1", "localhost"):
+            with self.subTest(reaching=reaching):
+                self.assertNotIn(reaching, practice.PAGE)
+
+    def test_it_has_the_four_things_it_is_for(self):
+        """A scroll track, arrows, five targets, and a readout."""
+        import practice
+
+        page = practice.PAGE
+        self.assertIn('id="track"', page)
+        self.assertIn('id="back"', page)
+        self.assertIn('id="next"', page)
+        self.assertIn('id="said"', page)
+        self.assertIn("const TARGETS = 5", page)
+
+    def test_history_is_pushed_rather_than_linked(self):
+        """Fragment links do not navigate on an opaque origin.
+
+        Measured: after two clicks of the arrow the address still had no
+        fragment, and Back went straight past the page to `about:blank`.
+        `pushState` with the URL omitted adds a real entry without touching an
+        address it is not allowed to touch.
+        """
+        import practice
+
+        self.assertIn("history.pushState", practice.PAGE)
+        self.assertIn("popstate", practice.PAGE)
+        # The *markup*, not the file. The comment above the code explains why
+        # `href="#2"` was abandoned, and a check on the whole file matches that
+        # explanation -- which is this project's oldest testing trap.
+        markup = re.sub(r"<script>.*?</script>", "", practice.PAGE, flags=re.S)
+        self.assertNotIn("href=", markup,
+                         "the arrows are buttons; a link here would navigate "
+                         "by fragment, which an opaque origin refuses")
 
 
 class TestWhatAGestureMayAskFor(unittest.TestCase):

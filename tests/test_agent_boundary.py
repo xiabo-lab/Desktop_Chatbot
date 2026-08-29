@@ -353,10 +353,17 @@ class TestTheHelperIsStandalone(unittest.TestCase):
     def test_it_imports_nothing_outside_the_standard_library(self):
         """So `pip install` can never change what root runs.
 
-        The only non-stdlib names allowed are the helper's own two modules,
-        which sit beside it in the same installed directory.
+        The only non-stdlib names allowed are the helper's own modules, which
+        sit beside it in the same installed directory and are copied there by
+        `install-agent.sh` along with everything else matching `*.py`.
+
+        Derived from the directory rather than listed here. A hand-written list
+        goes stale -- this one already said "two modules" while naming five --
+        and the guarantee is unchanged either way: what makes a name safe is
+        being part of the helper, which is exactly what being in this directory
+        means.
         """
-        siblings = {"policy", "ops", "main", "changes", "browser"}
+        siblings = {path.stem for path in HELPER.glob("*.py")}
         for path in sorted(HELPER.glob("*.py")):
             with self.subTest(path=path.name):
                 outside = _imports(path) - STDLIB - siblings
