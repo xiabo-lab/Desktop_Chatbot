@@ -450,6 +450,7 @@
   <a href="#ask"><b>Asking it things</b><span>diagnosis, no permission</span></a>
   <a href="#settings"><b>Changing a setting</b><span>approval + rollback</span></a>
   <a href="#browser"><b>The browser</b><span>a page on the screen</span></a>
+  <a href="#hands"><b>Using your hand</b><span>scroll and click from across the room</span></a>
   <a href="#remind"><b>Reminders</b><span>survives a reboot</span></a>
   <a href="#memory"><b>Memory</b><span>preferences that stick</span></a>
   <a href="#code"><b>Fixing code</b><span>gated on the test suite</span></a>
@@ -652,10 +653,21 @@ Screenshot: agent-20260827-100255.jpg in the phone’s Files screen.</div>
   </p>
 
   <p>
-    <strong>Say “close the browser” when you are done.</strong> It closes itself
-    after ten minutes untouched, but a window left over the kiosk makes the
-    device look broken to anyone walking past.
+    <strong>Say “close the browser” when you are done</strong>, or use the
+    <b>×</b> on the window. It closes itself after half an hour untouched, but a
+    window left over the kiosk makes the device look broken to anyone walking
+    past.
   </p>
+
+  <div class="note warn">
+    <span class="label">Fixed</span>
+    <p>
+      It used to be ten minutes, and it measured the wrong thing: the timer only
+      noticed <em>the agent</em> touching the page, so a browser you were reading
+      yourself looked idle and was closed out from under you. It now counts your
+      own use as use, and waits three times as long.
+    </p>
+  </div>
 
   <h3>When a page needs you</h3>
   <p>
@@ -676,8 +688,9 @@ Screenshot: agent-20260827-100255.jpg in the phone’s Files screen.</div>
   </div>
   <p>
     It used to close the browser instead, within a second, which took away the
-    one thing you could have acted on. A handed-over page waits half an hour
-    rather than the usual ten minutes, so there is time to walk to the device.
+    one thing you could have acted on. A page waiting on you keeps the screen
+    for a full hour, longer than any other, because the job can mean finding a
+    password or fetching a phone.
   </p>
 
   <h3>If a page traps you</h3>
@@ -721,6 +734,120 @@ Screenshot: agent-20260827-100255.jpg in the phone’s Files screen.</div>
     not this device’s own services, not anything else on your home network.
     Those are refused by the privileged half of the system, not by the agent’s
     good manners.
+  </p>
+</section>
+
+<!-- ── hands ────────────────────────────────── -->
+<section id="hands">
+  <div class="head">
+    <h2>Using your hand</h2>
+    <span class="gate free">asks nothing</span>
+  </div>
+
+  <p>
+    Once a page is on the screen you can work it from where you are standing.
+    The camera watches for one hand. Hold it up, palm towards the camera, and
+    the page follows.
+  </p>
+
+  <table>
+    <thead>
+      <tr><th>What you do</th><th>What happens</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Open palm, sweep <b>upward</b></td><td>Scrolls up</td></tr>
+      <tr><td>Open palm, sweep <b>downward</b></td><td>Scrolls down</td></tr>
+      <tr><td>Open palm, sweep <b>right to left</b></td><td>Back, to the previous page</td></tr>
+      <tr><td>Open palm, sweep <b>left to right</b></td><td>Forward again, if there is anywhere to go</td></tr>
+      <tr><td>Open palm, held still and drifting</td><td>Moves the pointer</td></tr>
+      <tr><td><b>Close your hand into a fist</b></td><td>Clicks where the pointer is</td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    Directions are from where you are standing, not from the camera&rsquo;s point
+    of view. Sweeping to your right moves forward; the picture is mirrored for
+    you, the way a mirror is.
+  </p>
+
+  <h3>Aiming a click</h3>
+  <p>
+    <strong>There is no cursor drawn on the screen, and there cannot be.</strong>
+    The hand tracking runs inside the assistant&rsquo;s own page, which at that
+    moment is underneath the browser you are looking at &mdash; anything it drew
+    would be drawn behind the window.
+  </p>
+  <p>
+    So the page itself shows you where you are pointing. Move your open palm and
+    the thing under the pointer lights up the way it would under a mouse: links
+    underline, buttons brighten, a video shows its controls. That is the site
+    doing it, in the window you are watching. Line the highlight up with what
+    you want, then close your hand.
+  </p>
+
+  <div class="note">
+    <span class="label">Worth knowing</span>
+    <p>
+      Your hand does not have to reach the edges of the camera&rsquo;s view. The
+      middle of the frame is stretched across the whole page, so a comfortable
+      range of movement covers the corners.
+    </p>
+  </div>
+
+  <h3>When it is listening</h3>
+  <p>
+    Only while the agent has a page open. The moment the browser closes, the
+    camera stops being read for hands and the assistant goes back to what it was
+    doing. Nothing is watching for gestures the rest of the time.
+  </p>
+  <p>
+    The touchscreen keeps working throughout. Hand control is a longer arm, not
+    a replacement &mdash; every gesture does something you could have done by
+    walking over and touching the glass.
+  </p>
+
+  <h3>If it is not responding</h3>
+  <ul>
+    <li>
+      <b>Stand where the camera can see you.</b> The same view the assistant
+      uses to notice somebody is in the room.
+    </li>
+    <li>
+      <b>Make the sweep bigger and slower.</b> It has about five looks a second,
+      and needs a movement across roughly a quarter of the frame before it
+      counts as a sweep rather than a shrug. A quick flick can happen entirely
+      between two frames.
+    </li>
+    <li>
+      <b>Spread your fingers.</b> An open palm means five fingers showing. A
+      half-open hand is neither shape and is ignored, which is deliberate.
+    </li>
+    <li>
+      <b>One person at a time.</b> If two people are in view it follows the hand
+      nearest the middle of the picture.
+    </li>
+    <li>
+      <b>One gesture at a time.</b> After a sweep it waits about half a second,
+      so a single movement scrolls once rather than three times.
+    </li>
+  </ul>
+
+  <h3>What a hand cannot do</h3>
+  <p>
+    It cannot type. It cannot reach the address bar, the tabs or the window
+    controls &mdash; not because those are blocked, but because the pointer a
+    gesture moves exists only inside the page and the browser&rsquo;s own
+    furniture is not somewhere it can be sent.
+  </p>
+  <p>
+    It also cannot open a browser. Waving at a device showing the assistant does
+    nothing at all; the page has to be there first, and putting it there is
+    something you ask the agent for.
+  </p>
+  <p>
+    And it changes nothing about approvals. A gesture is your own input, the same
+    as a touch &mdash; it is not the agent deciding to do something, so there is
+    nothing extra to approve.
   </p>
 </section>
 
