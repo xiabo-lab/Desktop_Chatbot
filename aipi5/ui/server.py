@@ -116,6 +116,12 @@ CALL_MAX_BODY = 64 * 1024
 #: between an abandoned stream and a thread held for the life of the process.
 HAND_WRITE_TIMEOUT_S = 5.0
 
+#: How long one hand-feed response may run. An hour: the stream is meant to
+#: last as long as the browser is open, and an ending is a risk rather than
+#: hygiene. Abandoned streams are dealt with by `HAND_WRITE_TIMEOUT_S`, which
+#: is what a cap was standing in for.
+HAND_STREAM_MAX_S = 3600.0
+
 HAND_FPS = 30
 HAND_FPS_MAX = 60
 HAND_WIDTH = 480
@@ -499,10 +505,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         log.info(
             "HAND n=%d infer=%dms gap=%dms hand=%d%% palm=%d fist=%d "
-            "other=%d ready=%d idle=%d travel=%.2f/%.2f speed=%.2f armed=%d "
+            "other=%d ready=%d idle=%d dead=%dms travel=%.2f/%.2f speed=%.2f armed=%d "
             "trail=%d fired=%s rtt=%dms",
             _n("n"), _n("infer"), _n("gap"), _n("handpct"), _n("palm"),
-            _n("fist"), _n("other"), _n("ready"), _n("idle"), _n("dx", 2), _n("dy", 2),
+            _n("fist"), _n("other"), _n("ready"), _n("idle"), _n("dead"), _n("dx", 2), _n("dy", 2),
             _n("speed", 2), _n("armed"), _n("trail"),
             str(payload.get("fired") or "-")[:60], _n("rtt"))
         self._json({"ok": True})
@@ -1167,7 +1173,13 @@ class _Handler(BaseHTTPRequestHandler):
         rate = self._bounded(params, "fps", HAND_FPS, 1, HAND_FPS_MAX)
         width = self._bounded(params, "w", HAND_WIDTH, 160, 640)
         interval = 1.0 / rate
-        deadline = time.monotonic() + PREVIEW_MAX_S
+        # **Its own cap, and a long one.** The camera page's five minutes suit
+        # somebody glancing at a preview; this is the feed a person drives the
+        # screen with, and every ending is a reconnect that can go wrong. One
+        # did: the page reconnected on a timer to stay inside the shorter cap,
+        # and the third reconnect left the element with no picture at all.
+        # Fewer endings is the fix; the page no longer reconnects on a clock.
+        deadline = time.monotonic() + HAND_STREAM_MAX_S
         try:
             while time.monotonic() < deadline:
                 started = time.monotonic()

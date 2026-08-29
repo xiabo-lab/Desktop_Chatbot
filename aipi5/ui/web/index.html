@@ -5425,7 +5425,8 @@ const handControl = {
   retry: HAND_RETRY_MS, // how long before the next reconnect attempt
   retryTimer: null,
   lastLook: 0,          // when recognition last ran; see HAND_IDLE_SAMPLE_MS
-  recycler: null,
+  deadSince: 0,         // when the picture went away; see HAND_DEAD_MS
+  connectedAt: 0,       // so a stream is given time to arrive before judging
   moving: false,        // a pointer update is in flight; skip the next one
   reading: false,       // recognition is running; see `readHand`
   reporter: null,
@@ -5569,6 +5570,8 @@ async function reportHand() {
             handControl.feed.naturalWidth) ? 1 : 0,
     idle: (performance.now() - handControl.lastSeen > HAND_IDLE_AFTER_MS)
       ? 1 : 0,
+    dead: handControl.deadSince
+      ? Math.round(performance.now() - handControl.deadSince) : 0,
     speed: handStats.speed,
     armed: handControl.armed ? 1 : 0,
     rtt: handStats.rttN ? handStats.rtt / handStats.rttN : 0,
@@ -5584,8 +5587,9 @@ async function reportHand() {
 }
 
 async function readHand() {
+  if (!handControl.on) return;
+  if (!watchHandFeed(performance.now())) return;
   const feed = handControl.feed;
-  if (!handControl.on || !feed || !feed.complete || !feed.naturalWidth) return;
   // **Recognition costs more than the interval it is scheduled on.** Measured
   // on this Pi: 70-140 ms a frame against an 80 ms timer, so without a guard
   // the callbacks queue and the main thread never comes up for air -- which is
@@ -5739,7 +5743,6 @@ async function readHandOnce(feed) {
 // exact, costs nothing, and cannot be confused by a quiet room. The periodic
 // reconnect below is the belt to its braces, well inside the server's own
 // five-minute cap.
-const HAND_RECYCLE_MS = 90000;
 
 function handFeedUrl() {
   // 320 rather than the feed's own 480: the cost of recognition scales with
@@ -5749,19 +5752,72 @@ function handFeedUrl() {
 }
 
 function connectHandFeed() {
-  if (!handControl.on || !handControl.feed) return;
-  // Cancel whatever is in flight before asking for another. Without this the
-  // old request can outlive the assignment, and each one costs a connection.
-  handControl.feed.removeAttribute("src");
-  handControl.feed.src = handFeedUrl();
-  handControl.feed.onload = () => { handControl.retry = HAND_RETRY_MS; };
-  handControl.feed.onerror = () => {
-    if (!handControl.on) return;
+  if (!handControl.on) return;
+
+  // **A fresh element every time, and the old one silenced before it is cut
+  // off.** The previous version removed `src` from the one element and then
+  // set it again, and the two raced: the removal's error arrives *after* the
+  // new load has started, the handler treats it as a failed connection, and
+  // the retry it schedules tears down a stream that was working. Measured on
+  // the device -- the feed ran for 270 seconds, exactly three firings of the
+  // reconnect timer, and the third left the element with no picture and
+  // nothing pending to give it one.
+  //
+  // Separate elements cannot cross-talk: this one's handlers only ever hear
+  // about this one's request.
+  const picture = new Image();
+  picture.onerror = () => {
+    if (!handControl.on || handControl.feed !== picture) return;
     const wait = handControl.retry;
     handControl.retry = Math.min(wait * 2, HAND_RETRY_MAX_MS);
     clearTimeout(handControl.retryTimer);
     handControl.retryTimer = setTimeout(connectHandFeed, wait);
   };
+  picture.src = handFeedUrl();
+
+  const previous = handControl.feed;
+  handControl.feed = picture;
+  handControl.connectedAt = performance.now();
+  if (previous) {
+    // Handlers first, then the cancel -- or the cancel is heard as a failure
+    // of the stream that has just replaced it.
+    previous.onerror = null;
+    previous.onload = null;
+    previous.src = "";
+  }
+}
+
+//: How long the element may go without a usable picture before it is replaced.
+//:
+//: The self-healing that was missing. Every earlier failure here ended the
+//: same way -- a feed that was dead and stayed dead, because the only thing
+//: that could have reconnected it was an error that had already happened. A
+//: watchdog on the *symptom* does not care what caused it.
+const HAND_DEAD_MS = 6000;
+
+function handFeedUsable() {
+  const feed = handControl.feed;
+  return !!(feed && feed.complete && feed.naturalWidth);
+}
+
+function watchHandFeed(now) {
+  if (handFeedUsable()) {
+    handControl.deadSince = 0;
+    // A picture is proof the connection is good, which `onload` is not: a
+    // multipart response never completes, so it may never fire at all.
+    handControl.retry = HAND_RETRY_MS;
+    return true;
+  }
+  if (!handControl.deadSince) {
+    handControl.deadSince = now;
+    return false;
+  }
+  if (now - handControl.deadSince > HAND_DEAD_MS &&
+      now - handControl.connectedAt > HAND_DEAD_MS) {
+    handControl.deadSince = now;
+    connectHandFeed();
+  }
+  return false;
 }
 
 function syncHandControl(state) {
@@ -5786,9 +5842,6 @@ function syncHandControl(state) {
     if (handControl.reporter) {
       clearInterval(handControl.reporter); handControl.reporter = null;
     }
-    if (handControl.recycler) {
-      clearInterval(handControl.recycler); handControl.recycler = null;
-    }
     // A pending reconnect outliving the feature is another stream nobody
     // wanted -- and the stream that was leaking is exactly this one.
     clearTimeout(handControl.retryTimer);
@@ -5796,6 +5849,12 @@ function syncHandControl(state) {
     handControl.retry = HAND_RETRY_MS;
     handControl.lastSeen = 0;
     handControl.lastLook = 0;
+    handControl.deadSince = 0;
+    if (handControl.feed) {
+      handControl.feed.onerror = null;
+      handControl.feed.onload = null;
+      handControl.feed.src = "";
+    }
     if (handControl.feed) handControl.feed.removeAttribute("src");
     handControl.trail.length = 0;
     handControl.fistFrames = 0;
@@ -5805,21 +5864,17 @@ function syncHandControl(state) {
     return;
   }
 
-  if (!handControl.feed) {
-    // Never added to the document. It only has to decode, and MediaPipe reads
-    // an HTMLImageElement directly -- so there is nothing to lay out and
-    // nothing to hide behind a stylesheet that could later stop hiding it.
-    handControl.feed = new Image();
-  }
+  // The element is built by `connectHandFeed`, which makes a new one for
+  // every attempt. Never added to the document: it only has to decode, and
+  // MediaPipe reads an HTMLImageElement directly.
   connectHandFeed();
   handControl.lastSeen = performance.now();
   handControl.timer = setInterval(readHand, HAND_SAMPLE_MS);
   resetHandStats();
   handStats.lastAt = 0;
   handControl.reporter = setInterval(reportHand, 1000);
-  // Well inside the server's five-minute cap, so the ordinary ending is never
-  // the one the stall watchdog has to catch.
-  handControl.recycler = setInterval(connectHandFeed, HAND_RECYCLE_MS);
+  // No periodic reconnect. It existed to stay inside the server's five-minute
+  // cap, the cap is an hour now, and the timer was itself what broke the feed.
 }
 
 async function pollState() {
