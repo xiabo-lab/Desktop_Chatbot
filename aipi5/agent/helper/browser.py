@@ -104,6 +104,12 @@ class Browser:
         #: has been navigating, which is the only sign of human use
         #: available without Runtime.evaluate.
         self.last_url = ''
+        #: Whether the Overlay domain is on: False before, True after, and
+        #: None once it has refused, so a browser that will not draw a pointer
+        #: is asked once rather than eight times a second. See `_cursor`.
+        self.overlay = False
+        #: Why there is no pointer, when there is none. See `_cursor`.
+        self.overlay_error = ""
         #: (measured_at, (width, height)) for the content area. See _viewport.
         self.viewport = None
         #: Where the page was when it was last scrolled, or None. Lets a
@@ -390,6 +396,7 @@ def sweep():
         if here and here != _browser.last_url:
             _browser.last_url = here
             _browser.scrolled_to = None
+            _browser.overlay = False
             _browser.last_used = time.monotonic()
             return False
 
@@ -691,6 +698,77 @@ def hand_scroll(args):
         return answer
 
 
+#: The pointer dot, in CSS pixels. Big enough to find on a 1280x800 panel
+#: from across a room, small enough not to cover what it is pointing at.
+CURSOR_SIZE = 26
+CURSOR_CLICK_SIZE = 46
+
+#: Filled amber with a dark outline. Chosen to sit on top of both a white page
+#: and a dark one, which a single flat colour does not.
+CURSOR_FILL = {"r": 255, "g": 193, "b": 7, "a": 0.55}
+CURSOR_EDGE = {"r": 20, "g": 20, "b": 20, "a": 0.9}
+CURSOR_CLICK_FILL = {"r": 76, "g": 217, "b": 100, "a": 0.55}
+
+
+def _cursor(browser, x, y, size=CURSOR_SIZE, fill=None):
+    """Draw the pointer at (x, y). Never fatal -- it is feedback, not control.
+
+    **Drawn with `Overlay.highlightRect`, and that choice is the point.**
+
+    The obvious way to put a dot on a page is to inject an element into it, and
+    that needs `Runtime.evaluate` -- the one method this whole design exists to
+    keep out of reach, because it is arbitrary code in a browser running as the
+    user who owns the device. It is not on the operation table and must not
+    arrive by the back door of a nice feature.
+
+    `Overlay` is the domain DevTools uses to draw the blue box over an element
+    you are inspecting. The browser renders it above the page, from its own
+    process, and the page cannot see it, read it, or be changed by it. So the
+    person gets a real pointer and the page gets no new capability at all.
+
+    The alternative that was tried first was to draw it on the kiosk's own
+    screen -- which is underneath this window, where nobody can see it.
+    """
+    if browser.overlay is None:
+        # It has already refused once. `None` is falsy, so this check has to
+        # come first -- written the other way round it fell into the enable
+        # branch again on every move, which is the opposite of what the
+        # comment there claimed.
+        return
+    if not browser.overlay:
+        try:
+            # `DOM.enable` first. The overlay agent draws in the coordinate
+            # space the DOM agent establishes, and without it `highlightRect`
+            # is accepted and quietly draws nothing -- which is exactly what
+            # happened: zero changed pixels in a compositor screenshot, with
+            # no error anywhere to explain it.
+            browser.call("DOM.enable", timeout=5.0)
+            browser.call("Overlay.enable", timeout=5.0)
+            browser.overlay = True
+        except Refused as exc:
+            # An overlay that will not enable costs the person their pointer
+            # and nothing else. Do not keep asking on every move -- but keep
+            # the reason, because a pointer that silently never appears is the
+            # kind of thing that gets diagnosed as "the camera cannot see my
+            # hand". This module has no logger by design; `browser_state`
+            # carries it out instead.
+            browser.overlay = None
+            browser.overlay_error = str(exc)[:120]
+            return
+    try:
+        browser.call("Overlay.highlightRect",
+                     {"x": int(x - size / 2), "y": int(y - size / 2),
+                      "width": size, "height": size,
+                      "color": fill or CURSOR_FILL,
+                      "outlineColor": CURSOR_EDGE},
+                     timeout=5.0)
+    except Refused:
+        # A navigation clears the overlay and can refuse the call that races
+        # it. The next move redraws; asking again here would only double the
+        # cost of the one operation that has to keep up with an arm.
+        browser.overlay = False
+
+
 def hand_move(args):
     """Move the pointer, as an open palm drifting across the camera.
 
@@ -715,7 +793,11 @@ def hand_move(args):
         x, y = _point(args, browser)
         browser.call("Input.dispatchMouseEvent",
                      {"type": "mouseMoved", "x": x, "y": y})
-        return {"at": {"x": round(x), "y": round(y)}}
+        _cursor(browser, x, y)
+        # Reported so a missing pointer is visible from outside rather than
+        # inferred from a screenshot.
+        return {"at": {"x": round(x), "y": round(y)},
+                "cursor": bool(browser.overlay)}
 
 
 def hand_click(args):
@@ -725,6 +807,10 @@ def hand_click(args):
         if not browser.alive:
             raise Refused("no page is open")
         x, y = _point(args, browser)
+        # The dot goes green and grows, so the click is visible even when the
+        # thing clicked does nothing. Drawn before the press, so it is on
+        # screen while the page is busy handling it.
+        _cursor(browser, x, y, CURSOR_CLICK_SIZE, CURSOR_CLICK_FILL)
         for kind in ("mousePressed", "mouseReleased"):
             browser.call("Input.dispatchMouseEvent",
                          {"type": kind, "x": x, "y": y,
@@ -776,7 +862,9 @@ def state(args):
         alive = _browser is not None and _browser.alive
         return {"open": alive,
                 "url": (_browser.last_url if alive else ""),
-                "handed_over": bool(alive and _browser.handed_over)}
+                "handed_over": bool(alive and _browser.handed_over),
+                "cursor": bool(alive and _browser.overlay),
+                "cursor_error": (_browser.overlay_error if alive else "")}
 
 
 def close(args):

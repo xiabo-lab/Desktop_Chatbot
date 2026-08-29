@@ -44,6 +44,8 @@ class Recorder:
         self.viewport = (time.monotonic(), viewport)   # the module's cache
         self.scrolled_to = None
         self.offset = 0.0
+        self.overlay = False
+        self.overlay_error = ""
         self.handed_over = False
         self.last_url = ""
         self.last_used = time.monotonic()
@@ -84,6 +86,10 @@ class HelperFixture(unittest.TestCase):
     def mouse_events(self):
         return [params for method, params in self.browser.calls
                 if method == "Input.dispatchMouseEvent"]
+
+    def overlay_calls(self):
+        return [params for method, params in self.browser.calls
+                if method == "Overlay.highlightRect"]
 
 
 class TestAPointOnThePage(HelperFixture):
@@ -155,6 +161,87 @@ class TestWhatAHandCanDo(HelperFixture):
         events = self.mouse_events()
         self.assertEqual([e["type"] for e in events], ["mouseMoved"])
         self.assertNotIn("button", events[0])
+
+    def test_the_overlay_needs_the_dom_agent_first(self):
+        """Without `DOM.enable`, `Overlay.highlightRect` is *accepted* and
+        draws nothing.
+
+        There is no error to catch: it was found by screenshotting the
+        compositor and counting zero changed pixels between two cursor
+        positions. Ordering asserted here so it cannot be tidied away.
+        """
+        browser_module.hand_move({"x": 0.5, "y": 0.5})
+        order = [method for method, _ in self.browser.calls
+                 if method in ("DOM.enable", "Overlay.enable",
+                               "Overlay.highlightRect")]
+        self.assertEqual(order[:3],
+                         ["DOM.enable", "Overlay.enable",
+                          "Overlay.highlightRect"])
+
+    def test_the_pointer_is_drawn_where_the_hand_is(self):
+        """And drawn by the browser, not by script in the page.
+
+        A dot on the kiosk would be a dot underneath the window somebody is
+        looking at -- which is what the first version did, and why nobody could
+        aim a click.
+        """
+        browser_module.hand_move({"x": 0.25, "y": 0.5})
+        drawn = self.overlay_calls()
+        self.assertEqual(len(drawn), 1)
+        middle_x = drawn[0]["x"] + drawn[0]["width"] / 2
+        middle_y = drawn[0]["y"] + drawn[0]["height"] / 2
+        self.assertAlmostEqual(middle_x, 250.0, delta=1)
+        self.assertAlmostEqual(middle_y, 250.0, delta=1)
+
+    def test_the_pointer_never_runs_code_in_the_page(self):
+        """`Runtime.evaluate` is the method this whole design keeps out of
+        reach. Injecting a dot into the document would need it, and a nice
+        feature is exactly how such a thing arrives."""
+        browser_module.hand_move({"x": 0.5, "y": 0.5})
+        browser_module.hand_click({"x": 0.5, "y": 0.5})
+        browser_module.hand_scroll({"direction": "down"})
+        used = {method for method, _ in self.browser.calls}
+        for forbidden in ("Runtime.evaluate", "Runtime.callFunctionOn",
+                          "Page.addScriptToEvaluateOnNewDocument"):
+            self.assertNotIn(forbidden, used)
+
+    def test_a_click_is_marked_before_the_page_is_told(self):
+        """So the dot is on screen while the page is busy, and a click that
+        does nothing visible is still visibly a click."""
+        browser_module.hand_click({"x": 0.5, "y": 0.5})
+        order = [method for method, _ in self.browser.calls
+                 if method in ("Overlay.highlightRect",
+                               "Input.dispatchMouseEvent")]
+        self.assertEqual(order[0], "Overlay.highlightRect")
+        drawn = self.overlay_calls()[0]
+        self.assertGreater(drawn["width"], browser_module.CURSOR_SIZE,
+                           "a click should be a bigger mark than a move")
+
+    def test_an_overlay_that_refuses_is_asked_once(self):
+        """A browser that will not draw costs a pointer, not a hand.
+
+        And must not be asked eight times a second forever, which is the shape
+        of the operation that has to keep up with an arm.
+        """
+        def refuse(method, params=None, timeout=None):
+            if method.startswith("Overlay."):
+                self.browser.calls.append((method, params or {}))
+                raise ops.Refused("no overlay here")
+            return Recorder.call(self.browser, method, params, timeout)
+
+        self.browser.call = refuse
+        for _ in range(5):
+            browser_module.hand_move({"x": 0.5, "y": 0.5})
+        # One *attempt*, which is two calls: the DOM agent and then the
+        # overlay. Counting both would make a single try look like two.
+        asked = sum(1 for method, _ in self.browser.calls
+                    if method == "Overlay.enable")
+        self.assertEqual(asked, 1, "it kept asking a browser that said no")
+        self.assertTrue(self.browser.overlay_error,
+                        "a missing pointer left no reason behind")
+        self.assertEqual(len([m for m, _ in self.browser.calls
+                              if m == "Input.dispatchMouseEvent"]), 5,
+                         "losing the pointer stopped the pointer moving")
 
     def test_a_sweep_scrolls_the_way_the_hand_went(self):
         browser_module.hand_scroll({"direction": "up"})

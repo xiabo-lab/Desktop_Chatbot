@@ -5338,13 +5338,47 @@ try {
 // this CPU is the expensive part now, not the camera, and running it 30 times a
 // second would spend a core to watch a hand that has barely moved between
 // frames. Twelve is comfortably more than a sweep needs and leaves the Pi alone.
-const HAND_SAMPLE_MS = 80;          // ~12/s, from a 30/s stream
+const HAND_SAMPLE_MS = 60;          // the guard in `readHand` sets the real rate
 const HAND_TRAIL_MS = 600;          // about seven samples, at that rate
-const HAND_SWEEP_TRAVEL = 0.20;     // of the frame, before it counts as one
-const HAND_SWEEP_DOMINANCE = 1.5;   // how much straighter than the other axis
+// **A sweep is fast; everything else a hand does is not.** That is the only
+// thing that separates the two, and the first version did not use it -- it
+// asked how *far* the palm had travelled and nothing about how quickly, so
+// drifting across the page to aim a click was a sweep, and it fired Back or
+// Forward under somebody who was only trying to point at a link.
+//
+// A deliberate sweep covers a quarter of the frame in about a third of a
+// second, which is roughly 0.8 of the frame per second. Aiming is a tenth of
+// that. The gate below is set between the two and does more for the false
+// triggers than any distance threshold could.
+const HAND_SWEEP_SPEED = 0.55;      // fractions of the frame, per second
+
+// Sideways is held to a higher bar than up and down, because the two are not
+// equally forgiving: a scroll nobody meant is undone by scrolling back, and a
+// Back nobody meant loses the page they were reading.
+const HAND_SWEEP_TRAVEL = 0.24;     // of the frame, up or down
+const HAND_SWEEP_TRAVEL_X = 0.32;   // of the frame, sideways
+const HAND_SWEEP_DOMINANCE = 1.6;   // how much straighter than the other axis
 const HAND_FIST_FRAMES = 2;         // a blink of a fist is not a click
-const HAND_MOVE_MIN = 0.012;        // do not resend a pointer that has not moved
+const HAND_DETECT_CONFIDENCE = 0.4; // see `prepareGestureRecognizer`
+const HAND_MOVE_MIN = 0.02;         // do not resend a pointer that has barely moved
 const HAND_LOST_MS = 900;
+
+// **After a sweep, the hand has to settle before another one counts.**
+//
+// An arm that has swept one way comes back, and the way back is a sweep in the
+// opposite direction. A fixed lockout was tried first and is the wrong shape
+// for it: 660 ms was long enough to swallow the return of a quick flick and
+// far too short for the real case, which is somebody lifting their hand back
+// up to the top of the frame to scroll down a second time. That reset took
+// well over a second and fired a scroll up in the middle of it -- reported
+// from use, and the plainest possible description of the bug.
+//
+// So the re-arm is not a duration at all. After a sweep fires, another cannot
+// until the palm has been moving slowly for `HAND_SETTLE_MS` -- which is true
+// the moment the person stops repositioning, however long that took them, and
+// is never true during the stroke back.
+const HAND_SETTLE_MS = 260;
+const HAND_SETTLE_SPEED = 0.35;     // fractions of the frame, per second
 
 // The hand never reaches the edges of the camera's view, so the middle of the
 // frame is stretched over the whole page. Without this the page's corners are
@@ -5359,7 +5393,15 @@ const handControl = {
   fistFrames: 0,
   lastSeen: 0,
   sentX: NaN, sentY: NaN,
-  busy: false,
+  armed: true,          // a sweep may fire; see HAND_SETTLE_MS
+  stillSince: 0,        // when the hand stopped moving, or 0
+  fedAt: 0,             // when the picture last changed; see checkHandFeed
+  lastBytes: -1,
+  recycler: null,
+  moving: false,        // a pointer update is in flight; skip the next one
+  reading: false,       // recognition is running; see `readHand`
+  reporter: null,
+  rtt: 0,
 };
 
 function handSpan(value) {
@@ -5369,11 +5411,25 @@ function handSpan(value) {
 }
 
 async function sendHand(gesture, at) {
-  // One in flight at a time. The chain from here to the browser is four hops,
-  // and queueing a backlog of sweeps behind a slow one turns a single flick of
-  // the wrist into a page that keeps scrolling after the hand has stopped.
-  if (handControl.busy) return;
-  handControl.busy = true;
+  // **A sweep is never dropped; a pointer move always may be.**
+  //
+  // The first version had one in-flight guard for both, and the telemetry
+  // showed what that cost: a round trip measures 130-170 ms, a move is sent
+  // on almost every sample, so the guard was closed most of the time -- and
+  // real sweeps of 0.36 of the frame, well past the threshold, were being
+  // swallowed by a pending pointer update. That is the whole of "it feels
+  // unresponsive": the gestures were recognised and thrown away.
+  //
+  // They are different kinds of message and deserve different treatment. A
+  // move is the latest of a continuous stream and the next one is along in a
+  // tenth of a second, so dropping it costs nothing. A sweep happens once,
+  // deliberately, and is the thing the person is waiting for.
+  if (gesture === "move") {
+    if (handControl.moving) return;
+    handControl.moving = true;
+  }
+  const startedRequest = performance.now();
+  if (gesture !== "move") handStats.fired.push(gesture);
   try {
     await fetch("/api/agent/gesture", {
       method: "POST",
@@ -5383,8 +5439,24 @@ async function sendHand(gesture, at) {
   } catch (err) {
     // The agent restarting, or not installed. The next sample tries again.
   } finally {
-    handControl.busy = false;
+    handControl.rtt = performance.now() - startedRequest;
+    handStats.rtt += handControl.rtt;
+    handStats.rttN += 1;
+    if (gesture === "move") handControl.moving = false;
   }
+}
+
+function handSpeed(now) {
+  // Over the last few samples only. Averaged across the whole trail a fast
+  // stroke followed by a pause reads as moderate for the length of the window,
+  // which would let the settle expire while the hand was still travelling.
+  const trail = handControl.trail;
+  if (trail.length < 2) return 0;
+  const from = trail[Math.max(0, trail.length - 4)];
+  const last = trail[trail.length - 1];
+  const seconds = (last.t - from.t) / 1000;
+  if (seconds <= 0) return 0;
+  return Math.hypot(last.x - from.x, last.y - from.y) / seconds;
 }
 
 function readSweep(now) {
@@ -5398,8 +5470,21 @@ function readSweep(now) {
   const first = trail[0], last = trail[trail.length - 1];
   const dx = last.x - first.x, dy = last.y - first.y;
   const across = Math.abs(dx), down = Math.abs(dy);
+  // The largest movement seen this second, whether or not it was enough. This
+  // is the number that says whether a sweep was too small or the bar too high.
+  handStats.dx = Math.max(handStats.dx, across);
+  handStats.dy = Math.max(handStats.dy, down);
+  handStats.trail = Math.max(handStats.trail, trail.length);
 
-  if (across >= HAND_SWEEP_TRAVEL && across > down * HAND_SWEEP_DOMINANCE) {
+  // How quickly it got there. A hand aiming at a link crosses the same
+  // distance, given long enough, and must not be read as a sweep for it.
+  const seconds = (last.t - first.t) / 1000;
+  if (seconds <= 0) return "";
+  const speed = Math.hypot(dx, dy) / seconds;
+  handStats.speed = Math.max(handStats.speed, speed);
+  if (speed < HAND_SWEEP_SPEED) return "";
+
+  if (across >= HAND_SWEEP_TRAVEL_X && across > down * HAND_SWEEP_DOMINANCE) {
     // x is already mirrored by `gestureSamples`, so it grows the way the
     // person sees their own hand grow: rightwards is rightwards.
     return dx > 0 ? "forward" : "back";
@@ -5413,20 +5498,95 @@ function readSweep(now) {
   return "";
 }
 
+// ── what the reader is seeing ──────────────────────────────────────────────
+//
+// Reported once a second while hand control is running, and only then. It
+// exists because "it feels slow" has four different causes that look identical
+// from outside the browser -- no hand found, no shape read, too small a sweep,
+// or a slow pipeline -- and the page is the only thing that can tell them
+// apart. `aipi5/ui/server.py` writes it to the journal.
+
+const handStats = {
+  n: 0, infer: 0, gap: 0, hand: 0, palm: 0, fist: 0, other: 0,
+  dx: 0, dy: 0, trail: 0, fired: [], rtt: 0, rttN: 0, lastAt: 0, stale: 0,
+  speed: 0,
+};
+
+function resetHandStats() {
+  handStats.n = handStats.infer = handStats.gap = handStats.hand = 0;
+  handStats.palm = handStats.fist = handStats.other = 0;
+  handStats.dx = handStats.dy = handStats.trail = 0;
+  handStats.rtt = handStats.rttN = handStats.stale = handStats.speed = 0;
+  handStats.fired = [];
+}
+
+async function reportHand() {
+  if (!handControl.on || !handStats.n) return;
+  const body = {
+    n: handStats.n,
+    infer: handStats.infer / handStats.n,
+    gap: handStats.gap / handStats.n,
+    handpct: (100 * handStats.hand) / handStats.n,
+    palm: handStats.palm, fist: handStats.fist, other: handStats.other,
+    dx: handStats.dx, dy: handStats.dy, trail: handStats.trail,
+    fired: handStats.fired.join(","),
+    stale: handStats.stale,
+    speed: handStats.speed,
+    armed: handControl.armed ? 1 : 0,
+    rtt: handStats.rttN ? handStats.rtt / handStats.rttN : 0,
+  };
+  resetHandStats();
+  try {
+    await fetch("/api/hand/debug", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) { /* the assistant restarting */ }
+}
+
 async function readHand() {
   const feed = handControl.feed;
   if (!handControl.on || !feed || !feed.complete || !feed.naturalWidth) return;
+  // **Recognition costs more than the interval it is scheduled on.** Measured
+  // on this Pi: 70-140 ms a frame against an 80 ms timer, so without a guard
+  // the callbacks queue and the main thread never comes up for air -- which is
+  // also why the round trip to the agent measured 166 ms for a request the
+  // server answers in 10. `setInterval` does not skip a tick for you.
+  if (handControl.reading) return;
+  handControl.reading = true;
+  try {
+    await readHandOnce(feed);
+  } finally {
+    handControl.reading = false;
+  }
+}
+
+async function readHandOnce(feed) {
   const recognizer = await prepareGestureRecognizer();
   if (!recognizer || !handControl.on) return;
 
   const now = performance.now();
+  handStats.gap += handStats.lastAt ? now - handStats.lastAt : 0;
+  handStats.lastAt = now;
+  // Has the picture changed since the last look? `currentSrc` and `complete`
+  // cannot say -- a multipart element swaps the decoded frame underneath them
+  // without touching either -- so this samples the image itself.
+  const signature = handFeedSignature(feed);
+  const changed = signature !== handControl.lastBytes;
+  handControl.lastBytes = signature;
+  if (!changed) handStats.stale += 1;
+  if (!checkHandFeed(now, changed)) return;
   let samples;
+  const startedInference = performance.now();
   try {
     samples = gestureSamples(recognizer.recognizeForVideo(feed, now));
   } catch (err) {
     // The multipart image can swap frames mid-read. Skipping one is harmless.
     return;
   }
+  handStats.n += 1;
+  handStats.infer += performance.now() - startedInference;
 
   // The hand nearest the middle of the frame, so a second person walking
   // behind does not take the controls.
@@ -5436,10 +5596,20 @@ async function readHand() {
     if (d < best) { best = d; hand = sample; }
   }
 
+  if (hand) handStats.hand += 1;
+  if (hand && hand.shape === "Open_Palm") handStats.palm += 1;
+  else if (hand && hand.shape === "Closed_Fist") handStats.fist += 1;
+  else handStats.other += 1;
+
   if (!hand || !hand.shape) {
     if (handControl.lastSeen && now - handControl.lastSeen > HAND_LOST_MS) {
       handControl.trail.length = 0;
       handControl.fistFrames = 0;
+      // Lowering the hand is the clearest possible way of saying the gesture
+      // is over, so it re-arms too -- otherwise somebody who drops their arm
+      // instead of holding it still has to hold it still anyway.
+      handControl.armed = true;
+      handControl.stillSince = 0;
     }
     return;
   }
@@ -5462,11 +5632,30 @@ async function readHand() {
   if (hand.shape !== "Open_Palm") return;
 
   handControl.trail.push({ t: now, x: hand.x, y: hand.y });
-  const sweep = readSweep(now);
-  if (sweep) {
-    handControl.trail.length = 0;
-    sendHand(sweep);
-    return;
+
+  if (!handControl.armed) {
+    // Waiting for the hand to settle after the last sweep. The trail is still
+    // collected, because it is what says whether the hand has settled -- but
+    // it is cleared the moment it does, so the reset stroke can never be the
+    // front half of the next sweep.
+    if (handSpeed(now) < HAND_SETTLE_SPEED) {
+      if (!handControl.stillSince) handControl.stillSince = now;
+      if (now - handControl.stillSince >= HAND_SETTLE_MS) {
+        handControl.armed = true;
+        handControl.trail.length = 0;
+      }
+    } else {
+      handControl.stillSince = 0;
+    }
+  } else {
+    const sweep = readSweep(now);
+    if (sweep) {
+      handControl.trail.length = 0;
+      handControl.armed = false;
+      handControl.stillSince = 0;
+      sendHand(sweep);
+      return;
+    }
   }
 
   // Not sweeping, so the palm is pointing. Move the agent's pointer there.
@@ -5478,6 +5667,56 @@ async function readHand() {
   }
 }
 
+// **A multipart stream ends, and an `<img>` does not say so.**
+//
+// It ends for three ordinary reasons: the server caps a response at five
+// minutes, the camera is briefly given back and retaken, or the assistant
+// restarts. In every one of them the last frame stays on the element,
+// `complete` stays true and `naturalWidth` stays set -- so the reader goes on
+// running at full speed against a photograph. That is not a hypothetical: it
+// cost a whole round of testing, 115 seconds of recognition at 14 frames a
+// second finding not one hand, because the picture was of an empty room.
+//
+// `onerror` covers a refused connection and nothing else, so the reader
+// watches the clock instead: `handControl.fedAt` is stamped whenever a sample
+// is taken from a *different* picture, and a feed that has not changed in
+// `HAND_STALL_MS` is reconnected. It also reconnects well inside the server's
+// own five-minute cap, so the expected ending is never the one that has to be
+// detected.
+const HAND_STALL_MS = 4000;
+const HAND_RECYCLE_MS = 120000;
+
+function handFeedUrl() {
+  // 320 rather than the feed's own 480: the cost of recognition scales with
+  // the picture, and a hand at arm's length is a large object. The camera is
+  // still capturing at full size; this is only what gets decoded and searched.
+  return "/api/hand/stream?fps=30&w=320&t=" + Date.now();
+}
+
+function connectHandFeed() {
+  if (!handControl.on || !handControl.feed) return;
+  handControl.fedAt = performance.now();
+  handControl.lastBytes = -1;
+  handControl.feed.src = handFeedUrl();
+  // The feed is acquired a moment after the browser opens -- a borrowed camera
+  // takes a second to start -- so a stream asked for too early gets a 503.
+  handControl.feed.onerror = () => {
+    if (handControl.on) setTimeout(connectHandFeed, 1500);
+  };
+}
+
+function checkHandFeed(now, changed) {
+  if (changed) {
+    handControl.fedAt = now;
+    return true;
+  }
+  if (now - handControl.fedAt > HAND_STALL_MS) {
+    connectHandFeed();
+    return false;
+  }
+  return true;
+}
+
 function syncHandControl(state) {
   const wanted = !!state.agent_browser;
   if (wanted === handControl.on) return;
@@ -5487,9 +5726,17 @@ function syncHandControl(state) {
     if (handControl.timer !== null) {
       clearInterval(handControl.timer); handControl.timer = null;
     }
+    if (handControl.reporter) {
+      clearInterval(handControl.reporter); handControl.reporter = null;
+    }
+    if (handControl.recycler) {
+      clearInterval(handControl.recycler); handControl.recycler = null;
+    }
     if (handControl.feed) handControl.feed.removeAttribute("src");
     handControl.trail.length = 0;
     handControl.fistFrames = 0;
+    handControl.armed = true;
+    handControl.stillSince = 0;
     handControl.sentX = handControl.sentY = NaN;
     return;
   }
@@ -5500,19 +5747,14 @@ function syncHandControl(state) {
     // nothing to hide behind a stylesheet that could later stop hiding it.
     handControl.feed = new Image();
   }
-  handControl.feed.src = "/api/hand/stream?fps=30&t=" + Date.now();
-  // The feed is acquired by the assistant a moment after the browser opens --
-  // a borrowed camera takes a second to start -- so a stream asked for too
-  // early gets a 503 and an `<img>` that never loads. Retry until it does.
-  handControl.feed.onerror = () => {
-    if (!handControl.on) return;
-    setTimeout(() => {
-      if (handControl.on) {
-        handControl.feed.src = "/api/hand/stream?fps=30&t=" + Date.now();
-      }
-    }, 1500);
-  };
+  connectHandFeed();
   handControl.timer = setInterval(readHand, HAND_SAMPLE_MS);
+  resetHandStats();
+  handStats.lastAt = 0;
+  handControl.reporter = setInterval(reportHand, 1000);
+  // Well inside the server's five-minute cap, so the ordinary ending is never
+  // the one the stall watchdog has to catch.
+  handControl.recycler = setInterval(connectHandFeed, HAND_RECYCLE_MS);
 }
 
 async function pollState() {
@@ -5823,9 +6065,18 @@ async function prepareGestureRecognizer() {
             delegate: "CPU",
           },
           runningMode: "VIDEO",
-          numHands: 2,
-          minHandDetectionConfidence: 0.55,
-          minHandPresenceConfidence: 0.55,
+          // One. This recognizer has exactly one caller -- the hand control
+          // reader -- and it already picks a single hand, the one nearest the
+          // middle of the frame. Looking for a second was landmark work done
+          // on every frame purely to throw the answer away.
+          numHands: 1,
+          // Lowered from 0.55. The telemetry found a hand in only about a
+          // quarter of frames during deliberate gesturing, and a missed frame
+          // is a shorter trail and a sweep that does not reach the threshold.
+          // A false hand costs nothing here: a shape still has to be read from
+          // it, and a sweep still has to travel a fifth of the frame.
+          minHandDetectionConfidence: HAND_DETECT_CONFIDENCE,
+          minHandPresenceConfidence: HAND_DETECT_CONFIDENCE,
           minTrackingConfidence: 0.5,
           cannedGesturesClassifierOptions: {
             categoryAllowlist: ["Open_Palm", "Closed_Fist"],
@@ -5843,6 +6094,51 @@ async function prepareGestureRecognizer() {
   return gestureRecognizerLoad;
 }
 
+// A cheap number that changes when the picture does. Sixteen by sixteen is
+// enough to tell one frame from the next and costs a fraction of a millisecond
+// beside the 68 ms of recognition it guards.
+let handSignatureCanvas = null;
+
+function handFeedSignature(feed) {
+  try {
+    if (!handSignatureCanvas) {
+      handSignatureCanvas = document.createElement("canvas");
+      handSignatureCanvas.width = handSignatureCanvas.height = 16;
+    }
+    const context = handSignatureCanvas.getContext("2d",
+                                                   { willReadFrequently: true });
+    context.drawImage(feed, 0, 0, 16, 16);
+    const data = context.getImageData(0, 0, 16, 16).data;
+    let sum = 0;
+    for (let i = 0; i < data.length; i += 4) sum = (sum * 31 + data[i]) | 0;
+    return sum;
+  } catch (err) {
+    // A frame that cannot be drawn is one that cannot be recognised either;
+    // treating it as unchanged lets the stall watchdog do its job.
+    return handControl.lastBytes;
+  }
+}
+
+function closedHand(points) {
+  // Fingertips 8/12/16/20 against their middle knuckles 6/10/14/18, both
+  // measured from the wrist at 0. Curled fingers put the tip closer in.
+  // Scaled by the hand's own size, so it holds at any distance from the
+  // camera. The thumb is left out: it stays out sideways on a real fist and
+  // would only ever argue with the other four.
+  const wrist = points[0];
+  const span = Math.hypot(points[9].x - wrist.x, points[9].y - wrist.y) || 1e-6;
+  let curled = 0;
+  for (const [tip, knuckle] of [[8, 6], [12, 10], [16, 14], [20, 18]]) {
+    const far = Math.hypot(points[tip].x - wrist.x, points[tip].y - wrist.y);
+    const mid = Math.hypot(points[knuckle].x - wrist.x,
+                           points[knuckle].y - wrist.y);
+    if ((far - mid) / span < 0.1) curled += 1;
+  }
+  // Three of four rather than all four, because one finger often reads
+  // straight through a frame where the hand is turning.
+  return curled >= 3;
+}
+
 function gestureSamples(result) {
   const samples = [];
   for (let i = 0; i < (result.landmarks || []).length; i++) {
@@ -5857,9 +6153,26 @@ function gestureSamples(result) {
     }
     x = 1 - x / 5; y /= 5;
     const category = result.gestures && result.gestures[i] && result.gestures[i][0];
+    // **The canned classifier hardly ever calls a fist a fist.** Over 170
+    // seconds of deliberate gesturing it returned Closed_Fist nine times
+    // against 387 open palms, so one click in five landed. A closed hand hides
+    // most of what the classifier was trained to read, which is exactly when
+    // the landmarks are easiest: with the fingers curled, every fingertip sits
+    // nearer the wrist than its own middle knuckle. That is measurable from
+    // the points already in hand and does not care about lighting.
+    //
+    // Asked first, not as a fallback. The classifier does not merely fail to
+    // see a fist -- it reports an open palm for one often enough that treating
+    // it as the authority would keep the click unreliable.
+    let shape;
+    if (points.length >= 21 && closedHand(points)) {
+      shape = "Closed_Fist";
+    } else {
+      shape = category ? category.categoryName : "";
+    }
     samples.push({
       x, y,
-      shape: category ? category.categoryName : "",
+      shape,
       score: category ? category.score : 0,
     });
   }

@@ -288,7 +288,8 @@ class _Handler(BaseHTTPRequestHandler):
         if path not in ("/api/action", "/api/shutdown", "/api/files/delete",
                         "/api/photos", "/api/game/open", "/api/game/close",
                         "/api/game/command", "/api/game/debug",
-                        "/api/game/settings", "/api/agent/gesture"):
+                        "/api/game/settings", "/api/agent/gesture",
+                        "/api/hand/debug"):
             self._json({"error": "not found"}, 404)
             return
 
@@ -327,6 +328,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/api/agent/gesture":
             self._gesture_post(payload)
+            return
+
+        if path == "/api/hand/debug":
+            self._hand_debug(payload)
             return
 
         action = str(payload.get("action", ""))
@@ -470,6 +475,31 @@ class _Handler(BaseHTTPRequestHandler):
         if games is None:
             return
         self._json(games.settings())
+
+    def _hand_debug(self, payload: dict) -> None:
+        """One line a second about what the gesture reader is seeing.
+
+        Logged rather than answered, because the reader is in a browser and
+        the person watching it is on the far end of an ssh session. Only ever
+        posted while hand control is running, which is only while the agent has
+        a page on the screen.
+        """
+        def _n(key, digits=0):
+            try:
+                value = float(payload.get(key, 0))
+            except (TypeError, ValueError):
+                return 0
+            return round(value, digits) if digits else int(value)
+
+        log.info(
+            "HAND n=%d infer=%dms gap=%dms hand=%d%% palm=%d fist=%d "
+            "other=%d stale=%d travel=%.2f/%.2f speed=%.2f armed=%d "
+            "trail=%d fired=%s rtt=%dms",
+            _n("n"), _n("infer"), _n("gap"), _n("handpct"), _n("palm"),
+            _n("fist"), _n("other"), _n("stale"), _n("dx", 2), _n("dy", 2),
+            _n("speed", 2), _n("armed"), _n("trail"),
+            str(payload.get("fired") or "-")[:60], _n("rtt"))
+        self._json({"ok": True})
 
     def _gesture_post(self, payload: dict) -> None:
         """The person's hand, on its way to the agent's browser.
@@ -1112,7 +1142,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         params = params or {}
         rate = self._bounded(params, "fps", HAND_FPS, 1, HAND_FPS_MAX)
-        width = self._bounded(params, "w", HAND_WIDTH, 240, 640)
+        width = self._bounded(params, "w", HAND_WIDTH, 160, 640)
         interval = 1.0 / rate
         deadline = time.monotonic() + PREVIEW_MAX_S
         try:

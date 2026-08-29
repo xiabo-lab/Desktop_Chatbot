@@ -141,7 +141,24 @@ class AgentService:
             if self._browser_seen and now - self._browser_seen[0] < self.BROWSER_CACHE_S:
                 return self._browser_seen[1]
         answer = self.toolbox.helper.call("browser_state", {}, timeout=3.0)
-        state = answer.result if answer.ok else {"open": False}
+        if answer.ok:
+            state = answer.result
+        elif self._browser_seen:
+            # **A failed question is not an answer of "no".**
+            #
+            # This was read as "the browser has closed", and the assistant acts
+            # on it: it gives the camera back, which ends the video stream the
+            # gesture reader is holding. One slow round trip to a busy helper
+            # therefore took hand control down for good -- observed on the
+            # device as `camera reclaimed` followed five seconds later by
+            # `camera lent`, in the middle of somebody testing it, with a page
+            # left reading the last frame it ever received.
+            #
+            # Keeping the last known state costs nothing: a browser really
+            # closing is noticed on the next tick, a second later.
+            state = self._browser_seen[1]
+        else:
+            state = {"open": False}
         with self._gesture_lock:
             self._browser_seen = (now, state)
         return state
