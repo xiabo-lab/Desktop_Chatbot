@@ -5339,6 +5339,32 @@ try {
 // second would spend a core to watch a hand that has barely moved between
 // frames. Twelve is comfortably more than a sweep needs and leaves the Pi alone.
 const HAND_SAMPLE_MS = 60;          // the guard in `readHand` sets the real rate
+
+// **Recognition is not free, and most of the time there is no hand.**
+//
+// It costs about 68 ms a frame on this Pi, on the main thread of the page the
+// touchscreen talks to. Running it flat out whenever a browser happens to be
+// open spends most of a core watching an empty room, and it is the reason a
+// stuck reader could starve touch handling entirely. So after a while with
+// nothing found it drops to a slow watch, and comes straight back the moment a
+// hand appears -- the cost of noticing late is a fifth of a second, once.
+const HAND_IDLE_AFTER_MS = 8000;
+const HAND_IDLE_SAMPLE_MS = 200;
+
+// **Retrying every 1.5 seconds forever is what froze the device.**
+//
+// The feed answers 503 whenever the camera is not held -- which is most of the
+// time, and all of the time when a game or a call has it. Each retry opened a
+// new stream, the abandoned ones stranded a thread apiece on the server, and
+// the renderer sat at 70% of a core with six of them live. The screen stopped
+// answering touch, which is the worst thing this feature could possibly do:
+// it exists to save somebody walking to the device.
+//
+// So a retry backs off, and gives up. There is nothing to lose by giving up:
+// the assistant publishes `hand_feed` on the poll this page already makes, and
+// a camera that becomes available bumps it, which reconnects.
+const HAND_RETRY_MS = 2000;
+const HAND_RETRY_MAX_MS = 30000;
 const HAND_TRAIL_MS = 600;          // about seven samples, at that rate
 // **A sweep is fast; everything else a hand does is not.** That is the only
 // thing that separates the two, and the first version did not use it -- it
@@ -5396,6 +5422,9 @@ const handControl = {
   armed: true,          // a sweep may fire; see HAND_SETTLE_MS
   stillSince: 0,        // when the hand stopped moving, or 0
   generation: -1,       // which acquisition of the camera the stream is on
+  retry: HAND_RETRY_MS, // how long before the next reconnect attempt
+  retryTimer: null,
+  lastLook: 0,          // when recognition last ran; see HAND_IDLE_SAMPLE_MS
   recycler: null,
   moving: false,        // a pointer update is in flight; skip the next one
   reading: false,       // recognition is running; see `readHand`
@@ -5538,6 +5567,8 @@ async function reportHand() {
     fired: handStats.fired.join(","),
     ready: (handControl.feed && handControl.feed.complete &&
             handControl.feed.naturalWidth) ? 1 : 0,
+    idle: (performance.now() - handControl.lastSeen > HAND_IDLE_AFTER_MS)
+      ? 1 : 0,
     speed: handStats.speed,
     armed: handControl.armed ? 1 : 0,
     rtt: handStats.rttN ? handStats.rtt / handStats.rttN : 0,
@@ -5561,6 +5592,18 @@ async function readHand() {
   // also why the round trip to the agent measured 166 ms for a request the
   // server answers in 10. `setInterval` does not skip a tick for you.
   if (handControl.reading) return;
+  // Nothing has been seen for a while, so look less often. `lastSeen` is
+  // stamped by every frame with a hand in it, so this ends itself.
+  const now = performance.now();
+  // `lastSeen` is stamped when tracking starts as well as by every frame with
+  // a hand in it. Without that the throttle never engaged in the one case it
+  // matters most -- a browser left open in an empty room, where no hand is
+  // ever seen and the guard `lastSeen &&` stays false forever.
+  if (now - handControl.lastSeen > HAND_IDLE_AFTER_MS &&
+      now - handControl.lastLook < HAND_IDLE_SAMPLE_MS) {
+    return;
+  }
+  handControl.lastLook = now;
   handControl.reading = true;
   try {
     await readHandOnce(feed);
@@ -5707,11 +5750,17 @@ function handFeedUrl() {
 
 function connectHandFeed() {
   if (!handControl.on || !handControl.feed) return;
+  // Cancel whatever is in flight before asking for another. Without this the
+  // old request can outlive the assignment, and each one costs a connection.
+  handControl.feed.removeAttribute("src");
   handControl.feed.src = handFeedUrl();
-  // The feed is acquired a moment after the browser opens -- a borrowed camera
-  // takes a second to start -- so a stream asked for too early gets a 503.
+  handControl.feed.onload = () => { handControl.retry = HAND_RETRY_MS; };
   handControl.feed.onerror = () => {
-    if (handControl.on) setTimeout(connectHandFeed, 1500);
+    if (!handControl.on) return;
+    const wait = handControl.retry;
+    handControl.retry = Math.min(wait * 2, HAND_RETRY_MAX_MS);
+    clearTimeout(handControl.retryTimer);
+    handControl.retryTimer = setTimeout(connectHandFeed, wait);
   };
 }
 
@@ -5740,6 +5789,13 @@ function syncHandControl(state) {
     if (handControl.recycler) {
       clearInterval(handControl.recycler); handControl.recycler = null;
     }
+    // A pending reconnect outliving the feature is another stream nobody
+    // wanted -- and the stream that was leaking is exactly this one.
+    clearTimeout(handControl.retryTimer);
+    handControl.retryTimer = null;
+    handControl.retry = HAND_RETRY_MS;
+    handControl.lastSeen = 0;
+    handControl.lastLook = 0;
     if (handControl.feed) handControl.feed.removeAttribute("src");
     handControl.trail.length = 0;
     handControl.fistFrames = 0;
@@ -5756,6 +5812,7 @@ function syncHandControl(state) {
     handControl.feed = new Image();
   }
   connectHandFeed();
+  handControl.lastSeen = performance.now();
   handControl.timer = setInterval(readHand, HAND_SAMPLE_MS);
   resetHandStats();
   handStats.lastAt = 0;

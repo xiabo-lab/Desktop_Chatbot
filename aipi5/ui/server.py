@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -110,6 +111,11 @@ CALL_MAX_BODY = 64 * 1024
 #: The gesture reader's stream. Thirty is the camera's own rate on two
 #: buffers with a continuous reader, measured -- see `aipi5/agent/hands.py`,
 #: which explains why the assistant's own preview cannot go near it.
+#: How long a write to a hand-feed viewer may block before the stream is
+#: dropped. Generous next to a frame every 33 ms, and the only thing standing
+#: between an abandoned stream and a thread held for the life of the process.
+HAND_WRITE_TIMEOUT_S = 5.0
+
 HAND_FPS = 30
 HAND_FPS_MAX = 60
 HAND_WIDTH = 480
@@ -493,10 +499,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         log.info(
             "HAND n=%d infer=%dms gap=%dms hand=%d%% palm=%d fist=%d "
-            "other=%d ready=%d travel=%.2f/%.2f speed=%.2f armed=%d "
+            "other=%d ready=%d idle=%d travel=%.2f/%.2f speed=%.2f armed=%d "
             "trail=%d fired=%s rtt=%dms",
             _n("n"), _n("infer"), _n("gap"), _n("handpct"), _n("palm"),
-            _n("fist"), _n("other"), _n("ready"), _n("dx", 2), _n("dy", 2),
+            _n("fist"), _n("other"), _n("ready"), _n("idle"), _n("dx", 2), _n("dy", 2),
             _n("speed", 2), _n("armed"), _n("trail"),
             str(payload.get("fired") or "-")[:60], _n("rtt"))
         self._json({"ok": True})
@@ -1139,6 +1145,17 @@ class _Handler(BaseHTTPRequestHandler):
                         "active": False}, 503)
             return
 
+        # **A stream whose viewer has gone must not pin a thread forever.**
+        #
+        # It did. `wfile.write` blocks once the socket buffer fills, and a
+        # client that has stopped reading never drains it -- so the handler
+        # sits in a write that cannot complete, holding a thread and a socket.
+        # Six of them accumulated over an hour and the device stopped
+        # responding to touch. `BrokenPipeError` only arrives for a connection
+        # that was *closed*; one that is merely abandoned raises nothing at
+        # all, which is why the existing handler caught nothing.
+        self.connection.settimeout(HAND_WRITE_TIMEOUT_S)
+
         boundary = "aipi5hand"
         self.send_response(200)
         self.send_header("Content-Type",
@@ -1167,6 +1184,10 @@ class _Handler(BaseHTTPRequestHandler):
                 time.sleep(max(0.0, interval - (time.monotonic() - started)))
         except (BrokenPipeError, ConnectionResetError):
             log.debug("hand feed client went away")
+        except socket.timeout:
+            # The abandoned-viewer case above. Not an error: the page has moved
+            # on to a newer stream and this one has nobody to send to.
+            log.debug("hand feed client stopped reading; dropping it")
         except OSError as exc:
             log.debug("hand feed stream ended: %s", exc)
 
