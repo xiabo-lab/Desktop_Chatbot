@@ -113,6 +113,9 @@ class Browser:
         #: Whether the pointer is on the page now, so hiding it when the hand
         #: leaves costs nothing when it is already gone.
         self.cursor_shown = False
+        #: Guards `_attach` calling itself through `call`. See the stale-session
+        #: branch there.
+        self._reattaching = False
         #: (measured_at, (width, height)) for the content area. See _viewport.
         self.viewport = None
         #: Where the page was when it was last scrolled, or None. Lets a
@@ -261,18 +264,44 @@ class Browser:
         self.proc = None
         self.session = ""
         self.target = ""
+        self.overlay = False
+        self.cursor_shown = False
+
+    #: The CDP error for a session that no longer exists. Matched on the text
+    #: because that is all the protocol gives -- there is no code.
+    STALE_SESSION = "session with given id not found"
 
     def _attach(self):
-        """Find the page and open a session on it."""
-        targets = self.call("Target.getTargets")
+        """Find the page a person is looking at, and open a session on it.
+
+        **Not simply the first page target.** The browser is a real window with
+        a tab strip, and the person is invited to use it -- that is the whole
+        point of `browser_hand_over`. When they open a tab, the target this was
+        attached to is no longer the one on screen, and a page that is not on
+        screen is the wrong thing to scroll.
+
+        So: the last page target that is showing something, which is the tab
+        most recently opened. `about:blank` is skipped because the browser is
+        launched on it and it is never what anybody wants to drive.
+        """
+        targets = self.call("Target.getTargets", session=False)
         pages = [t for t in targets.get("targetInfos", [])
                  if t.get("type") == "page"]
         if not pages:
             raise Refused("the browser has no page open")
-        self.target = pages[0]["targetId"]
+        real = [p for p in pages if p.get("url") not in ("", "about:blank")]
+        chosen = (real or pages)[-1]
+        self.target = chosen["targetId"]
         answer = self.call("Target.attachToTarget",
-                           {"targetId": self.target, "flatten": True})
+                           {"targetId": self.target, "flatten": True},
+                           session=False)
         self.session = answer.get("sessionId", "")
+        # A new document is a new overlay: whatever was enabled belonged to the
+        # page that has gone. See `_cursor`.
+        self.overlay = False
+        self.cursor_shown = False
+        self.viewport = None
+        self.scrolled_to = None
         self.call("Page.enable")
 
     # ── the wire ────────────────────────────────────────────────────
@@ -305,7 +334,31 @@ class Browser:
             if answer.get("id") != ident:
                 continue                    # an event, or another command
             if "error" in answer:
-                raise Refused(str(answer["error"].get("message", "refused")))
+                message = str(answer["error"].get("message", "refused"))
+                # **The session dies when the person uses the browser.**
+                #
+                # Opening a tab replaces the target this was attached to, and
+                # every call afterwards fails with "Session with given id not
+                # found" -- while `browser_state` goes on reporting the browser
+                # as open, because the *process* is fine. Hand control simply
+                # stopped: no pointer, no gestures, nothing in any log saying
+                # why. Reported twice as "the tracking is not working".
+                #
+                # So a stale session is not an error, it is a fact about a
+                # browser somebody is using: re-attach to whatever page is
+                # there now and run the command again. Once only -- a second
+                # failure is a real one and must be reported.
+                if (self.STALE_SESSION in message.lower()
+                        and session and not self._reattaching):
+                    self._reattaching = True
+                    try:
+                        self._attach()
+                    except Refused:
+                        raise Refused(message)
+                    finally:
+                        self._reattaching = False
+                    return self.call(method, params, timeout, session)
+                raise Refused(message)
             return answer.get("result", {})
         raise Refused(f"{method} did not answer within {timeout:.0f}s")
 

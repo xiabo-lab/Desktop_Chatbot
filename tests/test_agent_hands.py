@@ -380,6 +380,94 @@ class TestWhatAHandCanDo(HelperFixture):
         self.assertEqual(smallest, (0.0, 0.0))
 
 
+class TestTheSessionThePersonBroke(unittest.TestCase):
+    """Opening a tab kills the CDP session, and everything stops.
+
+    The browser is a real window with a tab strip and the person is invited to
+    use it -- `browser_hand_over` exists for exactly that. But opening a tab
+    replaces the target the helper attached to at launch, and every call after
+    it fails with "Session with given id not found" while `browser_state` goes
+    on saying the browser is open, because the process is fine.
+
+    Hand control just stopped: no pointer, no gestures, nothing in any log.
+    Reported twice as "the tracking is not working".
+    """
+
+    class Flaky:
+        """A browser whose session dies once, the way a new tab kills it."""
+
+        def __init__(self):
+            self.alive = True
+            self.session = "old"
+            self.target = ""
+            self.overlay = False
+            self.overlay_error = ""
+            self.cursor_shown = False
+            self.viewport = None
+            self.scrolled_to = None
+            self.last_url = ""
+            self.last_used = time.monotonic()
+            self._reattaching = False
+            self.STALE_SESSION = browser_module.Browser.STALE_SESSION
+            self.calls = []
+            self.dead_session = True
+
+        def call(self, method, params=None, timeout=None, session=True):
+            self.calls.append(method)
+            if method == "Target.getTargets":
+                return {"targetInfos": [
+                    {"type": "page", "targetId": "t1", "url": "about:blank"},
+                    {"type": "page", "targetId": "t2",
+                     "url": "https://youtube.com"}]}
+            if method == "Target.attachToTarget":
+                self.target = (params or {}).get("targetId", "")
+                self.session = "fresh"
+                self.dead_session = False
+                return {"sessionId": "fresh"}
+            if session and self.dead_session:
+                raise ops.Refused("Session with given id not found.")
+            if method == "Page.getLayoutMetrics":
+                return {"cssLayoutViewport": {"clientWidth": 1000,
+                                              "clientHeight": 500}}
+            return {}
+
+        _attach = browser_module.Browser._attach
+        touch = browser_module.Browser.touch
+        idle_for = browser_module.Browser.idle_for
+
+    def setUp(self):
+        self.browser = self.Flaky()
+        saved = browser_module._browser
+        browser_module._browser = self.browser
+        self.addCleanup(setattr, browser_module, "_browser", saved)
+
+    def test_it_attaches_to_the_page_that_is_actually_there(self):
+        """The last real page, not the first target.
+
+        The browser launches on `about:blank`, so the first target is never
+        the one anybody wants to drive, and a page nobody is looking at is the
+        wrong thing to scroll.
+        """
+        self.browser._attach()
+        self.assertEqual(self.browser.target, "t2")
+
+    def test_attaching_forgets_what_belonged_to_the_old_page(self):
+        """A new document is a new overlay, viewport and scroll position.
+
+        Carrying the old ones over is how the pointer stops being drawn: the
+        helper believes the overlay is enabled on a page that has gone.
+        """
+        self.browser.overlay = True
+        self.browser.cursor_shown = True
+        self.browser.viewport = (0.0, (1, 1))
+        self.browser.scrolled_to = 900.0
+        self.browser._attach()
+        self.assertFalse(self.browser.overlay)
+        self.assertFalse(self.browser.cursor_shown)
+        self.assertIsNone(self.browser.viewport)
+        self.assertIsNone(self.browser.scrolled_to)
+
+
 class TestNoBrowserNoGesture(unittest.TestCase):
     def setUp(self):
         self._saved = browser_module._browser
