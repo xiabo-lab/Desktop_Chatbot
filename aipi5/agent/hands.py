@@ -86,6 +86,12 @@ class HandFeed:
         self._wanted_at = 0.0
         #: Why the feed is not running, for the settings page and the logs.
         self.error = ""
+        #: Bumped every time the camera is taken. The page watches it and
+        #: reconnects its video stream when it changes, because a stream that
+        #: was open across a release is dead and an `<img>` will not say so.
+        #: An exact signal, where guessing from the pixels was not: a still
+        #: room and a frozen picture look identical to any cheap comparison.
+        self.generation = 0
 
     # ── what Housekeeping calls ─────────────────────────────────────
 
@@ -132,7 +138,8 @@ class HandFeed:
 
     def describe(self) -> dict:
         lease = self._lease
-        info = {"active": lease is not None, "error": self.error}
+        info = {"active": lease is not None, "error": self.error,
+                "generation": self.generation}
         if lease is not None:
             try:
                 info.update(lease.describe() or {})
@@ -169,6 +176,7 @@ class HandFeed:
 
         self._lease = lease
         self.error = ""
+        self.generation += 1
         # The screensaver, for the reason in the module docstring: somebody
         # reading a web page is somebody holding still, and holding still is
         # what the idle timer is watching for.

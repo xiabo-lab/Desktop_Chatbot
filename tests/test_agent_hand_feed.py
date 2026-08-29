@@ -211,6 +211,47 @@ class TestTheScreensaver(Fixture):
                          "it took the screensaver off hold for a live call")
 
 
+class TestTheGeneration(Fixture):
+    """How the page knows its video stream has died.
+
+    Guessing from the pixels was tried and does not work: a 16x16 hash averages
+    sensor noise away, so a live feed of a room where nobody is moving is
+    byte-identical frame to frame and reads as frozen. That produced a
+    reconnect every four seconds and, because the reader returns early when it
+    believes the feed is dead, five minutes of complete silence with the camera
+    still held -- which looked exactly like a camera that could not see a hand.
+    """
+
+    def test_it_starts_at_zero_and_counts_acquisitions(self):
+        self.assertEqual(self.feed.describe()["generation"], 0)
+        self.feed.sync(True)
+        self.assertEqual(self.feed.describe()["generation"], 1)
+
+    def test_a_release_and_retake_is_a_new_generation(self):
+        """The case that broke a test round: the camera was handed back and
+        taken again four seconds later, and every stream opened before it was
+        dead with nothing to say so."""
+        self.feed.sync(True)
+        first = self.feed.describe()["generation"]
+        self.feed.close()
+        self.feed.sync(True)
+        self.assertGreater(self.feed.describe()["generation"], first)
+
+    def test_it_does_not_move_while_the_feed_stays_up(self):
+        """Otherwise the page reconnects for no reason, once a second."""
+        self.feed.sync(True)
+        first = self.feed.describe()["generation"]
+        for _tick in range(10):
+            self.feed.sync(True)
+        self.assertEqual(self.feed.describe()["generation"], first)
+
+    def test_a_failed_acquisition_is_not_a_generation(self):
+        """Nothing was taken, so no stream was invalidated."""
+        self.camera.lent = "an AI Motion game"
+        self.feed.sync(True)
+        self.assertEqual(self.feed.describe()["generation"], 0)
+
+
 class TestServingFrames(Fixture):
     def test_no_frames_when_it_is_not_running(self):
         self.assertIsNone(self.feed.preview_jpeg())

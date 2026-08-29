@@ -5395,8 +5395,7 @@ const handControl = {
   sentX: NaN, sentY: NaN,
   armed: true,          // a sweep may fire; see HAND_SETTLE_MS
   stillSince: 0,        // when the hand stopped moving, or 0
-  fedAt: 0,             // when the picture last changed; see checkHandFeed
-  lastBytes: -1,
+  generation: -1,       // which acquisition of the camera the stream is on
   recycler: null,
   moving: false,        // a pointer update is in flight; skip the next one
   reading: false,       // recognition is running; see `readHand`
@@ -5508,7 +5507,7 @@ function readSweep(now) {
 
 const handStats = {
   n: 0, infer: 0, gap: 0, hand: 0, palm: 0, fist: 0, other: 0,
-  dx: 0, dy: 0, trail: 0, fired: [], rtt: 0, rttN: 0, lastAt: 0, stale: 0,
+  dx: 0, dy: 0, trail: 0, fired: [], rtt: 0, rttN: 0, lastAt: 0,
   speed: 0,
 };
 
@@ -5516,21 +5515,28 @@ function resetHandStats() {
   handStats.n = handStats.infer = handStats.gap = handStats.hand = 0;
   handStats.palm = handStats.fist = handStats.other = 0;
   handStats.dx = handStats.dy = handStats.trail = 0;
-  handStats.rtt = handStats.rttN = handStats.stale = handStats.speed = 0;
+  handStats.rtt = handStats.rttN = handStats.speed = 0;
   handStats.fired = [];
 }
 
 async function reportHand() {
-  if (!handControl.on || !handStats.n) return;
+  // **Reported even when nothing was sampled.** An earlier version returned
+  // here on `!handStats.n`, so a reader that was returning early -- which is
+  // what a broken feed makes it do -- went completely quiet. A feature that
+  // stops saying anything when it stops working is the hardest kind to
+  // diagnose, and it cost two rounds of testing before the silence itself was
+  // recognised as the symptom.
+  if (!handControl.on) return;
   const body = {
     n: handStats.n,
-    infer: handStats.infer / handStats.n,
-    gap: handStats.gap / handStats.n,
-    handpct: (100 * handStats.hand) / handStats.n,
+    infer: handStats.n ? handStats.infer / handStats.n : 0,
+    gap: handStats.n ? handStats.gap / handStats.n : 0,
+    handpct: handStats.n ? (100 * handStats.hand) / handStats.n : 0,
     palm: handStats.palm, fist: handStats.fist, other: handStats.other,
     dx: handStats.dx, dy: handStats.dy, trail: handStats.trail,
     fired: handStats.fired.join(","),
-    stale: handStats.stale,
+    ready: (handControl.feed && handControl.feed.complete &&
+            handControl.feed.naturalWidth) ? 1 : 0,
     speed: handStats.speed,
     armed: handControl.armed ? 1 : 0,
     rtt: handStats.rttN ? handStats.rtt / handStats.rttN : 0,
@@ -5569,14 +5575,6 @@ async function readHandOnce(feed) {
   const now = performance.now();
   handStats.gap += handStats.lastAt ? now - handStats.lastAt : 0;
   handStats.lastAt = now;
-  // Has the picture changed since the last look? `currentSrc` and `complete`
-  // cannot say -- a multipart element swaps the decoded frame underneath them
-  // without touching either -- so this samples the image itself.
-  const signature = handFeedSignature(feed);
-  const changed = signature !== handControl.lastBytes;
-  handControl.lastBytes = signature;
-  if (!changed) handStats.stale += 1;
-  if (!checkHandFeed(now, changed)) return;
   let samples;
   const startedInference = performance.now();
   try {
@@ -5673,18 +5671,24 @@ async function readHandOnce(feed) {
 // minutes, the camera is briefly given back and retaken, or the assistant
 // restarts. In every one of them the last frame stays on the element,
 // `complete` stays true and `naturalWidth` stays set -- so the reader goes on
-// running at full speed against a photograph. That is not a hypothetical: it
-// cost a whole round of testing, 115 seconds of recognition at 14 frames a
-// second finding not one hand, because the picture was of an empty room.
+// running at full speed against a photograph. That cost a whole round of
+// testing: 115 seconds of recognition at fourteen frames a second finding not
+// one hand, because the picture was of an empty room.
 //
-// `onerror` covers a refused connection and nothing else, so the reader
-// watches the clock instead: `handControl.fedAt` is stamped whenever a sample
-// is taken from a *different* picture, and a feed that has not changed in
-// `HAND_STALL_MS` is reconnected. It also reconnects well inside the server's
-// own five-minute cap, so the expected ending is never the one that has to be
-// detected.
-const HAND_STALL_MS = 4000;
-const HAND_RECYCLE_MS = 120000;
+// **Comparing the pixels does not work, and the first version did that.** It
+// hashed a 16x16 downscale, which averages sensor noise away entirely -- so a
+// live feed of a room where nobody is moving is byte-identical frame to frame
+// and reads as frozen. That produced a reconnect every four seconds forever,
+// and since the reader returns early when it thinks the feed is dead, it also
+// stopped reporting: five minutes of silence with the camera still held, which
+// looked from outside exactly like the camera not seeing a hand.
+//
+// So the assistant says so instead. `hand_feed` counts acquisitions of the
+// camera, and a change means every stream opened before it is dead. That is
+// exact, costs nothing, and cannot be confused by a quiet room. The periodic
+// reconnect below is the belt to its braces, well inside the server's own
+// five-minute cap.
+const HAND_RECYCLE_MS = 90000;
 
 function handFeedUrl() {
   // 320 rather than the feed's own 480: the cost of recognition scales with
@@ -5695,8 +5699,6 @@ function handFeedUrl() {
 
 function connectHandFeed() {
   if (!handControl.on || !handControl.feed) return;
-  handControl.fedAt = performance.now();
-  handControl.lastBytes = -1;
   handControl.feed.src = handFeedUrl();
   // The feed is acquired a moment after the browser opens -- a borrowed camera
   // takes a second to start -- so a stream asked for too early gets a 503.
@@ -5705,21 +5707,19 @@ function connectHandFeed() {
   };
 }
 
-function checkHandFeed(now, changed) {
-  if (changed) {
-    handControl.fedAt = now;
-    return true;
-  }
-  if (now - handControl.fedAt > HAND_STALL_MS) {
-    connectHandFeed();
-    return false;
-  }
-  return true;
-}
-
 function syncHandControl(state) {
   const wanted = !!state.agent_browser;
+  // A new acquisition of the camera means every stream opened before it has
+  // ended. Checked before the on/off comparison below, because this changes
+  // while hand control stays on -- which is exactly the case that was being
+  // missed, and the reason the reader spent five minutes on a still picture.
+  if (wanted && handControl.on &&
+      state.hand_feed !== handControl.generation) {
+    handControl.generation = state.hand_feed;
+    connectHandFeed();
+  }
   if (wanted === handControl.on) return;
+  handControl.generation = state.hand_feed;
   handControl.on = wanted;
 
   if (!wanted) {
@@ -6092,31 +6092,6 @@ async function prepareGestureRecognizer() {
     }
   })();
   return gestureRecognizerLoad;
-}
-
-// A cheap number that changes when the picture does. Sixteen by sixteen is
-// enough to tell one frame from the next and costs a fraction of a millisecond
-// beside the 68 ms of recognition it guards.
-let handSignatureCanvas = null;
-
-function handFeedSignature(feed) {
-  try {
-    if (!handSignatureCanvas) {
-      handSignatureCanvas = document.createElement("canvas");
-      handSignatureCanvas.width = handSignatureCanvas.height = 16;
-    }
-    const context = handSignatureCanvas.getContext("2d",
-                                                   { willReadFrequently: true });
-    context.drawImage(feed, 0, 0, 16, 16);
-    const data = context.getImageData(0, 0, 16, 16).data;
-    let sum = 0;
-    for (let i = 0; i < data.length; i += 4) sum = (sum * 31 + data[i]) | 0;
-    return sum;
-  } catch (err) {
-    // A frame that cannot be drawn is one that cannot be recognised either;
-    // treating it as unchanged lets the stall watchdog do its job.
-    return handControl.lastBytes;
-  }
 }
 
 function closedHand(points) {

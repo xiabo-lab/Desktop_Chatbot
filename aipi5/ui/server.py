@@ -493,10 +493,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         log.info(
             "HAND n=%d infer=%dms gap=%dms hand=%d%% palm=%d fist=%d "
-            "other=%d stale=%d travel=%.2f/%.2f speed=%.2f armed=%d "
+            "other=%d ready=%d travel=%.2f/%.2f speed=%.2f armed=%d "
             "trail=%d fired=%s rtt=%dms",
             _n("n"), _n("infer"), _n("gap"), _n("handpct"), _n("palm"),
-            _n("fist"), _n("other"), _n("stale"), _n("dx", 2), _n("dy", 2),
+            _n("fist"), _n("other"), _n("ready"), _n("dx", 2), _n("dy", 2),
             _n("speed", 2), _n("armed"), _n("trail"),
             str(payload.get("fired") or "-")[:60], _n("rtt"))
         self._json({"ok": True})
@@ -870,6 +870,12 @@ class _Handler(BaseHTTPRequestHandler):
         snapshot = agent.snapshot() if agent is not None else None
         payload["agent_browser"] = bool(snapshot and
                                         (snapshot.get("browser") or {}).get("open"))
+        # Which acquisition of the camera the feed is on. The page reconnects
+        # its video stream when this changes: a stream opened before the camera
+        # was handed back is dead, and the element it is attached to goes on
+        # reporting the last frame it ever received.
+        feed = getattr(self.ui, "hands", None)
+        payload["hand_feed"] = feed.generation if feed is not None else 0
         self._json(payload)
 
     def _feed(self, params: dict) -> None:
