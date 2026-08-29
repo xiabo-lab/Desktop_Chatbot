@@ -348,6 +348,7 @@ class Assistant:
                          call=self.call, on_call_change=self.on_call_change,
                          countdown=self.countdown, files=self.files,
                          photos=self.photos, screen=self.screen,
+                         agent=self.agent,
                          games=self.games,
                          # A touch on the screensaver has to reopen the camera,
                          # and it cannot wait for the voice loop to notice.

@@ -100,6 +100,11 @@ class AgentService:
         self._thread: threading.Thread | None = None
         self._today = time.strftime("%Y-%m-%d")
         self._runs_today = 0
+        #: Its own lock, not `_lock`: a hand must work while a run is going.
+        self._gesture_lock = threading.Lock()
+        self._gesture_at = 0.0
+        self._move_at = 0.0
+        self._browser_seen: tuple[float, dict] | None = None
 
     # ── what the phone asks for ─────────────────────────────────────
 
@@ -121,7 +126,25 @@ class AgentService:
         # What the assistant should deliver, on the poll it is already making.
         snapshot["notify"] = [{"id": r.id, "text": r.text, "deliver": r.deliver}
                               for r in self.schedule.due()[:5]]
+        snapshot["browser"] = self._browser_state()
         return snapshot
+
+    #: How stale the browser flag may be. The kiosk uses it to decide whether
+    #: to run hand tracking at all, so a few seconds late costs a few seconds
+    #: of a recogniser that had nothing to drive -- and asking the helper on
+    #: every snapshot would mean a socket round trip at 1 Hz forever.
+    BROWSER_CACHE_S = 4.0
+
+    def _browser_state(self) -> dict:
+        now = time.monotonic()
+        with self._gesture_lock:
+            if self._browser_seen and now - self._browser_seen[0] < self.BROWSER_CACHE_S:
+                return self._browser_seen[1]
+        answer = self.toolbox.helper.call("browser_state", {}, timeout=3.0)
+        state = answer.result if answer.ok else {"open": False}
+        with self._gesture_lock:
+            self._browser_seen = (now, state)
+        return state
 
     def poll(self, since: int, timeout: float | None = None):
         messages, cursor = self.mailbox.collect(PHONE, since, timeout)
@@ -158,6 +181,88 @@ class AgentService:
                                         args=(run_id, text), daemon=True)
         self._thread.start()
         return {"ok": True, "run": run_id}
+
+    # ── the person's hand ───────────────────────────────────────────
+    #
+    # A gesture is *input*, not a request. It goes straight to the helper: no
+    # model, no run, no approval. That is deliberate on both sides.
+    #
+    # Not the model, because a wave of the hand means one fixed thing and
+    # asking a language model to confirm it would cost two seconds and a
+    # fraction of a cent to decide what the sender already knew. Not an
+    # approval, because every one of these is something the person could do by
+    # reaching out and touching the screen -- a gesture is a longer arm, and an
+    # arm does not need permission.
+    #
+    # It also runs while a task is in flight. `_lock` is not taken: the run
+    # lock exists so two *runs* do not overlap, and someone scrolling a page
+    # while the agent thinks is not an overlap, it is the point.
+
+    #: What a gesture may ask for, and nothing else. The values are helper
+    #: operation names -- a caller cannot reach an operation that is not a
+    #: value here, so the kiosk page cannot name `apply_config` however it is
+    #: compromised.
+    GESTURES = {
+        "scroll_up": ("browser_hand_scroll", {"direction": "up"}),
+        "scroll_down": ("browser_hand_scroll", {"direction": "down"}),
+        "back": ("browser_hand_history", {"way": "back"}),
+        "forward": ("browser_hand_history", {"way": "forward"}),
+        "click": ("browser_hand_click", {}),
+        #: Not a gesture so much as the palm's position, sent while it drifts.
+        #: Rate-limited separately below, because the whole point of it is to
+        #: keep up with a moving hand.
+        "move": ("browser_hand_move", {}),
+    }
+
+    #: Gestures that carry a place on the page rather than only a name.
+    PLACED = ("click", "move")
+
+    #: The fastest a hand may act. A person completes a sweep in about half a
+    #: second, so this drops the duplicates that come of one motion crossing
+    #: the threshold on consecutive frames without making the control feel
+    #: sticky.
+    GESTURE_INTERVAL_S = 0.45
+
+    #: The pointer may keep up with the hand, which a gesture may not. Eight a
+    #: second is smooth enough to follow and slow enough that the four hops
+    #: between the camera and the page stay well ahead of it.
+    MOVE_INTERVAL_S = 0.11
+
+    def gesture(self, name: str, where: dict | None = None) -> dict:
+        action = self.GESTURES.get(name)
+        if action is None:
+            return {"ok": False, "detail": f"unknown gesture {name!r}"}
+        now = time.monotonic()
+        gap = self.MOVE_INTERVAL_S if name == "move" else self.GESTURE_INTERVAL_S
+        with self._gesture_lock:
+            last = self._move_at if name == "move" else self._gesture_at
+            if now - last < gap:
+                return {"ok": False, "detail": "too soon after the last one"}
+            if name == "move":
+                self._move_at = now
+            else:
+                # A move does not restart the gesture clock, but every real
+                # gesture holds off the next one -- including a move, so the
+                # pointer does not jump while a sweep is still being read.
+                self._gesture_at = self._move_at = now
+
+        op, args = action
+        args = dict(args)
+        if name in self.PLACED:
+            try:
+                args["x"] = float((where or {}).get("x"))
+                args["y"] = float((where or {}).get("y"))
+            except (TypeError, ValueError):
+                return {"ok": False, "detail": f"a {name} needs somewhere to go"}
+
+        answer = self.toolbox.helper.call(op, args, timeout=15.0)
+        if not answer.ok:
+            return {"ok": False, "detail": answer.error or "refused"}
+        # A gesture also counts as the browser being used: every helper
+        # operation goes through `_get`, which touches it, so the sweep that
+        # closes an idle window sees a person standing there without needing
+        # to be told separately.
+        return {"ok": True, "gesture": name, "result": answer.result}
 
     def stop(self, run_id: str = "") -> dict:
         with self._lock:
@@ -265,7 +370,13 @@ class _UnixServer(socketserver.ThreadingMixIn, http_server.HTTPServer):
     `TCPServer.server_bind` is the whole of the trick.
     """
 
-    address_family = socket.AF_UNIX
+    #: `getattr` rather than the attribute, so this module imports on a
+    #: machine with no Unix sockets. The helper and the runtime only ever run
+    #: on the Pi, but their *rules* -- what a gesture may ask for, what needs
+    #: approval -- are tested on the laptop, and a check that only runs on the
+    #: device is one that gets broken here and noticed a deploy later.
+    #: Binding still fails loudly on such a machine, which is correct.
+    address_family = getattr(socket, "AF_UNIX", -1)
     daemon_threads = True
     request_queue_size = 32
     allow_reuse_address = True
@@ -326,6 +437,9 @@ class _Handler(http_server.BaseHTTPRequestHandler):
             return self._json(200, self.service.delivered(
                 str(body.get("id", "")), bool(body.get("ok")),
                 str(body.get("detail", ""))[:200]))
+        if kind == "agent.gesture":
+            return self._json(200, self.service.gesture(
+                str(body.get("gesture", ""))[:32], body.get("at")))
         if kind == "agent.answer":
             return self._json(200, self.service.answer(
                 str(body.get("token", "")), bool(body.get("allow"))))

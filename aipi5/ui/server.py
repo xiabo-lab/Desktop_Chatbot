@@ -57,6 +57,8 @@ ASSET_TYPES = {
     ".webp": "image/webp",
     ".task": "application/octet-stream",
     ".wasm": "application/wasm",
+    ".vrm": "model/gltf-binary",
+    ".html": "text/html; charset=utf-8",
 }
 
 
@@ -106,6 +108,11 @@ CALL_MAX_BODY = 64 * 1024
 # It is also enough. This is a webcam pointed at a room on a 1280x800 panel —
 # 6 fps looks live, and the alternative costs the thing the screen is for.
 PREVIEW_FPS = 6
+
+#: As fast as `/api/camera/stream` may be asked to go. Hand tracking wants
+#: twelve; beyond that the JPEG encode starts competing with inference for a
+#: core, and the camera itself is configured for fifteen.
+PREVIEW_FPS_MAX = 15
 
 # How fast the game page is sent state.
 #
@@ -206,7 +213,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif route.path == "/api/news":
             self._news(params)
         elif route.path == "/api/camera/stream":
-            self._camera_stream()
+            self._camera_stream(params)
+        elif route.path == "/api/camera/capture":
+            self._camera_capture()
         elif route.path == "/api/call/poll":
             self._call_poll(params)
         elif route.path == "/api/files":
@@ -270,7 +279,7 @@ class _Handler(BaseHTTPRequestHandler):
         if path not in ("/api/action", "/api/shutdown", "/api/files/delete",
                         "/api/photos", "/api/game/open", "/api/game/close",
                         "/api/game/command", "/api/game/debug",
-                        "/api/game/settings"):
+                        "/api/game/settings", "/api/agent/gesture"):
             self._json({"error": "not found"}, 404)
             return
 
@@ -305,6 +314,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/game/"):
             self._game_post(path, payload)
+            return
+
+        if path == "/api/agent/gesture":
+            self._gesture_post(payload)
             return
 
         action = str(payload.get("action", ""))
@@ -448,6 +461,32 @@ class _Handler(BaseHTTPRequestHandler):
         if games is None:
             return
         self._json(games.settings())
+
+    def _gesture_post(self, payload: dict) -> None:
+        """The person's hand, on its way to the agent's browser.
+
+        This is the only route on this server that reaches the agent, and it
+        forwards exactly one thing: the *name* of a gesture, from a fixed list
+        the runtime holds. Not a coordinate to click without a gesture, not an
+        operation name, not a URL. The page decides what a hand did; it does
+        not decide what that means.
+
+        No token, like everything else here — the server is on loopback and
+        the only caller is the kiosk browser on this device. What that browser
+        can ask for is bounded by the list on the other end, which is why the
+        list lives there and not in the JavaScript.
+        """
+        if self.ui.agent is None:
+            self._json({"ok": False, "detail": "the agent is not installed"},
+                       503)
+            return
+        at = payload.get("at")
+        status, answer = self.ui.agent.say(
+            {"type": "agent.gesture",
+             "gesture": str(payload.get("gesture", ""))[:32],
+             "at": at if isinstance(at, dict) else None})
+        self._json(answer if answer else {"ok": False},
+                   200 if status == 200 else status)
 
     def _game_post(self, path: str, payload: dict) -> None:
         games = self._game()
@@ -783,6 +822,15 @@ class _Handler(BaseHTTPRequestHandler):
         # the two can disagree — a Chromium with no network time on a device
         # that has it, or the reverse.
         payload["now"] = time.time()
+        # Whether the agent has a browser up over this screen. The page needs
+        # it to know when to run hand tracking: a recogniser fed by the camera
+        # at twelve frames a second with nothing to drive is a core spent on
+        # nothing. Cached on the agent's side, so this is not a socket round
+        # trip twice a second.
+        agent = getattr(self.ui, "agent", None)
+        snapshot = agent.snapshot() if agent is not None else None
+        payload["agent_browser"] = bool(snapshot and
+                                        (snapshot.get("browser") or {}).get("open"))
         self._json(payload)
 
     def _feed(self, params: dict) -> None:
@@ -996,7 +1044,41 @@ class _Handler(BaseHTTPRequestHandler):
         else:
             self._json({"error": "not found"}, 404)
 
-    def _camera_stream(self) -> None:
+    def _camera_capture(self) -> None:
+        """The still the most recent description was made from.
+
+        Takes no picture and no argument. The camera decides what the latest
+        capture is and this serves that one file — which is the whole reason
+        there is no name in the URL: a route that reads `/dev/shm` by a name
+        the browser supplies is the shape of a traversal bug, and this one has
+        nothing for `../` to be part of.
+
+        The page still appends `?t=<taken_at>` because two different pictures
+        are the same URL here, and without a cache-buster Chromium draws the
+        first one under every answer afterwards. That token is the same
+        `camera_image` the state poll published, so a page that asks for a
+        capture is always asking about the answer it is currently showing.
+
+        `no-store`, from `_send`: this is a photograph of the room, taken
+        because somebody asked one question, and it does not belong in a
+        browser cache after that.
+        """
+        camera = self.ui.camera
+        still = getattr(camera, "last_capture", None) if camera else None
+        if still is None:
+            self._json({"error": "nothing has been captured"}, 404)
+            return
+        try:
+            body = still.path.read_bytes()
+        except OSError:
+            # Pruned, or /dev/shm cleared under us. A 404 lets the page drop
+            # the picture and keep the sentence, which is the honest half.
+            log.debug("the last capture is no longer on disk: %s", still.path)
+            self._json({"error": "the picture is no longer available"}, 404)
+            return
+        self._send(200, body, "image/jpeg")
+
+    def _camera_stream(self, params: dict | None = None) -> None:
         """The live preview, as multipart JPEG.
 
         `multipart/x-mixed-replace` rather than a websocket or a frame-at-a-
@@ -1020,7 +1102,12 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
-        interval = 1.0 / PREVIEW_FPS
+        # Six a second is right for "yes, that is you" on the settings page.
+        # It is not enough to see a hand sweep: a sweep takes about half a
+        # second, which is three frames, and three points cannot tell a
+        # deliberate movement from a shrug. The gesture reader asks for more.
+        interval = 1.0 / self._bounded(params or {}, "fps", PREVIEW_FPS,
+                                       1, PREVIEW_FPS_MAX)
         deadline = time.monotonic() + PREVIEW_MAX_S
         try:
             while time.monotonic() < deadline:
@@ -1058,7 +1145,8 @@ class WebUI:
     def __init__(self, cfg, *, state, history, info,
                  weather=None, news=None, camera=None, call=None,
                  on_call_change=lambda: None, countdown=None, files=None,
-                 photos=None, screen=None, games=None, on_wake=lambda why: None):
+                 photos=None, screen=None, games=None, on_wake=lambda why: None,
+                 agent=None):
         self.cfg = cfg
         self.state = state
         # Called the moment a `wake` arrives, before it is queued for the voice
@@ -1071,6 +1159,11 @@ class WebUI:
         # manager's, which is what keeps the four hardware handoffs in one
         # place rather than spread across HTTP handlers.
         self.games = games
+        # The agent, or None where it is not installed. The same `AgentProxy`
+        # the call server holds — one socket, not two — and this server uses
+        # exactly one thing on it: forwarding a hand gesture to the agent's
+        # browser. See `_gesture_post`.
+        self.agent = agent
         # The daytime slideshow's photographs and the object that decides
         # which screensaver is due. Both optional, so a test can build a
         # server without either.

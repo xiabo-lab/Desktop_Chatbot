@@ -2631,6 +2631,11 @@ function applyState(state) {
     clockSkewMs = state.now * 1000 - Date.now();
   }
 
+  // Hand control follows the agent's browser: on when it is up, off the
+  // moment it goes away, so the camera stream and the recognizer are not
+  // running through every evening when nothing is there to drive.
+  syncHandControl(state);
+
   const assistant = state.assistant || "idle";
   const text = state.listening_text || STATUS_TEXT[assistant] || "Ready";
   // The status block appears on three pages. Written to all of them rather
@@ -5291,6 +5296,208 @@ try {
 // Chained timeouts rather than setInterval. An interval on a device that has
 // been asleep, or whose server is briefly not answering, queues up every tick
 // it missed and fires them in a burst the moment it comes back.
+
+// -- driving the agent's browser with a hand --------------------------------
+//
+// When the agent opens a page it covers this one, and the person is then
+// looking at a window they can only reach by walking to the screen. This gives
+// them their arm back:
+//
+//     open palm sweeping up        scroll up
+//     open palm sweeping down      scroll down
+//     open palm sweeping left      back
+//     open palm sweeping right     forward
+//     closed fist                  click, where the palm was
+//
+// **The recognizer runs in this page even though this page is buried.** That
+// was the question the whole design turned on, and it was measured rather than
+// assumed: a covered renderer here keeps 83% of the CPU time it uses in front,
+// so MediaPipe goes on seeing.
+//
+// Nothing is drawn here. A cursor painted on this page would be painted
+// underneath the window the person is watching. Instead the palm's position is
+// sent on as a `mouseMoved`, and the *agent's* page lights its own hover
+// states -- real feedback, in the window being looked at, drawn by the site's
+// own CSS.
+//
+// **Five frames a second, and that is the ceiling.** The stream was asked for
+// twelve and measured at 4.9 whatever it was asked for, at every width -- and
+// that is `Camera._read` working correctly rather than failing. It drains the
+// V4L2 queue empty and waits for the next frame the sensor produces, because
+// the queued buffers were filled just after the *previous* read and a plain
+// read is most of half a second stale. Freshness costs throughput, and for a
+// pointer following a hand freshness is the half worth having: a stale frame
+// puts the cursor where the hand was, which is worse than fewer of them.
+//
+// So the numbers below are set to the rate that exists. A sweep is read over a
+// full second rather than the 700 ms that felt right for twelve frames, and
+// sampling is a little slower than the stream so inference is not run twice on
+// the same picture.
+
+const HAND_SAMPLE_MS = 130;         // just under the ~5/s the camera gives
+const HAND_TRAIL_MS = 1000;         // about five samples, at that rate
+const HAND_SWEEP_TRAVEL = 0.24;     // of the frame, before it counts as one
+const HAND_SWEEP_DOMINANCE = 1.7;   // how much straighter than the other axis
+const HAND_FIST_FRAMES = 2;         // a blink of a fist is not a click
+const HAND_MOVE_MIN = 0.012;        // do not resend a pointer that has not moved
+const HAND_LOST_MS = 900;
+
+// The hand never reaches the edges of the camera's view, so the middle of the
+// frame is stretched over the whole page. Without this the page's corners are
+// unreachable and everything sits in a small box in the centre.
+const HAND_REACH = 0.22;            // trimmed from each side before stretching
+
+const handControl = {
+  on: false,
+  timer: null,
+  feed: null,
+  trail: [],
+  fistFrames: 0,
+  lastSeen: 0,
+  sentX: NaN, sentY: NaN,
+  busy: false,
+};
+
+function handSpan(value) {
+  // 0..1 across the trimmed middle of the camera, clamped at the edges.
+  const span = 1 - 2 * HAND_REACH;
+  return Math.max(0, Math.min(1, (value - HAND_REACH) / span));
+}
+
+async function sendHand(gesture, at) {
+  // One in flight at a time. The chain from here to the browser is four hops,
+  // and queueing a backlog of sweeps behind a slow one turns a single flick of
+  // the wrist into a page that keeps scrolling after the hand has stopped.
+  if (handControl.busy) return;
+  handControl.busy = true;
+  try {
+    await fetch("/api/agent/gesture", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(at ? { gesture, at } : { gesture }),
+    });
+  } catch (err) {
+    // The agent restarting, or not installed. The next sample tries again.
+  } finally {
+    handControl.busy = false;
+  }
+}
+
+function readSweep(now) {
+  const trail = handControl.trail;
+  while (trail.length && now - trail[0].t > HAND_TRAIL_MS) trail.shift();
+  if (trail.length < 3) return "";
+
+  const first = trail[0], last = trail[trail.length - 1];
+  const dx = last.x - first.x, dy = last.y - first.y;
+  const across = Math.abs(dx), down = Math.abs(dy);
+
+  if (across >= HAND_SWEEP_TRAVEL && across > down * HAND_SWEEP_DOMINANCE) {
+    // x is already mirrored by `gestureSamples`, so it grows the way the
+    // person sees their own hand grow: rightwards is rightwards.
+    return dx > 0 ? "forward" : "back";
+  }
+  if (down >= HAND_SWEEP_TRAVEL && down > across * HAND_SWEEP_DOMINANCE) {
+    // The camera's y grows downwards. A hand sweeping *up* the frame is
+    // therefore a decreasing y, and it means scroll up: the page moves the
+    // way the hand does, which is the only mapping anybody predicts.
+    return dy < 0 ? "scroll_up" : "scroll_down";
+  }
+  return "";
+}
+
+async function readHand() {
+  const feed = handControl.feed;
+  if (!handControl.on || !feed || !feed.complete || !feed.naturalWidth) return;
+  const recognizer = await prepareGestureRecognizer();
+  if (!recognizer || !handControl.on) return;
+
+  const now = performance.now();
+  let samples;
+  try {
+    samples = gestureSamples(recognizer.recognizeForVideo(feed, now));
+  } catch (err) {
+    // The multipart image can swap frames mid-read. Skipping one is harmless.
+    return;
+  }
+
+  // The hand nearest the middle of the frame, so a second person walking
+  // behind does not take the controls.
+  let hand = null, best = Infinity;
+  for (const sample of samples) {
+    const d = Math.hypot(sample.x - 0.5, sample.y - 0.5);
+    if (d < best) { best = d; hand = sample; }
+  }
+
+  if (!hand || !hand.shape) {
+    if (handControl.lastSeen && now - handControl.lastSeen > HAND_LOST_MS) {
+      handControl.trail.length = 0;
+      handControl.fistFrames = 0;
+    }
+    return;
+  }
+  handControl.lastSeen = now;
+
+  if (hand.shape === "Closed_Fist") {
+    // A fist is a click, and it is aimed where the palm last was -- a hand
+    // closing pulls the landmarks in, so the fist's own centre is not where
+    // the person was pointing a moment earlier.
+    handControl.trail.length = 0;
+    handControl.fistFrames += 1;
+    if (handControl.fistFrames === HAND_FIST_FRAMES &&
+        Number.isFinite(handControl.sentX)) {
+      sendHand("click", { x: handControl.sentX, y: handControl.sentY });
+    }
+    return;
+  }
+
+  handControl.fistFrames = 0;
+  if (hand.shape !== "Open_Palm") return;
+
+  handControl.trail.push({ t: now, x: hand.x, y: hand.y });
+  const sweep = readSweep(now);
+  if (sweep) {
+    handControl.trail.length = 0;
+    sendHand(sweep);
+    return;
+  }
+
+  // Not sweeping, so the palm is pointing. Move the agent's pointer there.
+  const x = handSpan(hand.x), y = handSpan(hand.y);
+  if (!Number.isFinite(handControl.sentX) ||
+      Math.hypot(x - handControl.sentX, y - handControl.sentY) >= HAND_MOVE_MIN) {
+    handControl.sentX = x; handControl.sentY = y;
+    sendHand("move", { x, y });
+  }
+}
+
+function syncHandControl(state) {
+  const wanted = !!state.agent_browser;
+  if (wanted === handControl.on) return;
+  handControl.on = wanted;
+
+  if (!wanted) {
+    if (handControl.timer !== null) {
+      clearInterval(handControl.timer); handControl.timer = null;
+    }
+    if (handControl.feed) handControl.feed.removeAttribute("src");
+    handControl.trail.length = 0;
+    handControl.fistFrames = 0;
+    handControl.sentX = handControl.sentY = NaN;
+    return;
+  }
+
+  if (!handControl.feed) {
+    // Never added to the document. It only has to decode, and MediaPipe reads
+    // an HTMLImageElement directly -- so there is nothing to lay out and
+    // nothing to hide behind a stylesheet that could later stop hiding it.
+    handControl.feed = new Image();
+  }
+  // Asking for more than the camera can give costs nothing and leaves
+  // the ceiling where it belongs -- in Python, next to the camera.
+  handControl.feed.src = "/api/camera/stream?fps=12&t=" + Date.now();
+  handControl.timer = setInterval(readHand, HAND_SAMPLE_MS);
+}
 
 async function pollState() {
   try {

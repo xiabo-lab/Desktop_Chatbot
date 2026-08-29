@@ -43,17 +43,23 @@ import policy
 READ_FD = 3
 WRITE_FD = 4
 
-#: How long the browser may sit untouched before it is closed. It is several
-#: hundred megabytes on a machine with eight, and a window left over the kiosk
-#: is a device that looks broken to somebody walking past.
-IDLE_TIMEOUT_S = 600.0
+#: How long the browser may sit untouched before it is closed.
+#:
+#: Half an hour, not the ten minutes it started at. Ten was chosen when the
+#: only way to be rid of a forgotten window was the agent closing it; the
+#: window has its own close button now, so the cost of waiting longer is a
+#: window somebody can dismiss, and the cost of waiting less was measured --
+#: "closed the agent browser after 600s idle" while the owner was watching a
+#: video on it.
+IDLE_TIMEOUT_S = 1800.0
 
 #: And how long once it has been *handed over* to a person -- a verification
-#: box, a sign-in, a consent wall. Ten minutes is the right answer for a
-#: forgotten browser and the wrong one for somebody who has to walk to the
-#: device, read the screen and tap something. Closing the page they were coming
-#: to deal with is exactly the failure this whole feature exists to avoid.
-HANDOVER_TIMEOUT_S = 1800.0
+#: box, a sign-in, a consent wall. Closing the page somebody was coming to deal
+#: with is exactly the failure this whole feature exists to avoid, and the job
+#: can mean finding a password or a phone. An hour, and it stays longer than
+#: the plain timeout above however that one is tuned: a page waiting on a named
+#: person has more claim to the screen than one nobody has been asked about.
+HANDOVER_TIMEOUT_S = 3600.0
 
 #: How long one CDP command may take. A navigation is the slow one.
 CALL_TIMEOUT_S = 30.0
@@ -94,6 +100,12 @@ class Browser:
         #: True while the page is waiting for a person rather than
         #: for the agent.
         self.handed_over = False
+        #: The address as of the last sweep. A change means somebody
+        #: has been navigating, which is the only sign of human use
+        #: available without Runtime.evaluate.
+        self.last_url = ''
+        #: (measured_at, (width, height)) for the content area. See _viewport.
+        self.viewport = None
 
     # ── lifecycle ───────────────────────────────────────────────────
 
@@ -327,22 +339,57 @@ def _get(start=True):
 
 
 def sweep():
-    """Close a browser nobody is using. Called from the helper's loop.
+    """Close a browser nobody is using. Called from the helper's own loop.
 
-    A browser waiting for a *person* gets much longer. Ten minutes is
-    right for one the agent forgot about and wrong for one somebody is
-    walking across the room to deal with -- and closing the page they
-    were coming to answer is the exact failure this exists to avoid.
+    **"Nobody" has to include the person, and it did not.** The timer measured
+    the *agent* not touching the page -- `touch()` is called from `_get`, which
+    only runs for a helper operation -- so somebody standing at the device
+    reading a page was invisible to it. From the log, on the evening it was
+    reported:
+
+        closed the agent browser after 600s idle
+
+    Two changes. The plain timeout is half an hour rather than ten minutes,
+    because the window has its own close button now and an aggressive
+    auto-close was worth more when the agent was the only way to be rid of it.
+    And a page whose address has changed since the last look has been navigated
+    by somebody, which counts as use.
+
+    That check happens **only at the deadline**, not on every tick. This runs
+    off the accept timeout, once a second, and a `Page.getNavigationHistory` at
+    1 Hz would be a CDP round trip a second for as long as a window is open --
+    holding the same lock a hand uses eight times a second to move a pointer.
+    Waiting until the timeout expires costs nothing: the comparison is against
+    the address as of the previous look, so a navigation at any point in the
+    half hour is still visible when the half hour is up.
     """
     with _lock:
         if _browser is None or not _browser.alive:
             return False
+
         limit = (HANDOVER_TIMEOUT_S if _browser.handed_over
                  else IDLE_TIMEOUT_S)
-        if _browser.idle_for() > limit:
-            _browser.stop()
-            return True
-    return False
+        if _browser.idle_for() <= limit:
+            return False
+
+        # Out of time by the agent's reckoning. Before closing, the one signal
+        # available for a person -- `Runtime.evaluate` is refused for good
+        # reasons, so the page cannot simply be asked when it was last
+        # scrolled, and its address is the next best thing.
+        try:
+            history = _browser.call("Page.getNavigationHistory", timeout=5.0)
+            entries = history.get("entries", [])
+            current = entries[history.get("currentIndex", 0)] if entries else {}
+            here = current.get("url", "")
+        except Refused:
+            here = _browser.last_url
+        if here and here != _browser.last_url:
+            _browser.last_url = here
+            _browser.last_used = time.monotonic()
+            return False
+
+        _browser.stop()
+    return True
 
 
 def shutdown():
@@ -496,6 +543,222 @@ def hand_over(args):
                            % minutes)}
 
 
+# ── hand control ────────────────────────────────────────────────────
+#
+# The person can drive this browser with their hand, from across the room,
+# because on this device the alternative is walking to it. The recognition
+# happens in the kiosk page -- MediaPipe's hand model, already on disk, fed
+# from the camera Python owns -- and what arrives here is a decided gesture,
+# not a picture.
+#
+# So these are the *effects*, and each is one thing a hand can mean:
+#
+#     open palm sweeping up      scroll up
+#     open palm sweeping down    scroll down
+#     open palm sweeping left    back
+#     open palm sweeping right   forward
+#     closed fist                click, where the palm was
+#
+# Every one of them is something the person could do with the touchscreen. That
+# is the bar: hand control adds reach, not authority. Nothing here can be asked
+# for a coordinate outside the window, and there is no gesture for "type".
+
+#: How far one sweep of the palm scrolls. About two thirds of a window, which
+#: is what a page-down feels like and leaves enough overlap to keep your place.
+SCROLL_STEP = 520
+
+#: Fallback viewport, used only if the browser will not report its own. The
+#: window is launched 1280x770 and Chromium's furniture takes the top ~92px.
+FALLBACK_VIEWPORT = (1280, 678)
+
+#: How long a measured viewport is trusted. Long enough that a pointer
+#: following a hand does not re-measure on every step, short enough that a
+#: page which changed the window's shape is noticed within a gesture or two.
+VIEWPORT_CACHE_S = 5.0
+
+
+def _viewport(browser):
+    """The page's own drawing area, in the coordinates CDP input uses.
+
+    Worth being exact about, because it is where the safety of `hand_click`
+    comes from. `Input.dispatchMouseEvent` takes **viewport** coordinates --
+    the same space the accessibility tree reports, which is why `click` above
+    can feed it element positions unchanged. The browser's own toolbar, tab
+    strip and address bar are not in that space at all, so there is no number a
+    gesture can send that lands on them. It is not a bounds check that keeps a
+    waving hand out of the address bar; the coordinate system does.
+
+    Cached for a few seconds. A pointer following a hand asks eight times a
+    second and the window is not resized between two of those, so measuring it
+    every time would double the CDP traffic of the thing that has to stay
+    ahead of a moving arm.
+    """
+    now = time.monotonic()
+    if browser.viewport and now - browser.viewport[0] < VIEWPORT_CACHE_S:
+        return browser.viewport[1]
+    size = FALLBACK_VIEWPORT
+    try:
+        metrics = browser.call("Page.getLayoutMetrics", timeout=5.0)
+        box = metrics.get("cssLayoutViewport", {})
+        width = int(box.get("clientWidth", 0))
+        height = int(box.get("clientHeight", 0))
+        if width > 0 and height > 0:
+            size = (width, height)
+    except Refused:
+        pass
+    browser.viewport = (now, size)
+    return size
+
+
+def _scroll_offset(browser):
+    """How far down the page is, in CSS pixels. Zero if it will not say."""
+    try:
+        metrics = browser.call("Page.getLayoutMetrics", timeout=5.0)
+        return float(metrics.get("visualViewport", {}).get("pageY", 0.0))
+    except (Refused, TypeError, ValueError):
+        return 0.0
+
+
+def _point(args, browser):
+    """Where in the page to act, from a fraction of the way across it.
+
+    The caller sends 0..1, not pixels. That is not politeness about units: the
+    kiosk page has no way to know how tall this window's content area is, and
+    a page that guessed would put every click a toolbar's height out. Sending
+    a fraction means the only thing that has to know the size is the thing
+    that can measure it.
+
+    Out of range is refused rather than clamped. A hand at the edge of the
+    camera is a hand halfway out of frame, and turning that into a click on
+    the edge of the page is a click nobody aimed.
+    """
+    try:
+        across = float(args.get("x"))
+        down = float(args.get("y"))
+    except (TypeError, ValueError):
+        raise Refused("a point is required")
+    if not (0.0 <= across <= 1.0 and 0.0 <= down <= 1.0):
+        raise Refused("that is outside the page")
+    width, height = _viewport(browser)
+    return across * width, down * height
+
+
+def hand_scroll(args):
+    """Scroll the page, as an open palm sweeping up or down."""
+    direction = args.get("direction")
+    if direction not in ("up", "down"):
+        raise Refused("scroll up or down")
+    steps = args.get("steps", 1)
+    if not isinstance(steps, int) or isinstance(steps, bool) or not 1 <= steps <= 5:
+        raise Refused("between one and five steps")
+    with _lock:
+        browser = _get(start=False)
+        if not browser.alive:
+            raise Refused("no page is open")
+        width, height = _viewport(browser)
+        delta = SCROLL_STEP * steps * (-1 if direction == "up" else 1)
+        before = _scroll_offset(browser)
+        browser.call("Input.dispatchMouseEvent",
+                     {"type": "mouseWheel", "x": width / 2, "y": height / 2,
+                      "deltaX": 0, "deltaY": delta})
+        # Smooth scrolling means the page is still moving when the call
+        # returns, so the offset read immediately afterwards is wherever it
+        # had reached, not where it will stop.
+        time.sleep(0.35)
+        after = _scroll_offset(browser)
+        # **Reported, not assumed.** `Input.dispatchMouseEvent` returns success
+        # for a wheel event the page then ignores -- a scroller that swallows
+        # wheels, or a document already at the end. Saying "scrolled" when
+        # nothing moved would make a hand that is being ignored look like a
+        # hand that is working, and the person would go on waving it.
+        return {"scrolled": direction, "steps": steps,
+                "moved": round(after - before),
+                "at": round(after)}
+
+
+def hand_move(args):
+    """Move the pointer, as an open palm drifting across the camera.
+
+    **This is the whole reason hand control is usable.** The recogniser lives
+    in the kiosk page, which is *underneath* this browser -- so a cursor drawn
+    there is drawn where nobody can see it, and aiming a click at a target you
+    have no pointer for is guesswork.
+
+    A synthetic `mouseMoved` fixes it without any drawing at all: the page under
+    the pointer lights its own hover states, links underline, a video shows its
+    controls. The feedback appears in the window the person is actually looking
+    at, produced by that page's own CSS, and costs one CDP call.
+
+    It does not move the *system* pointer, which is the other half of why this
+    is safe -- nothing here can reach the browser's furniture or another
+    window, only the page.
+    """
+    with _lock:
+        browser = _get(start=False)
+        if not browser.alive:
+            raise Refused("no page is open")
+        x, y = _point(args, browser)
+        browser.call("Input.dispatchMouseEvent",
+                     {"type": "mouseMoved", "x": x, "y": y})
+        return {"at": {"x": round(x), "y": round(y)}}
+
+
+def hand_click(args):
+    """Click where the palm was, as a closed fist."""
+    with _lock:
+        browser = _get(start=False)
+        if not browser.alive:
+            raise Refused("no page is open")
+        x, y = _point(args, browser)
+        for kind in ("mousePressed", "mouseReleased"):
+            browser.call("Input.dispatchMouseEvent",
+                         {"type": kind, "x": x, "y": y,
+                          "button": "left", "clickCount": 1})
+        _settle(browser, 1.5)
+        return {"clicked": {"x": round(x), "y": round(y)}}
+
+
+def hand_history(args):
+    """Back or forward, as an open palm sweeping sideways."""
+    way = args.get("way")
+    if way not in ("back", "forward"):
+        raise Refused("back or forward")
+    with _lock:
+        browser = _get(start=False)
+        if not browser.alive:
+            raise Refused("no page is open")
+        history = browser.call("Page.getNavigationHistory")
+        index = history.get("currentIndex", 0)
+        entries = history.get("entries", [])
+        wanted = index - 1 if way == "back" else index + 1
+        if not 0 <= wanted < len(entries):
+            # Not an error. Sweeping forward at the end of the history is a
+            # thing people do, and it should say so rather than fail.
+            return {"moved": False,
+                    "detail": "there is nothing to go %s to" % way}
+        browser.call("Page.navigateToHistoryEntry",
+                     {"entryId": entries[wanted]["id"]})
+        _settle(browser)
+        return {"moved": True, "way": way,
+                "title": (entries[wanted].get("title") or "")[:80]}
+
+
+def state(args):
+    """Is a browser up, and on what. Cheap enough to ask about every few seconds.
+
+    Deliberately does **not** go through `_get`: asking whether the window is
+    there must not start one, and must not count as using it. Both would be
+    easy to write by accident and each would break something -- the first turns
+    a status poll into a browser launch, the second stops the idle sweep ever
+    firing because something is always looking.
+    """
+    with _lock:
+        alive = _browser is not None and _browser.alive
+        return {"open": alive,
+                "url": (_browser.last_url if alive else ""),
+                "handed_over": bool(alive and _browser.handed_over)}
+
+
 def close(args):
     with _lock:
         if _browser is None or not _browser.alive:
@@ -641,5 +904,10 @@ OPS = {
     "browser_back": go_back,
     "browser_close": close,
     "browser_hand_over": hand_over,
+    "browser_hand_scroll": hand_scroll,
+    "browser_hand_move": hand_move,
+    "browser_hand_click": hand_click,
+    "browser_hand_history": hand_history,
     "browser_screenshot": screenshot,
+    "browser_state": state,
 }
