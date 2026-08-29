@@ -250,6 +250,45 @@ class TestTheTablesAreDisjoint(unittest.TestCase):
             with self.subTest(block=advert):
                 self.assertTrue(blocks(advert))
 
+    def test_a_page_that_needs_a_person_is_handed_over_not_closed(self):
+        """The fault: the agent met Google's unusual-traffic page and closed
+        the browser one second later, with the owner standing in front of the
+        device and able to tap the box.
+
+        Closing is the one response that helps nobody -- it destroys the only
+        thing the person could have acted on. There is now an operation for
+        getting out of the way instead, and the rule is in the prompt.
+        """
+        import browser as browser_module
+        self.assertIn("browser_hand_over", browser_module.OPS)
+        self.assertIn("browser_hand_over", AgentToolBox()._handlers)
+
+        from aipi5.agent.prompts import system_prompt
+        prompt = system_prompt()
+        self.assertIn("browser_hand_over", prompt)
+        self.assertIn("Do not close the browser", prompt)
+
+        # And the close tool warns, since that is what the model reaches for.
+        closer = next(s for s in AgentToolBox().schemas()
+                      if s["function"]["name"] == "browser_close")
+        self.assertIn("hand_over", closer["function"]["description"])
+
+    def test_the_agent_is_told_not_to_answer_a_verification_itself(self):
+        """Getting out of the way, never solving it."""
+        from aipi5.agent.prompts import system_prompt
+        prompt = system_prompt()
+        self.assertIn("must not attempt any of those yourself", prompt)
+
+    def test_a_handed_over_page_is_not_swept_out_from_under_them(self):
+        """Ten minutes is right for a forgotten browser and wrong for somebody
+        walking across the room."""
+        import browser as browser_module
+        self.assertGreater(browser_module.HANDOVER_TIMEOUT_S,
+                           browser_module.IDLE_TIMEOUT_S)
+        import inspect
+        sweep = inspect.getsource(browser_module.sweep)
+        self.assertIn("handed_over", sweep)
+
     def test_the_browser_cannot_be_asked_to_run_code(self):
         """The methods that turn a browser back into an interpreter.
 

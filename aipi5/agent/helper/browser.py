@@ -48,6 +48,13 @@ WRITE_FD = 4
 #: is a device that looks broken to somebody walking past.
 IDLE_TIMEOUT_S = 600.0
 
+#: And how long once it has been *handed over* to a person -- a verification
+#: box, a sign-in, a consent wall. Ten minutes is the right answer for a
+#: forgotten browser and the wrong one for somebody who has to walk to the
+#: device, read the screen and tap something. Closing the page they were coming
+#: to deal with is exactly the failure this whole feature exists to avoid.
+HANDOVER_TIMEOUT_S = 1800.0
+
 #: How long one CDP command may take. A navigation is the slow one.
 CALL_TIMEOUT_S = 30.0
 NAVIGATE_TIMEOUT_S = 45.0
@@ -84,6 +91,9 @@ class Browser:
         self.target = ""
         self.last_used = time.monotonic()
         self.opened_at = 0.0
+        #: True while the page is waiting for a person rather than
+        #: for the agent.
+        self.handed_over = False
 
     # ── lifecycle ───────────────────────────────────────────────────
 
@@ -294,6 +304,9 @@ class Browser:
 
     def touch(self):
         self.last_used = time.monotonic()
+        # A new operation means the agent has taken it back, so
+        # whatever was handed over has been dealt with or abandoned.
+        self.handed_over = False
 
     def idle_for(self):
         return time.monotonic() - self.last_used
@@ -314,10 +327,19 @@ def _get(start=True):
 
 
 def sweep():
-    """Close a browser nobody is using. Called from the helper's own loop."""
+    """Close a browser nobody is using. Called from the helper's loop.
+
+    A browser waiting for a *person* gets much longer. Ten minutes is
+    right for one the agent forgot about and wrong for one somebody is
+    walking across the room to deal with -- and closing the page they
+    were coming to answer is the exact failure this exists to avoid.
+    """
     with _lock:
-        if _browser is not None and _browser.alive \
-                and _browser.idle_for() > IDLE_TIMEOUT_S:
+        if _browser is None or not _browser.alive:
+            return False
+        limit = (HANDOVER_TIMEOUT_S if _browser.handed_over
+                 else IDLE_TIMEOUT_S)
+        if _browser.idle_for() > limit:
             _browser.stop()
             return True
     return False
@@ -438,6 +460,40 @@ def go_back(args):
                      {"entryId": entries[index - 1]["id"]})
         _settle(browser)
         return _describe(browser)
+
+
+def hand_over(args):
+    """Leave the page up for a person, and stop touching it.
+
+    For the things a browser meets that only a human can answer: a verification
+    box, a sign-in, a cookie wall, a payment form. The agent must not attempt
+    any of those itself -- and the useful thing it can do instead is get out of
+    the way and say what is on screen.
+
+    **Closing the browser is the one response that helps nobody**, because it
+    destroys the only thing the person could have acted on. That is what
+    happened the first time this came up: the agent met Google's unusual-traffic
+    page and closed the window one second later, with the owner standing in
+    front of the device, able to tap the box.
+    """
+    reason = args.get("reason")
+    if not isinstance(reason, str) or not 1 <= len(reason) <= 300:
+        raise Refused("say what the person needs to do")
+    with _lock:
+        browser = _get(start=False)
+        if not browser.alive:
+            raise Refused("no page is open to hand over")
+        page = _describe(browser)
+        # Set after the describe: reading the page touches it, and touching it
+        # is what clears the flag again.
+        browser.handed_over = True
+        minutes = int(HANDOVER_TIMEOUT_S // 60)
+        return {"handed_over": True, "reason": reason,
+                "url": page.get("url", ""), "title": page.get("title", ""),
+                "minutes": minutes,
+                "detail": ("the window is still open and has its own close, "
+                           "back and address bar; it will stay for %d minutes"
+                           % minutes)}
 
 
 def close(args):
@@ -584,5 +640,6 @@ OPS = {
     "browser_type": type_text,
     "browser_back": go_back,
     "browser_close": close,
+    "browser_hand_over": hand_over,
     "browser_screenshot": screenshot,
 }

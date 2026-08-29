@@ -137,6 +137,7 @@ class AgentToolBox:
             "browser_back": self._browser_back,
             "browser_screenshot": self._browser_screenshot,
             "browser_close": self._browser_close,
+            "browser_hand_over": self._browser_hand_over,
             "remind_me": self._remind_me,
             "list_reminders": self._list_reminders,
             "cancel_reminder": self._cancel_reminder,
@@ -244,9 +245,24 @@ class AgentToolBox:
                 {},
             ),
             _schema(
+                "browser_hand_over",
+                "Leave the page open because it needs the person, not you \u2014 a "
+                "verification box, a sign-in, a cookie wall, a payment form. "
+                "Use this instead of closing. The window stays up with its own "
+                "controls so they can finish the job, and it waits half an "
+                "hour rather than ten minutes.",
+                {"reason": {"type": "string", "maxLength": 300,
+                            "description": "What is on screen and what they "
+                                           "need to do, in one sentence."}},
+                required=["reason"],
+            ),
+            _schema(
                 "browser_close",
                 "Close the browser and give the screen back to the assistant. "
-                "Do this when the person is finished with it.",
+                "Do this when the person is finished with it \u2014 but never when "
+                "the page is waiting for them to do something. Closing it then "
+                "destroys the only thing they could have acted on; use "
+                "browser_hand_over instead.",
                 {},
             ),
             _schema(
@@ -580,6 +596,10 @@ class AgentToolBox:
 
     def _browser_close(self, args: dict) -> str:
         return self._browser("browser_close", {})
+
+    def _browser_hand_over(self, args: dict) -> str:
+        return self._browser("browser_hand_over",
+                             {"reason": args.get("reason")})
 
     # ── reminders ───────────────────────────────────────────────────
 

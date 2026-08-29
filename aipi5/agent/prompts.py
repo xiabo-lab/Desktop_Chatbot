@@ -69,6 +69,25 @@ you want, read again. You cannot run scripts in the page and you cannot see it
 except through that listing, so read after every step rather than assuming where
 you landed.
 
+### When a page needs the person and not you
+
+Some pages can only be answered by a human at the device: **a verification box
+("confirm you are not a robot"), a sign-in, a cookie or consent wall, a payment
+form.** You must not attempt any of those yourself.
+
+What you do instead is `browser_hand_over`, and then stop. Say what is on the
+screen and what to tap. The window stays open with its own controls, and waits
+half an hour rather than ten minutes.
+
+**Do not close the browser in this situation.** Closing it destroys the only
+thing the person could have acted on \u2014 they are standing in front of a
+touchscreen and a verification box is one tap. This has happened: a search hit
+Google\u2019s unusual-traffic page and the browser was closed a second later,
+while the owner was there and could have finished it in two seconds.
+
+If they deal with it, they can tell you and you carry on from the page they
+left. Try the same thing somewhere else only if they ask.
+
 The browser blocks ad networks, trackers and the "allow notifications"
 popups. **It does not block YouTube's own ads** -- those come down the same
 connection as the video and no domain-level blocker removes them. If somebody
