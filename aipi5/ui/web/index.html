@@ -927,6 +927,20 @@
   #call-out:active { background: #249854; }
   #call-out:disabled { background: #2a3240; color: var(--ink-dim); }
 
+  /* The notice that hand control has switched itself off.
+     Pinned to the bottom 54 pixels, because that is exactly how much of this
+     page the agent's browser leaves visible -- measured on the device, and the
+     only part of the screen a finger can reach while a page is up. */
+  #hand-resume {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 54px;
+    display: flex; align-items: center; justify-content: center;
+    background: #ffc107; color: #1a1200;
+    font-size: 20px; font-weight: 600; letter-spacing: 0.01em;
+    border-top: 2px solid #1a1200;
+    z-index: 9999;
+  }
+  #hand-resume[hidden] { display: none; }
+
   /* The Brio's own picture, small and in the corner, so whoever is standing
      here can see what they are sending. Mirrored, because a self-view that is
      not mirrored makes people reach the wrong way. */
@@ -5343,26 +5357,22 @@ const HAND_SAMPLE_MS = 60;          // the guard in `readHand` sets the real rat
 // **Recognition is not free, and most of the time there is no hand.**
 //
 // It costs about 68 ms a frame on this Pi, on the main thread of the page the
-// touchscreen talks to. Running it flat out whenever a browser happens to be
-// open spends most of a core watching an empty room, and it is the reason a
-// stuck reader could starve touch handling entirely. So after a while with
-// nothing found it drops to a slow watch, and comes straight back the moment a
-// hand appears -- the cost of noticing late is a fifth of a second, once.
-const HAND_IDLE_AFTER_MS = 8000;
-const HAND_IDLE_SAMPLE_MS = 200;
+// touchscreen talks to. So it does not run forever: after half an hour without
+// a hand it stops completely and gives the camera back, which returns presence
+// detection to the assistant and a core to the machine.
+//
+// **Stopping, not slowing.** An earlier version dropped to four frames a
+// second instead, and that had a trap in it: the only thing that could lift
+// the throttle was seeing a hand, and seeing a hand was the thing it had just
+// made unreliable. A feature that can talk itself into never waking up is
+// worse than one that switches off honestly and says how to switch it on.
+//
+// It comes back on a tap. The agent's window leaves 54 pixels of this page
+// visible along the bottom of the screen -- measured with a screenshot, not
+// assumed -- which is enough for a finger, and that strip is where the notice
+// appears.
+const HAND_STOP_AFTER_MS = 30 * 60 * 1000;
 
-// **Retrying every 1.5 seconds forever is what froze the device.**
-//
-// The feed answers 503 whenever the camera is not held -- which is most of the
-// time, and all of the time when a game or a call has it. Each retry opened a
-// new stream, the abandoned ones stranded a thread apiece on the server, and
-// the renderer sat at 70% of a core with six of them live. The screen stopped
-// answering touch, which is the worst thing this feature could possibly do:
-// it exists to save somebody walking to the device.
-//
-// So a retry backs off, and gives up. There is nothing to lose by giving up:
-// the assistant publishes `hand_feed` on the poll this page already makes, and
-// a camera that becomes available bumps it, which reconnects.
 const HAND_RETRY_MS = 2000;
 const HAND_RETRY_MAX_MS = 30000;
 const HAND_TRAIL_MS = 600;          // about seven samples, at that rate
@@ -5424,7 +5434,7 @@ const handControl = {
   generation: -1,       // which acquisition of the camera the stream is on
   retry: HAND_RETRY_MS, // how long before the next reconnect attempt
   retryTimer: null,
-  lastLook: 0,          // when recognition last ran; see HAND_IDLE_SAMPLE_MS
+  paused: false,        // stopped after HAND_STOP_AFTER_MS; tap to resume
   deadSince: 0,         // when the picture went away; see HAND_DEAD_MS
   connectedAt: 0,       // so a stream is given time to arrive before judging
   moving: false,        // a pointer update is in flight; skip the next one
@@ -5568,8 +5578,8 @@ async function reportHand() {
     fired: handStats.fired.join(","),
     ready: (handControl.feed && handControl.feed.complete &&
             handControl.feed.naturalWidth) ? 1 : 0,
-    idle: (performance.now() - handControl.lastSeen > HAND_IDLE_AFTER_MS)
-      ? 1 : 0,
+    unused: handControl.lastSeen
+      ? Math.round((performance.now() - handControl.lastSeen) / 1000) : 0,
     dead: handControl.deadSince
       ? Math.round(performance.now() - handControl.deadSince) : 0,
     speed: handStats.speed,
@@ -5596,18 +5606,12 @@ async function readHand() {
   // also why the round trip to the agent measured 166 ms for a request the
   // server answers in 10. `setInterval` does not skip a tick for you.
   if (handControl.reading) return;
-  // Nothing has been seen for a while, so look less often. `lastSeen` is
-  // stamped by every frame with a hand in it, so this ends itself.
-  const now = performance.now();
-  // `lastSeen` is stamped when tracking starts as well as by every frame with
-  // a hand in it. Without that the throttle never engaged in the one case it
-  // matters most -- a browser left open in an empty room, where no hand is
-  // ever seen and the guard `lastSeen &&` stays false forever.
-  if (now - handControl.lastSeen > HAND_IDLE_AFTER_MS &&
-      now - handControl.lastLook < HAND_IDLE_SAMPLE_MS) {
+  // Half an hour with nobody using it, and it stops rather than going on
+  // spending a core watching an empty room.
+  if (performance.now() - handControl.lastSeen > HAND_STOP_AFTER_MS) {
+    pauseHandControl();
     return;
   }
-  handControl.lastLook = now;
   handControl.reading = true;
   try {
     await readHandOnce(feed);
@@ -5820,6 +5824,41 @@ function watchHandFeed(now) {
   return false;
 }
 
+async function tellHandPaused(paused) {
+  try {
+    await fetch("/api/hand/pause", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused }),
+    });
+  } catch (err) { /* the assistant restarting; the next poll settles it */ }
+}
+
+function pauseHandControl() {
+  if (handControl.paused) return;
+  handControl.paused = true;
+  stopHandReader();
+  // The assistant takes the camera back, so presence detection and the
+  // screensaver work normally again while nobody is driving the screen.
+  tellHandPaused(true);
+  showHandResume(true);
+}
+
+function resumeHandControl() {
+  if (!handControl.paused) return;
+  handControl.paused = false;
+  showHandResume(false);
+  tellHandPaused(false);
+  // The camera takes a second to come back. `connectHandFeed` retries on its
+  // own, and the generation on the next poll reconnects it either way.
+  startHandReader();
+}
+
+function showHandResume(on) {
+  const bar = el("hand-resume");
+  if (bar) bar.hidden = !on;
+}
+
 function syncHandControl(state) {
   const wanted = !!state.agent_browser;
   // A new acquisition of the camera means every stream opened before it has
@@ -5831,42 +5870,77 @@ function syncHandControl(state) {
     handControl.generation = state.hand_feed;
     connectHandFeed();
   }
+  // **The assistant is the authority on whether this is paused.** The page
+  // decides to pause, but the flag lives on the other side -- so a page that
+  // reloads, or an assistant that was told to pause by something else, cannot
+  // end up reading a feed whose camera has been given away. Without this the
+  // two disagree silently, which is the same shape as every other bug in this
+  // feature: nothing errors, it just stops working.
+  if (wanted && !!state.hand_paused !== handControl.paused) {
+    handControl.paused = !!state.hand_paused;
+    showHandResume(handControl.paused);
+    if (handControl.paused) {
+      stopHandReader();
+    } else if (handControl.on) {
+      startHandReader();
+    }
+  }
+
   if (wanted === handControl.on) return;
   handControl.generation = state.hand_feed;
   handControl.on = wanted;
 
   if (!wanted) {
-    if (handControl.timer !== null) {
-      clearInterval(handControl.timer); handControl.timer = null;
+    stopHandReader();
+    // A closed browser clears the pause. The next page the agent opens starts
+    // with hand control on, which is what somebody who has just asked for a
+    // page expects -- they should not have to know it had switched itself off
+    // an hour ago.
+    if (handControl.paused) {
+      handControl.paused = false;
+      showHandResume(false);
+      tellHandPaused(false);
     }
-    if (handControl.reporter) {
-      clearInterval(handControl.reporter); handControl.reporter = null;
-    }
-    // A pending reconnect outliving the feature is another stream nobody
-    // wanted -- and the stream that was leaking is exactly this one.
-    clearTimeout(handControl.retryTimer);
-    handControl.retryTimer = null;
-    handControl.retry = HAND_RETRY_MS;
-    handControl.lastSeen = 0;
-    handControl.lastLook = 0;
-    handControl.deadSince = 0;
-    if (handControl.feed) {
-      handControl.feed.onerror = null;
-      handControl.feed.onload = null;
-      handControl.feed.src = "";
-    }
-    if (handControl.feed) handControl.feed.removeAttribute("src");
-    handControl.trail.length = 0;
-    handControl.fistFrames = 0;
-    handControl.armed = true;
-    handControl.stillSince = 0;
-    handControl.sentX = handControl.sentY = NaN;
     return;
   }
+
+  // Paused: the camera is back with the assistant and the notice is on the
+  // strip below the browser. Nothing starts again until it is tapped.
+  if (handControl.paused) return;
 
   // The element is built by `connectHandFeed`, which makes a new one for
   // every attempt. Never added to the document: it only has to decode, and
   // MediaPipe reads an HTMLImageElement directly.
+  startHandReader();
+}
+
+function stopHandReader() {
+  if (handControl.timer !== null) {
+    clearInterval(handControl.timer); handControl.timer = null;
+  }
+  if (handControl.reporter) {
+    clearInterval(handControl.reporter); handControl.reporter = null;
+  }
+  // A pending reconnect outliving the reader is another stream nobody wanted
+  // -- and that is exactly the stream that was leaking.
+  clearTimeout(handControl.retryTimer);
+  handControl.retryTimer = null;
+  handControl.retry = HAND_RETRY_MS;
+  handControl.lastSeen = 0;
+  handControl.deadSince = 0;
+  if (handControl.feed) {
+    handControl.feed.onerror = null;
+    handControl.feed.onload = null;
+    handControl.feed.src = "";
+  }
+  handControl.trail.length = 0;
+  handControl.fistFrames = 0;
+  handControl.armed = true;
+  handControl.stillSince = 0;
+  handControl.sentX = handControl.sentY = NaN;
+}
+
+function startHandReader() {
   connectHandFeed();
   handControl.lastSeen = performance.now();
   handControl.timer = setInterval(readHand, HAND_SAMPLE_MS);
@@ -5876,6 +5950,14 @@ function syncHandControl(state) {
   // No periodic reconnect. It existed to stay inside the server's five-minute
   // cap, the cap is an hour now, and the timer was itself what broke the feed.
 }
+
+// A tap anywhere this page can still see brings it back: the 54-pixel strip
+// along the bottom, the 16 at each side, or the whole screen once the browser
+// is closed. `pointerdown` rather than `click`, so it answers the touch itself
+// rather than waiting to learn whether it was a drag.
+document.addEventListener("pointerdown", () => {
+  if (handControl.paused) resumeHandControl();
+}, { passive: true });
 
 async function pollState() {
   try {
@@ -8625,5 +8707,6 @@ pollFeed();
 </script>
 <script src="/assets/yoga/yoga.js?v=20260821-courses"></script>
 <script type="module" src="/assets/yoga/yoga3d.js?v=20260824-ankles5"></script>
+<div id="hand-resume" hidden>Hand control is off &mdash; tap to use it again</div>
 </body>
 </html>

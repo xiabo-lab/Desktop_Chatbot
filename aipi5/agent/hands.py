@@ -92,14 +92,25 @@ class HandFeed:
         #: An exact signal, where guessing from the pixels was not: a still
         #: room and a frozen picture look identical to any cheap comparison.
         self.generation = 0
+        #: Set by the page when nobody has used hand control for half an hour.
+        #: The camera goes back to the assistant, which is the whole point:
+        #: presence detection returns, the screensaver is free to run, and a
+        #: core stops being spent watching an empty room. A tap on the strip of
+        #: kiosk visible below the browser clears it.
+        self.paused = False
 
     # ── what Housekeeping calls ─────────────────────────────────────
+
+    def set_paused(self, paused: bool) -> None:
+        """The page saying whether anybody is still using this."""
+        with self._lock:
+            self.paused = bool(paused)
 
     def sync(self, browser_open: bool) -> None:
         """One fact in, once a second. Idempotent, and never raises."""
         now = self._clock()
         with self._lock:
-            if browser_open:
+            if browser_open and not self.paused:
                 self._wanted_at = now
                 if self._lease is None:
                     self._start()
@@ -139,7 +150,7 @@ class HandFeed:
     def describe(self) -> dict:
         lease = self._lease
         info = {"active": lease is not None, "error": self.error,
-                "generation": self.generation}
+                "generation": self.generation, "paused": self.paused}
         if lease is not None:
             try:
                 info.update(lease.describe() or {})

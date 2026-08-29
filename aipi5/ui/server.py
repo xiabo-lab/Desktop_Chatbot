@@ -301,7 +301,7 @@ class _Handler(BaseHTTPRequestHandler):
                         "/api/photos", "/api/game/open", "/api/game/close",
                         "/api/game/command", "/api/game/debug",
                         "/api/game/settings", "/api/agent/gesture",
-                        "/api/hand/debug"):
+                        "/api/hand/debug", "/api/hand/pause"):
             self._json({"error": "not found"}, 404)
             return
 
@@ -344,6 +344,13 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/api/hand/debug":
             self._hand_debug(payload)
+            return
+
+        if path == "/api/hand/pause":
+            feed = getattr(self.ui, "hands", None)
+            if feed is not None:
+                feed.set_paused(bool(payload.get("paused")))
+            self._json({"ok": True, "paused": bool(payload.get("paused"))})
             return
 
         action = str(payload.get("action", ""))
@@ -505,10 +512,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         log.info(
             "HAND n=%d infer=%dms gap=%dms hand=%d%% palm=%d fist=%d "
-            "other=%d ready=%d idle=%d dead=%dms travel=%.2f/%.2f speed=%.2f armed=%d "
+            "other=%d ready=%d unused=%ds dead=%dms travel=%.2f/%.2f speed=%.2f armed=%d "
             "trail=%d fired=%s rtt=%dms",
             _n("n"), _n("infer"), _n("gap"), _n("handpct"), _n("palm"),
-            _n("fist"), _n("other"), _n("ready"), _n("idle"), _n("dead"), _n("dx", 2), _n("dy", 2),
+            _n("fist"), _n("other"), _n("ready"), _n("unused"), _n("dead"), _n("dx", 2), _n("dy", 2),
             _n("speed", 2), _n("armed"), _n("trail"),
             str(payload.get("fired") or "-")[:60], _n("rtt"))
         self._json({"ok": True})
@@ -888,6 +895,9 @@ class _Handler(BaseHTTPRequestHandler):
         # reporting the last frame it ever received.
         feed = getattr(self.ui, "hands", None)
         payload["hand_feed"] = feed.generation if feed is not None else 0
+        # So a page that reloads comes back paused rather than quietly taking
+        # the camera again.
+        payload["hand_paused"] = bool(feed is not None and feed.paused)
         self._json(payload)
 
     def _feed(self, params: dict) -> None:
