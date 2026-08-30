@@ -329,6 +329,12 @@ class HandPilot:
         self.error = ""
         self.generation += 1
         self._reset()
+        # Started with the service rather than on the first wrist. Lazily was
+        # correct and unverifiable: with nobody in front of the camera there
+        # was no thread to look for, so "is the finger reader running" had no
+        # answer until somebody stood there -- which is exactly when it is too
+        # late to find out that it is not.
+        self._start_reader()
         # Holding the camera stops presence detection, so without this the idle
         # timer sees a quiet room and blanks the screen on somebody standing in
         # front of it driving a page.
@@ -342,7 +348,10 @@ class HandPilot:
 
     def _stop(self) -> None:
         pose, self._pose = self._pose, None
-        # The finger thread watches `_pose` and returns when it goes.
+        # The finger thread watches `_pose` and returns when it goes. Letting
+        # go of the handle as well, so the next session starts a live one
+        # rather than finding a corpse and deciding one already exists.
+        self._shape_thread = None
         if pose is not None:
             try:
                 pose.stop()
@@ -486,44 +495,81 @@ class HandPilot:
             fresh = self._shape_seen
             if self._shape_at and self._clock() - self._shape_at > SHAPE_STALE_S:
                 fresh = None
-        if self._shape_thread is None:
-            self._shape_thread = threading.Thread(
-                target=self._shape_loop, name="aipi5-hand-fingers", daemon=True)
-            self._shape_thread.start()
+        self._start_reader()
         return fresh
 
+    def _start_reader(self) -> None:
+        """Make sure a finger reader is running.
+
+        **`is_alive`, not `is not None`.** The reader returns when the pose
+        service goes, so after the first browser closes the handle is a dead
+        thread -- and a check for `None` sees an object and starts nothing.
+        Every session after the first then had no finger reader at all: the
+        palm gate never opened and the pointer never moved, which is exactly
+        how it was reported.
+        """
+        thread = self._shape_thread
+        if thread is not None and getattr(thread, "is_alive", bool)():
+            return
+        self._shape_thread = threading.Thread(
+            target=self._shape_loop, name="aipi5-hand-fingers", daemon=True)
+        self._shape_thread.start()
+
     def _shape_loop(self) -> None:
-        """Reads fingers as fast as it can, on the latest wrist it was given."""
+        """Reads fingers as fast as it can, on the latest wrist it was given.
+
+        Says so, because there is no other way to tell. Thread names do not
+        reach the OS in this Python build -- all thirty-odd of them read as
+        "python" -- so "is the finger reader running" cannot be answered from
+        outside the process, and the first time it silently was not, the
+        symptom was a pointer that would not move.
+        """
         from aipi5.motion import geometry
 
-        while True:
-            with self._shape_lock:
-                wrist = self._shape_want
-                self._shape_want = None
-            if wrist is None:
-                # Nothing to look at. Sleep a frame rather than spin; the pose
-                # thread will leave another wrist along in 33 ms.
-                time.sleep(0.02)
-                if self._pose is None:
+        log.info("hand control: finger reader started")
+        read = 0
+        try:
+            while True:
+                with self._shape_lock:
+                    wrist = self._shape_want
+                    self._shape_want = None
+                if wrist is None:
+                    # Nothing to look at. Sleep a frame rather than spin; the
+                    # pose thread leaves another wrist along in 33 ms.
+                    time.sleep(0.02)
+                    if self._pose is None:
+                        log.info("hand control: finger reader stopped "
+                                 "(%d hands read)", read)
+                        return
+                    continue
+                pose = self._pose
+                lease = (getattr(pose, "_lease", None)
+                         if pose is not None else None)
+                if lease is None:
+                    log.info("hand control: finger reader stopped, no camera")
                     return
-                continue
-            pose = self._pose
-            lease = getattr(pose, "_lease", None) if pose is not None else None
-            if lease is None:
-                return
-            try:
-                frame, _captured = lease.frame(wait=False)
-            except Exception:                         # noqa: BLE001
-                frame = None
-            shape = None
-            if frame is not None:
-                # Pose keypoints arrive mirrored and the picture does not, so
-                # the crop is taken where the hand really is.
-                shape = self._fingers.read(frame, geometry.mirror(wrist.x),
-                                           wrist.y)
-            with self._shape_lock:
-                self._shape_seen = shape
-                self._shape_at = self._clock()
+                try:
+                    frame, _captured = lease.frame(wait=False)
+                except Exception:                     # noqa: BLE001
+                    frame = None
+                shape = None
+                if frame is not None:
+                    # Pose keypoints arrive mirrored and the picture does not,
+                    # so the crop is taken where the hand really is.
+                    shape = self._fingers.read(frame, geometry.mirror(wrist.x),
+                                               wrist.y)
+                if shape is not None:
+                    read += 1
+                    if read == 1:
+                        log.info("hand control: first hand read (%s)",
+                                 "fist" if shape.closed else "open palm")
+                with self._shape_lock:
+                    self._shape_seen = shape
+                    self._shape_at = self._clock()
+        except Exception:                             # noqa: BLE001
+            # A thread that dies quietly is the failure this whole module keeps
+            # relearning. It costs the palm gate, so it must be findable.
+            log.exception("hand control: the finger reader stopped on an error")
 
     def _gate(self, shape) -> bool:
         """Five fingers, held, before anything is allowed to act.

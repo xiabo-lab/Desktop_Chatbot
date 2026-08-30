@@ -327,6 +327,13 @@ class FakeShape:
         return not self.closed
 
 
+class _AlreadyRunning:
+    """Stands in for a live reader thread, so none is actually started."""
+
+    def is_alive(self):
+        return True
+
+
 class FakeLease:
     def frame(self, wait=False):
         return object(), 0.0
@@ -345,7 +352,7 @@ class GatedFixture(Fixture):
         # frame. These tests are about what the gate does with a reading, not
         # about how it arrives, so the reading is placed directly and no
         # thread is started.
-        self.pilot._shape_thread = "not started, on purpose"
+        self.pilot._shape_thread = _AlreadyRunning()
 
     def show(self, shape, frames, wrist=(0.5, 0.3)):
         for _ in range(frames):
@@ -457,6 +464,25 @@ class TestTheFingerThread(GatedFixture):
         self.pilot._read(Frame(Person((0.5, 0.3))))
         self.assertEqual(self.fingers.asked, 0,
                          "the landmark model ran on the pose thread")
+
+    def test_the_reader_is_restarted_when_it_has_died(self):
+        """It returns when the pose service goes, so the handle left behind is
+        a dead thread. Checking it for `None` saw an object and started
+        nothing: every session after the first had no finger reader, the palm
+        gate never opened, and the pointer never moved."""
+        import threading
+
+        finished = threading.Thread(target=lambda: None)
+        finished.start()
+        finished.join()
+        self.assertFalse(finished.is_alive())
+
+        self.pilot._shape_thread = finished
+        self.pilot._read(Frame(Person((0.5, 0.3))))
+        started = self.pilot._shape_thread
+        self.addCleanup(setattr, self.pilot, "_pose", None)
+        self.assertIsNot(started, finished,
+                         "a dead reader was mistaken for a running one")
 
     def test_a_stale_reading_is_not_trusted(self):
         """A reader that has stopped must not leave the gate propped open on
