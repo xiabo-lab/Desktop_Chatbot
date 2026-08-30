@@ -340,10 +340,18 @@ class GatedFixture(Fixture):
         self.fingers = FakeFingers()
         self.pilot._fingers = self.fingers
         self.pilot._pose = type("P", (), {"_lease": FakeLease()})()
+        # The landmark model runs on its own thread on the device -- sixteen
+        # milliseconds does not fit inside a thirty-three millisecond pose
+        # frame. These tests are about what the gate does with a reading, not
+        # about how it arrives, so the reading is placed directly and no
+        # thread is started.
+        self.pilot._shape_thread = "not started, on purpose"
 
     def show(self, shape, frames, wrist=(0.5, 0.3)):
         for _ in range(frames):
             self.fingers.answer = shape
+            self.pilot._shape_seen = shape
+            self.pilot._shape_at = self.clock()
             self.pilot._read(Frame(Person(wrist)))
             self.clock.tick()
 
@@ -434,6 +442,32 @@ class TestTheFistIsBack(GatedFixture):
         Keeping both would click the page somebody is reading."""
         self.show(FakeShape(), int((DWELL_S + 1.0) * 30))
         self.assertNotIn("click", self.gestures())
+
+
+class TestTheFingerThread(GatedFixture):
+    """Reading fingers must not sit inside the pose loop.
+
+    Sixteen milliseconds of landmark inference in a thirty-three millisecond
+    frame budget is half of it, and the pose loop has a capture, a letterbox,
+    the accelerator and a tensor decode to fit in the rest. Doing it inline
+    dropped the pipeline below thirty frames a second and the pointer felt it.
+    """
+
+    def test_reading_a_shape_never_calls_the_model_inline(self):
+        self.pilot._read(Frame(Person((0.5, 0.3))))
+        self.assertEqual(self.fingers.asked, 0,
+                         "the landmark model ran on the pose thread")
+
+    def test_a_stale_reading_is_not_trusted(self):
+        """A reader that has stopped must not leave the gate propped open on
+        the last palm it happened to see."""
+        self.show(FakeShape(), 10)
+        self.sent.clear()
+        self.pilot._shape_at = self.clock() - 5.0        # long since
+        for _ in range(30):
+            self.pilot._read(Frame(Person((0.5, 0.3))))
+            self.clock.tick()
+        self.assertNotIn("move", [g for g, _ in self.sent])
 
 
 class TestWhatIsNotDrivingAnything(Fixture):

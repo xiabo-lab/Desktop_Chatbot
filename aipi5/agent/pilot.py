@@ -89,26 +89,34 @@ TRAIL_S = 0.6
 SETTLE_S = 0.26
 SETTLE_SPEED = 0.35
 
-#: The pointer may keep up with the arm; a gesture may not.
-MOVE_INTERVAL_S = 0.10
+#: **The pointer may keep up with the arm; a gesture may not.**
+#:
+#: A tenth of a second is ten updates a second, and ten is visibly steppy --
+#: reported as the marker "jumping around the screen". That number came from
+#: the browser, where each update was a `fetch` through four hops. It is a
+#: unix socket and a CDP write now, measured at five milliseconds in the
+#: helper, so the pointer can run at the rate the camera does.
+MOVE_INTERVAL_S = 0.04
 GESTURE_INTERVAL_S = 0.45
-#: Do not resend a pointer that has barely moved.
-MOVE_MIN = 0.015
+#: Do not resend a pointer that has not really moved. Small, because at
+#: twenty-five updates a second a large threshold is what makes movement look
+#: like stepping rather than sliding.
+MOVE_MIN = 0.004
 
-#: **How much of each new reading the pointer takes.**
+#: **How hard the pointer is filtered, which is not one number.**
 #:
-#: A wrist keypoint moves a little every frame even from a hand held perfectly
-#: still -- the model re-estimates it from scratch thirty times a second -- and
-#: an unfiltered pointer twitches constantly, which was reported as the marker
-#: "jumping around itself". The browser version smoothed by exactly this much
-#: and this is the line that did not get ported.
+#: A wrist keypoint moves a little every frame even from a hand held still, so
+#: a raw pointer twitches. Filtering that away with a fixed strength buys the
+#: stillness with lag, and lag on a fast hand is what makes a pointer feel like
+#: it is chasing rather than following -- reported as jumping about.
 #:
-#: A third of each reading is a time constant of about three frames: still
-#: quick enough to feel attached to the hand, steady enough to rest on a
-#: target. **Only the pointer and the dwell use it.** Sweeps read the raw
-#: trail, because smoothing a fast stroke shortens it and a sweep is measured
-#: by how far and how quickly it went.
-SMOOTHING = 0.35
+#: So the strength follows the speed, which is what a one-euro filter does and
+#: why it is the standard answer here. A slow hand is smoothed hard, because
+#: everything it is doing is noise. A quick one is barely smoothed at all,
+#: because everything it is doing is signal.
+SMOOTH_SLOW = 0.18          # a hand at rest: heavy, kills the twitch
+SMOOTH_FAST = 0.85          # a hand travelling: light, no lag worth feeling
+SMOOTH_AT = 0.9             # frame-widths a second at which it is fully light
 
 #: Dwell: hold the pointer inside this radius for this long and it clicks.
 #:
@@ -124,6 +132,11 @@ DWELL_REARM = 0.10
 
 #: How long a hand may be missing before the pointer is taken off the page.
 LOST_S = 0.8
+
+#: How old a finger reading may be before it is ignored. Three frames: enough
+#: that the reader can miss one without the gate flickering, short enough that
+#: a hand which has gone is noticed as gone.
+SHAPE_STALE_S = 0.1
 
 #: **How long an open palm must be held before anything moves.**
 #:
@@ -192,15 +205,15 @@ class HandPilot:
         #: the gesture logic can be tested without a model, a camera or an
         #: accelerator -- which is all of these tests.
         self._fingers = fingers
+        #: The finger reader runs on its own thread; these are the hand-off.
+        self._shape_lock = threading.Lock()
+        self._shape_thread = None
         self._reset()
         #: Counters, for the settings page and for answering "is it seeing me".
         self.seen = 0
         self.gestures = 0
 
     def _reset(self) -> None:
-        self._palm_for = 0
-        self._no_palm_for = 0
-        self._fist_for = 0
         self._trail: list[tuple[float, float, float]] = []
         self._armed = True
         self._still_since = 0.0
@@ -224,6 +237,11 @@ class HandPilot:
         self._palm_for = 0
         self._no_palm_for = 0
         self._fist_for = 0
+        #: The hand-off with the finger thread: what it should look at next,
+        #: what it last saw, and when. See `_shape`.
+        self._shape_want = None
+        self._shape_seen = None
+        self._shape_at = 0.0
 
     # ── lifecycle, the same shape Housekeeping already calls ────────
 
@@ -324,6 +342,7 @@ class HandPilot:
 
     def _stop(self) -> None:
         pose, self._pose = self._pose, None
+        # The finger thread watches `_pose` and returns when it goes.
         if pose is not None:
             try:
                 pose.stop()
@@ -437,29 +456,74 @@ class HandPilot:
             self._smooth = target
         else:
             sx, sy = self._smooth
-            self._smooth = (sx + SMOOTHING * (target[0] - sx),
-                            sy + SMOOTHING * (target[1] - sy))
+            # How much of the new reading to take, from how fast the hand is
+            # going. `_speed` is over the last few samples, so it reacts within
+            # a frame or two of a movement starting.
+            quick = min(1.0, self._speed() / SMOOTH_AT)
+            alpha = SMOOTH_SLOW + (SMOOTH_FAST - SMOOTH_SLOW) * quick
+            self._smooth = (sx + alpha * (target[0] - sx),
+                            sy + alpha * (target[1] - sy))
         self._point(now, self._smooth[0], self._smooth[1])
 
     def _shape(self, wrist):
-        """The fingers near this wrist, or None if they cannot be read."""
+        """The most recent finger reading. **Never blocks the pose thread.**
+
+        Sixteen milliseconds of landmark inference inside a thirty-three
+        millisecond frame budget is half of it, and the pose loop also has a
+        capture, a letterbox, the accelerator and a tensor decode to fit in the
+        rest. Doing it here dropped the whole pipeline below thirty frames a
+        second, and everything downstream -- the pointer most of all -- felt it.
+
+        So the reading happens on its own thread and this takes whatever it
+        last produced. The shape is then a frame or two old, which does not
+        matter: a palm does not become a fist in sixty milliseconds, and the
+        *position* the pointer follows is the fresh one from pose.
+        """
         if self._fingers is None or not self._fingers.ready:
             return None
-        pose = self._pose
-        lease = getattr(pose, "_lease", None) if pose is not None else None
-        if lease is None:
-            return None
-        try:
-            frame, _captured = lease.frame(wait=False)
-        except Exception:                             # noqa: BLE001
-            return None
-        if frame is None:
-            return None
-        # Pose keypoints arrive mirrored and the picture does not, so the
-        # crop has to be taken where the hand really is.
+        with self._shape_lock:
+            self._shape_want = wrist
+            fresh = self._shape_seen
+            if self._shape_at and self._clock() - self._shape_at > SHAPE_STALE_S:
+                fresh = None
+        if self._shape_thread is None:
+            self._shape_thread = threading.Thread(
+                target=self._shape_loop, name="aipi5-hand-fingers", daemon=True)
+            self._shape_thread.start()
+        return fresh
+
+    def _shape_loop(self) -> None:
+        """Reads fingers as fast as it can, on the latest wrist it was given."""
         from aipi5.motion import geometry
 
-        return self._fingers.read(frame, geometry.mirror(wrist.x), wrist.y)
+        while True:
+            with self._shape_lock:
+                wrist = self._shape_want
+                self._shape_want = None
+            if wrist is None:
+                # Nothing to look at. Sleep a frame rather than spin; the pose
+                # thread will leave another wrist along in 33 ms.
+                time.sleep(0.02)
+                if self._pose is None:
+                    return
+                continue
+            pose = self._pose
+            lease = getattr(pose, "_lease", None) if pose is not None else None
+            if lease is None:
+                return
+            try:
+                frame, _captured = lease.frame(wait=False)
+            except Exception:                         # noqa: BLE001
+                frame = None
+            shape = None
+            if frame is not None:
+                # Pose keypoints arrive mirrored and the picture does not, so
+                # the crop is taken where the hand really is.
+                shape = self._fingers.read(frame, geometry.mirror(wrist.x),
+                                           wrist.y)
+            with self._shape_lock:
+                self._shape_seen = shape
+                self._shape_at = self._clock()
 
     def _gate(self, shape) -> bool:
         """Five fingers, held, before anything is allowed to act.
