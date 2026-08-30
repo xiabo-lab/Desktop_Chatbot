@@ -83,6 +83,21 @@ SWEEP_DOMINANCE = 1.6
 #: How much history a sweep is measured over.
 TRAIL_S = 0.6
 
+#: **Where a sweep has to begin.** A circle in the middle of the page, this
+#: fraction of it across as a radius.
+#:
+#: Asked for, and the reason is the one that has come up all afternoon: an arm
+#: moving is not a gesture. Requiring the hand to be brought to the middle
+#: first makes a sweep something somebody *aims* -- two deliberate movements
+#: instead of one incidental one -- and it costs nothing, because the pointer
+#: is visible and the middle of a screen is the easiest place on it to find.
+#:
+#: Measured in page space, the same coordinates the marker is drawn in, so
+#: "the middle" means what it looks like rather than what the camera thinks.
+#: Only sweeps are gated. A click may be aimed anywhere, because a click is
+#: already aimed -- that is what makes it one.
+HOME_RADIUS = 0.20
+
 #: After a sweep, the next one waits until the hand has been slow for this
 #: long. Not a fixed lockout: the arm coming back is itself a sweep, and how
 #: long somebody takes to reset varies from a flick to a deliberate lift.
@@ -640,10 +655,22 @@ class HandPilot:
             return 0.0
         return math.hypot(last[1] - first[1], last[2] - first[2]) / seconds
 
+    def _home(self, x: float, y: float) -> bool:
+        """Is this point inside the circle a sweep must start from?
+
+        In page space, because that is where the person can see the marker.
+        """
+        return math.hypot(_span(x) - 0.5, _span(y) - 0.5) <= HOME_RADIUS
+
     def _sweep(self) -> str:
         if len(self._trail) < 4:
             return ""
         first, last = self._trail[0], self._trail[-1]
+        # **The stroke has to start in the middle.** Checked on where the hand
+        # *was*, not where it ended up -- a sweep by definition leaves the
+        # circle, and testing the far end would mean no sweep ever qualified.
+        if not self._home(first[1], first[2]):
+            return ""
         seconds = last[0] - first[0]
         if seconds <= 0:
             return ""
@@ -678,9 +705,13 @@ class HandPilot:
         self._sent_hold = hold
         self._pointing = True
         # `hold` rides along so the marker can show a click coming rather than
-        # springing one. A dwell nobody saw building is a dwell that feels like
-        # a misfire even when it was not.
-        self._deliver("move", {"x": x, "y": y, "hold": round(hold, 2)})
+        # springing one. `home` says whether sweeps are armed here, which the
+        # marker shows as a colour -- otherwise the circle is an invisible rule
+        # and somebody sweeping outside it has no way to know why nothing
+        # happened.
+        self._deliver("move", {"x": x, "y": y, "hold": round(hold, 2),
+                               "home": math.hypot(x - 0.5, y - 0.5)
+                               <= HOME_RADIUS})
 
     def _dwell(self, now: float, x: float, y: float):
         """How far through a click this is, 0..1, or None once it has fired.

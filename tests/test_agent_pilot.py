@@ -25,7 +25,11 @@ class Point:
 class Person:
     """A body with both wrists up unless told otherwise."""
 
-    def __init__(self, wrist=(0.5, 0.3), confidence=0.9, hips=0.7):
+    def __init__(self, wrist=(0.5, 0.3), confidence=0.9, hips=0.95):
+        # Hips low in the frame by default, so a downward sweep has somewhere
+        # to go. `_driving_wrist` ignores a wrist below them -- an arm hanging
+        # at somebody's side is not driving anything -- and that rule has its
+        # own test rather than quietly shortening every sweep here.
         self.keypoints = {
             "left_wrist": Point(*wrist, confidence),
             "right_wrist": Point(9.0, 9.0, 0.0),      # not believable
@@ -84,11 +88,11 @@ class TestSweeps(Fixture):
     def test_a_quick_sweep_up_scrolls_up(self):
         # Mirrored x, camera y grows downward: moving up the frame is a
         # falling y, and the page should move the way the hand does.
-        self.wave([(0.5, 0.7), (0.5, 0.25)], seconds=0.35)
+        self.wave([(0.5, 0.5), (0.5, 0.12)], seconds=0.35)
         self.assertIn("scroll_up", self.gestures())
 
     def test_a_quick_sweep_down_scrolls_down(self):
-        self.wave([(0.5, 0.25), (0.5, 0.7)], seconds=0.35)
+        self.wave([(0.5, 0.5), (0.5, 0.88)], seconds=0.35)
         self.assertIn("scroll_down", self.gestures())
 
     def test_sideways_goes_back_and_forward(self):
@@ -100,12 +104,12 @@ class TestSweeps(Fixture):
         swapping it". This module did exactly that, and left and right came out
         backwards -- which is what the test below now pins.
         """
-        self.wave([(0.2, 0.4), (0.8, 0.4)], seconds=0.35)
+        self.wave([(0.5, 0.45), (0.97, 0.45)], seconds=0.35)
         self.assertIn("forward", self.gestures(),
                       "hand moving to their right should go forward")
 
         self.setUp()
-        self.wave([(0.8, 0.4), (0.2, 0.4)], seconds=0.35)
+        self.wave([(0.5, 0.45), (0.03, 0.45)], seconds=0.35)
         self.assertIn("back", self.gestures(),
                       "hand moving to their left should go back")
 
@@ -124,12 +128,44 @@ class TestSweeps(Fixture):
         Distance alone cannot tell them apart, and the version that tried
         fired Back on somebody trying to point at something.
         """
-        self.wave([(0.2, 0.4), (0.8, 0.4)], seconds=4.0)
+        self.wave([(0.5, 0.45), (0.97, 0.45)], seconds=4.0)
         self.assertEqual(self.gestures(), [])
 
     def test_a_small_flick_is_not_a_sweep(self):
         self.wave([(0.48, 0.4), (0.55, 0.4)], seconds=0.2)
         self.assertEqual(self.gestures(), [])
+
+    def test_a_sweep_that_does_not_start_in_the_middle_is_ignored(self):
+        """Asked for, and the reason is the whole afternoon's theme: an arm
+        moving is not a gesture. Bringing the hand to the middle first makes a
+        sweep two deliberate movements instead of one incidental one."""
+        self.wave([(0.05, 0.45), (0.55, 0.45)], seconds=0.35)
+        self.assertEqual(self.gestures(), [])
+
+    def test_it_is_the_start_of_the_stroke_that_must_be_in_the_middle(self):
+        """A sweep leaves the circle by definition, so testing the far end
+        would mean no sweep ever qualified."""
+        self.wave([(0.5, 0.45), (0.97, 0.45)], seconds=0.35)
+        self.assertIn("forward", self.gestures())
+
+    def test_the_marker_says_where_sweeps_are_armed(self):
+        """Otherwise the circle is an invisible rule, and somebody sweeping
+        outside it has no way to know why nothing happened."""
+        self.hold((0.5, 0.5), 0.4)
+        middle = [at for g, at in self.sent if g == "move"]
+        self.assertTrue(middle and middle[-1]["home"])
+
+        self.setUp()
+        self.hold((0.06, 0.5), 0.4)
+        edge = [at for g, at in self.sent if g == "move"]
+        self.assertTrue(edge and not edge[-1]["home"])
+
+    def test_a_click_is_not_gated_to_the_middle(self):
+        """A click is already aimed -- that is what makes it one."""
+        self.wave([(0.5, 0.45), (0.05, 0.45)], seconds=1.0)
+        self.sent.clear()
+        self.hold((0.05, 0.45), DWELL_S + 0.6)
+        self.assertIn("click", [g for g, _ in self.sent])
 
     def test_sideways_is_held_to_a_higher_bar_than_up_and_down(self):
         """A scroll nobody meant is undone by scrolling back. A Back nobody
@@ -147,16 +183,18 @@ class TestTheReturnStroke(Fixture):
     """
 
     def test_the_stroke_back_does_not_fire_the_opposite_gesture(self):
-        self.wave([(0.5, 0.25), (0.5, 0.7)], seconds=0.35)     # scroll down
-        self.wave([(0.5, 0.7), (0.5, 0.25)], seconds=0.35)     # arm returning
+        self.wave([(0.5, 0.5), (0.5, 0.88)], seconds=0.35)     # scroll down
+        # The arm comes back *through* the middle, so the home circle is no
+        # defence here. This has to be the settle doing the work.
+        self.wave([(0.5, 0.88), (0.5, 0.5)], seconds=0.35)
         self.assertEqual(self.gestures(), ["scroll_down"],
                          "the return stroke fired a gesture of its own")
 
     def test_and_a_deliberate_second_sweep_still_works(self):
-        self.wave([(0.5, 0.25), (0.5, 0.7)], seconds=0.35)
-        self.wave([(0.5, 0.7), (0.5, 0.25)], seconds=0.35)     # reposition
-        self.hold((0.5, 0.25), 0.5)                            # and settle
-        self.wave([(0.5, 0.25), (0.5, 0.7)], seconds=0.35)
+        self.wave([(0.5, 0.5), (0.5, 0.88)], seconds=0.35)
+        self.wave([(0.5, 0.88), (0.5, 0.5)], seconds=0.35)     # reposition
+        self.hold((0.5, 0.5), 0.5)                             # and settle
+        self.wave([(0.5, 0.5), (0.5, 0.88)], seconds=0.35)
         self.assertEqual(self.gestures(), ["scroll_down", "scroll_down"])
 
 
@@ -258,7 +296,7 @@ class TestSteadiness(Fixture):
     def test_sweeps_are_measured_on_the_raw_trail(self):
         """Smoothing a fast stroke shortens it, and a sweep is judged on how
         far and how quickly it went. The trail stays unfiltered for that."""
-        self.wave([(0.5, 0.25), (0.5, 0.7)], seconds=0.35)
+        self.wave([(0.5, 0.5), (0.5, 0.88)], seconds=0.35)
         self.assertIn("scroll_down", self.gestures())
 
 
@@ -500,7 +538,7 @@ class TestWhatIsNotDrivingAnything(Fixture):
     def test_an_arm_hanging_at_a_side_is_ignored(self):
         """Otherwise the pointer wanders whenever somebody walks past."""
         for _ in range(30):
-            self.pilot._read(Frame(Person((0.5, 0.9), hips=0.7)))
+            self.pilot._read(Frame(Person((0.5, 0.9), hips=0.6)))
             self.clock.tick()
         self.assertEqual(self.sent, [])
 

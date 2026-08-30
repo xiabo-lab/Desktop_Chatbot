@@ -97,6 +97,21 @@ PAGE = r"""<!doctype html>
   .target.hit { background: #14532d; border-color: #4ade80; color: #86efac; }
   .filler { color: #5d6b83; font-size: 15px; line-height: 2.1; }
 
+  /* The circle a sweep has to start from. Drawn here because this page is
+     for learning the rule; on a real site the marker turning green is the
+     only cue, and it is the one that works everywhere. */
+  #home {
+    position: fixed; z-index: 20; pointer-events: none;
+    left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 40vmin; height: 40vmin; border-radius: 50%;
+    border: 3px dashed #4ade80; opacity: .5;
+  }
+  #home span {
+    position: absolute; left: 50%; bottom: -30px; transform: translateX(-50%);
+    color: #4ade80; font-size: 14px; letter-spacing: .1em;
+    text-transform: uppercase; white-space: nowrap;
+  }
+
   /* ── the hand ─────────────────────────────────────────────────── */
   #hand {
     position: fixed; z-index: 40; pointer-events: none;
@@ -117,6 +132,8 @@ PAGE = r"""<!doctype html>
   <div class="score" id="score">0 / 5 hit</div>
 </header>
 <div id="said">Raise an open palm where the camera can see it.</div>
+
+<div id="home"><span>start sweeps here</span></div>
 
 <div id="track"><div id="thumb"></div><div id="depth">top</div></div>
 
@@ -213,8 +230,9 @@ PAGE = r"""<!doctype html>
     main.innerHTML = "";
     const head = document.createElement("div");
     head.innerHTML =
-      "<h1>Sheet " + n + "</h1><p class='lead'>Close your hand on each panel." +
-      " Sweep down to reach the ones below. Sweep sideways to change sheet." +
+      "<h1>Sheet " + n + "</h1><p class='lead'>Close your hand on a panel to" +
+      " click it &mdash; anywhere on the screen. To scroll or change sheet," +
+      " bring the hand into the green circle first, then sweep." +
       "</p>";
     main.appendChild(head);
 

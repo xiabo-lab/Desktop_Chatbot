@@ -782,6 +782,12 @@ CURSOR_FILL = {"r": 255, "g": 193, "b": 7, "a": 0.55}
 CURSOR_EDGE = {"r": 20, "g": 20, "b": 20, "a": 0.9}
 CURSOR_CLOSED_FILL = {"r": 255, "g": 179, "b": 0, "a": 0.8}
 
+#: The marker while it is somewhere a sweep can start from. Green, because the
+#: rule is otherwise invisible: somebody sweeping outside the middle has no way
+#: to know why nothing happened, and a colour they can see beats a circle they
+#: have to remember.
+CURSOR_HOME_FILL = {"r": 76, "g": 217, "b": 100, "a": 0.6}
+
 
 def _hide_cursor(browser):
     """Take the pointer off the page. Never fatal."""
@@ -794,7 +800,7 @@ def _hide_cursor(browser):
     browser.cursor_shown = False
 
 
-def _cursor(browser, x, y, closed=False, hold=0.0):
+def _cursor(browser, x, y, closed=False, hold=0.0, home=False):
     """Draw the pointer at (x, y). Never fatal -- it is feedback, not control.
 
     **Drawn with `Overlay.highlightRect`, and that choice is the point.**
@@ -854,6 +860,7 @@ def _cursor(browser, x, y, closed=False, hold=0.0):
                      {"x": int(x - width / 2), "y": int(y - height / 2),
                       "width": width, "height": height,
                       "color": (CURSOR_CLOSED_FILL if closed or hold > 0.66
+                                else CURSOR_HOME_FILL if home
                                 else CURSOR_FILL),
                       "outlineColor": CURSOR_EDGE},
                      timeout=5.0)
@@ -893,7 +900,8 @@ def hand_move(args):
             hold = 0.0
         browser.call("Input.dispatchMouseEvent",
                      {"type": "mouseMoved", "x": x, "y": y})
-        _cursor(browser, x, y, hold=min(1.0, max(0.0, hold)))
+        _cursor(browser, x, y, hold=min(1.0, max(0.0, hold)),
+                home=bool(args.get("home")))
         # Reported so a missing pointer is visible from outside rather than
         # inferred from a screenshot.
         return {"at": {"x": round(x), "y": round(y)},

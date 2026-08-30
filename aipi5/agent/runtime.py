@@ -289,6 +289,9 @@ class AgentService:
             except (TypeError, ValueError):
                 hold = 0.0
             args["hold"] = min(1.0, max(0.0, hold))
+            # Whether sweeps are armed where the pointer is. Only ever changes
+            # the colour of a rectangle, and is bounded to a bool regardless.
+            args["home"] = bool((where or {}).get("home"))
 
         answer = self.toolbox.helper.call(op, args, timeout=15.0)
         if not answer.ok:
