@@ -328,7 +328,8 @@ class HandPilot:
             self.error = "the camera is being used by another feature"
             return
 
-        pose = PoseService(self._cfg, self._camera, on_pose=self._saw)
+        pose = PoseService(self._cfg, self._camera, on_pose=self._saw,
+                           borrower=BORROWER)
         try:
             pose.start()
         except MotionUnavailable as exc:

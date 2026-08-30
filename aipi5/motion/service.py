@@ -107,10 +107,18 @@ class PoseService:
     camera page.
     """
 
-    def __init__(self, cfg, camera, *, on_pose=None):
+    def __init__(self, cfg, camera, *, on_pose=None,
+                 borrower: str = "an AI Motion game"):
         self.cfg = cfg
         self._camera = camera
         self._on_pose = on_pose
+        #: Who `Camera.lend` is told has it. A game by default,
+        #: because that is what this was built for -- but hand
+        #: control borrows the same service now, and a call refused
+        #: while somebody is driving the browser should not be told
+        #: that a game has the Brio. The name is the only part of
+        #: this anybody ever sees.
+        self._borrower = borrower
         self._lease: CameraLease | None = None
         self._pose: HailoPose | None = None
         self._thread: threading.Thread | None = None
@@ -148,6 +156,7 @@ class PoseService:
 
             lease = CameraLease(
                 self._camera,
+                borrower=self._borrower,
                 width=self.cfg.capture_width,
                 height=self.cfg.capture_height,
                 fps=self.cfg.capture_fps,

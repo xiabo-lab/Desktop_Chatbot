@@ -566,6 +566,44 @@ class TestWhatIsNotDrivingAnything(Fixture):
             self.clock.tick()
 
 
+class TestYieldingTheCamera(unittest.TestCase):
+    """While a hand is driving, the camera's other users stand down.
+
+    The browser holds the Brio, so a picture, a call and a game cannot happen.
+    A button that is offered and then fails is worse than one that is plainly
+    unavailable, so the page greys them -- and the server refuses them too, so
+    nobody has to find out the other way.
+    """
+
+    def test_the_camera_actions_are_named_in_one_place(self):
+        from aipi5.ui.server import CAMERA_ACTIONS
+
+        self.assertEqual(set(CAMERA_ACTIONS), {"camera", "call"})
+
+    def test_games_are_not_on_that_list_and_should_not_be(self):
+        """They ask through `CameraLease`, which already refuses with the
+        borrower's name -- and the games page is worth opening to read the
+        scores whether or not a round can be started."""
+        from aipi5.ui.server import CAMERA_ACTIONS
+
+        self.assertNotIn("games", CAMERA_ACTIONS)
+
+    def test_the_camera_is_lent_under_the_right_name(self):
+        """`PoseService` defaults to the games' borrower, so a call refused
+        while a hand was driving used to be told a game had the camera."""
+        import inspect
+
+        from aipi5.agent.pilot import BORROWER
+        from aipi5.motion.service import PoseService
+
+        self.assertIn("borrower",
+                      inspect.signature(PoseService.__init__).parameters)
+        source = inspect.getsource(
+            __import__("aipi5.agent.pilot", fromlist=["pilot"]).HandPilot._start)
+        self.assertIn("borrower=BORROWER", source)
+        self.assertEqual(BORROWER, "hand control")
+
+
 class TestWhatItSendsIsWhatTheAgentAccepts(unittest.TestCase):
     def test_every_gesture_it_can_send_is_one_the_runtime_knows(self):
         """The pilot is upstream of the same named-operation table the browser

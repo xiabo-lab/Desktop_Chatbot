@@ -941,6 +941,17 @@
   }
   #hand-resume[hidden] { display: none; }
 
+  /* The same strip, saying why three buttons have gone quiet. Calmer than the
+     resume bar because nothing is wrong and nothing needs doing. */
+  #hand-busy {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 54px;
+    display: flex; align-items: center; justify-content: center;
+    background: #1b2230; color: #93a4bf; border-top: 2px solid #2c3648;
+    font-size: 17px; text-align: center; padding: 0 20px; z-index: 9998;
+  }
+  #hand-busy[hidden] { display: none; }
+  .yielded { opacity: .38; }
+
   /* The Brio's own picture, small and in the corner, so whoever is standing
      here can see what they are sending. Mirrored, because a self-view that is
      not mirrored makes people reach the wrong way. */
@@ -5350,7 +5361,27 @@ function syncHandControl(state) {
   // The assistant owns the pause, and the page only shows it. A tap anywhere
   // this page can still see lifts it.
   showHandResume(!!state.agent_browser && !!state.hand_paused);
+
+  // **What stands down while a hand is driving.** The browser holds the
+  // camera, so a picture, a call and a game cannot happen -- and a button that
+  // is offered and then fails is worse than one that plainly is not available.
+  // The server refuses these too; this is so nobody has to find out that way.
+  const busy = !!state.hand_control;
+  for (const button of document.querySelectorAll(HAND_BUSY)) {
+    button.disabled = busy;
+    button.title = busy ? HAND_BUSY_WHY : "";
+    button.classList.toggle("yielded", busy);
+  }
+  const note = el("hand-busy");
+  if (note) note.hidden = !busy;
 }
+
+//: Everything that needs the camera the browser is using.
+const HAND_BUSY = '[data-action="camera"], [data-action="call"], ' +
+                  '[data-page="games"], #talk-look, #call-out';
+const HAND_BUSY_WHY =
+  "A hand is driving the browser, which needs the camera. " +
+  "Close the browser to use this again.";
 
 document.addEventListener("pointerdown", () => {
   const bar = el(HAND_RESUME_ID);
@@ -8133,5 +8164,7 @@ pollFeed();
 <script src="/assets/yoga/yoga.js?v=20260821-courses"></script>
 <script type="module" src="/assets/yoga/yoga3d.js?v=20260824-ankles5"></script>
 <div id="hand-resume" hidden>Hand control is off &mdash; tap to use it again</div>
+<div id="hand-busy" hidden>Hand control has the camera &mdash; pictures, calls
+  and games come back when the browser closes</div>
 </body>
 </html>

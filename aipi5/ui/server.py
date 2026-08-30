@@ -126,6 +126,12 @@ HAND_FPS = 30
 HAND_FPS_MAX = 60
 HAND_WIDTH = 480
 
+#: The actions that need the camera, and so cannot run while a hand has it.
+#: Games are not here: they ask for the camera through `CameraLease`, which
+#: already refuses with the borrower's name, and their page is worth opening
+#: to read the scores whether or not one can be started.
+CAMERA_ACTIONS = frozenset({"camera", "call"})
+
 PREVIEW_FPS = 6
 
 #: As fast as `/api/camera/stream` may be asked to go. Hand tracking wants
@@ -354,6 +360,19 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         action = str(payload.get("action", ""))
+        # **Refused here as well as greyed in the page.** The button is the
+        # polite half; this is the half that holds when a request arrives from
+        # somewhere else, and it gives the reason rather than letting the
+        # camera fail somewhere further down where the message would be about
+        # a device rather than about what is going on.
+        if action in CAMERA_ACTIONS:
+            feed = getattr(self.ui, "hands", None)
+            if feed is not None and feed.active:
+                self._json({"ok": False, "busy": "hand control",
+                            "error": "a hand is driving the browser, which "
+                                     "needs the camera. Close the browser to "
+                                     "use this again."}, 409)
+                return
         # The membership check is inside `UiState.request`, deliberately —
         # one place decides what an action is, and it is the same place that
         # holds the list.
@@ -901,6 +920,11 @@ class _Handler(BaseHTTPRequestHandler):
         # So a page that reloads comes back paused rather than quietly taking
         # the camera again.
         payload["hand_paused"] = bool(feed is not None and feed.paused)
+        # Whether a hand is driving the browser right now. The camera is lent
+        # while it is, so the three things that also want it -- a picture, a
+        # call, a game -- cannot work, and the page greys them rather than
+        # offering buttons that fail.
+        payload["hand_control"] = bool(feed is not None and feed.active)
         # How many pages the agent has opened. A new one restarts the idle
         # clock and lifts a pause: somebody who has just asked for a page is
         # about to use it, and should not have to find a control to say so.
