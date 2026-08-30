@@ -116,6 +116,12 @@ class Browser:
         #: Guards `_attach` calling itself through `call`. See the stale-session
         #: branch there.
         self._reattaching = False
+        #: How many pages have been opened. The kiosk watches it: a page the
+        #: agent has just been asked for is a page somebody is about to use,
+        #: so it restarts the idle clock and lifts a pause. Without this,
+        #: opening a page two minutes before the half hour expired left hand
+        #: control switching itself off on somebody who had just sat down.
+        self.opened = 0
         #: (measured_at, (width, height)) for the content area. See _viewport.
         self.viewport = None
         #: Where the page was when it was last scrolled, or None. Lets a
@@ -506,6 +512,7 @@ def open_url(args):
     url = _check_url(args.get("url"))
     with _lock:
         browser = _get()
+        browser.opened += 1
         browser.call("Page.navigate", {"url": url},
                      timeout=NAVIGATE_TIMEOUT_S)
         _settle(browser)
@@ -895,6 +902,7 @@ def practice_page(args):
 
     with _lock:
         browser = _get()
+        browser.opened += 1
         browser.call("Page.navigate", {"url": practice.data_url()})
         _settle(browser, 2.0)
         # The address is the whole page, base64. Not worth carrying back, and
@@ -979,6 +987,7 @@ def state(args):
     with _lock:
         alive = _browser is not None and _browser.alive
         return {"open": alive,
+                "opened": (_browser.opened if alive else 0),
                 "url": (_browser.last_url if alive else ""),
                 "handed_over": bool(alive and _browser.handed_over),
                 "cursor": bool(alive and _browser.overlay),

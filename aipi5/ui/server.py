@@ -513,11 +513,12 @@ class _Handler(BaseHTTPRequestHandler):
         log.info(
             "HAND n=%d infer=%dms gap=%dms hand=%d%% palm=%d fist=%d "
             "other=%d ready=%d unused=%ds dead=%dms travel=%.2f/%.2f speed=%.2f armed=%d "
-            "trail=%d fired=%s rtt=%dms",
+            "trail=%d fired=%s rtt=%dms recog=%s",
             _n("n"), _n("infer"), _n("gap"), _n("handpct"), _n("palm"),
             _n("fist"), _n("other"), _n("ready"), _n("unused"), _n("dead"), _n("dx", 2), _n("dy", 2),
             _n("speed", 2), _n("armed"), _n("trail"),
-            str(payload.get("fired") or "-")[:60], _n("rtt"))
+            str(payload.get("fired") or "-")[:60], _n("rtt"),
+            str(payload.get("recog") or "?")[:100])
         self._json({"ok": True})
 
     def _gesture_post(self, payload: dict) -> None:
@@ -898,6 +899,11 @@ class _Handler(BaseHTTPRequestHandler):
         # So a page that reloads comes back paused rather than quietly taking
         # the camera again.
         payload["hand_paused"] = bool(feed is not None and feed.paused)
+        # How many pages the agent has opened. A new one restarts the idle
+        # clock and lifts a pause: somebody who has just asked for a page is
+        # about to use it, and should not have to find a control to say so.
+        payload["hand_page"] = int((snapshot or {}).get("browser", {})
+                                   .get("opened") or 0)
         self._json(payload)
 
     def _feed(self, params: dict) -> None:

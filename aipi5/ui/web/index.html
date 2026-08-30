@@ -5434,6 +5434,7 @@ const handControl = {
   generation: -1,       // which acquisition of the camera the stream is on
   retry: HAND_RETRY_MS, // how long before the next reconnect attempt
   retryTimer: null,
+  page: -1,             // which page the agent has open; a new one re-arms
   paused: false,        // stopped after HAND_STOP_AFTER_MS; tap to resume
   deadSince: 0,         // when the picture went away; see HAND_DEAD_MS
   connectedAt: 0,       // so a stream is given time to arrive before judging
@@ -5582,6 +5583,7 @@ async function reportHand() {
       ? Math.round((performance.now() - handControl.lastSeen) / 1000) : 0,
     dead: handControl.deadSince
       ? Math.round(performance.now() - handControl.deadSince) : 0,
+    recog: gestureLoadState,
     speed: handStats.speed,
     armed: handControl.armed ? 1 : 0,
     rtt: handStats.rttN ? handStats.rtt / handStats.rttN : 0,
@@ -5870,6 +5872,27 @@ function syncHandControl(state) {
     handControl.generation = state.hand_feed;
     connectHandFeed();
   }
+  // **A page the agent has just opened restarts everything.**
+  //
+  // Somebody who asked for a page is about to use it, and should not have to
+  // find a control to say so. Without this the idle clock kept running across
+  // a new page: one was opened two minutes before the half hour expired, and
+  // hand control switched itself off on somebody who had just sat down to use
+  // it -- with the notice hidden behind a desktop panel, so there was nothing
+  // to see and nothing to tap.
+  if (wanted && typeof state.hand_page === "number" &&
+      state.hand_page !== handControl.page) {
+    handControl.page = state.hand_page;
+    if (handControl.paused) {
+      handControl.paused = false;
+      showHandResume(false);
+      tellHandPaused(false);
+      if (handControl.on) startHandReader();
+    } else if (handControl.on) {
+      handControl.lastSeen = performance.now();
+    }
+  }
+
   // **The assistant is the authority on whether this is paused.** The page
   // decides to pause, but the flag lives on the other side -- so a page that
   // reloads, or an assistant that was told to pause by something else, cannot
@@ -6202,6 +6225,11 @@ const GESTURE_MATCH_DISTANCE = 0.30;
 
 let gestureRecognizer = null;
 let gestureRecognizerLoad = null;
+// What the recognizer is doing, carried out in the telemetry. Without it a
+// model that fails to load is indistinguishable from a camera that cannot see
+// a hand: `readHandOnce` returns early, `n` stays 0, and the only record of
+// the reason is a console line on a device with no console.
+let gestureLoadState = "cold";
 let gestureTimer = null;
 let gestureMode = "";               // "start", "over", or off
 const gestureControl = {
@@ -6254,6 +6282,7 @@ async function prepareGestureRecognizer() {
   if (gestureRecognizer) return gestureRecognizer;
   if (gestureRecognizerLoad) return gestureRecognizerLoad;
 
+  gestureLoadState = "loading";
   gestureRecognizerLoad = (async () => {
     try {
       const vision = await import("/assets/mediapipe/vision_bundle.mjs");
@@ -6285,9 +6314,11 @@ async function prepareGestureRecognizer() {
             scoreThreshold: 0.55,
           },
         });
+      gestureLoadState = "ready";
       if (gestureMode) setGestureHelp("1", "Open your palm to take control");
       return gestureRecognizer;
     } catch (err) {
+      gestureLoadState = "failed: " + String(err && err.message || err).slice(0, 90);
       console.warn("Hand gesture controls could not start", err);
       if (gestureMode) setGestureHelp("!", "Hand controls unavailable — use the green button");
       return null;
