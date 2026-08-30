@@ -94,9 +94,18 @@ class TestTheSetting(unittest.TestCase):
     def test_the_shipped_file_has_the_key(self):
         """`edit_setting` refuses a key that is not already in the file --
         deliberately, so the agent can only change what somebody put there.
-        A volume the agent cannot reach is the bug this closes."""
+        A volume the agent cannot reach is the bug this closes.
+
+        The *value* is deliberately not asserted. This file carries local
+        deltas on the device -- `call.enabled: true` is the long-standing one,
+        and a volume somebody has turned down is now another. Pinning the
+        number made this fail on the one machine where it matters, which is
+        the opposite of what a test is for.
+        """
         self.assertIn("volume:", CONFIG.read_text(encoding="utf-8"))
-        self.assertEqual(load(CONFIG).audio.volume, 100)
+        level = load(CONFIG).audio.volume
+        self.assertIsInstance(level, int)
+        self.assertTrue(0 <= level <= 100)
 
     def test_it_is_under_a_section_of_its_own(self):
         """`set_config` takes a section and a key, so the section has to exist
@@ -105,17 +114,23 @@ class TestTheSetting(unittest.TestCase):
         self.assertIn("\naudio:\n", text)
 
     def test_a_silly_number_in_the_file_does_not_stop_the_device(self):
+        import re
         import tempfile
 
         original = CONFIG.read_text(encoding="utf-8")
+        # Whatever the volume happens to be. This file is edited on the device
+        # -- by hand and by the agent -- so the number is not the test's to
+        # know, and pinning it is what made this fail on the one machine where
+        # it matters.
+        pattern = re.compile(r"(\naudio:\n\s+volume:\s*)(-?\d+)")
+        self.assertIsNotNone(pattern.search(original),
+                             "audio.volume is not where this test expects it")
         for silly, wanted in (("500", 100), ("-3", 0)):
             with self.subTest(silly=silly):
                 with tempfile.TemporaryDirectory() as folder:
                     path = Path(folder) / "aipi5.yaml"
-                    path.write_text(
-                        original.replace("\naudio:\n  volume: 100",
-                                         "\naudio:\n  volume: %s" % silly),
-                        encoding="utf-8")
+                    path.write_text(pattern.sub(r"\g<1>" + silly, original, 1),
+                                    encoding="utf-8")
                     self.assertEqual(load(path).audio.volume, wanted)
 
 
