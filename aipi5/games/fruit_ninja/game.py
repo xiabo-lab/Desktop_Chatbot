@@ -64,24 +64,30 @@ ROUND_SECONDS = 120.0
 #: Expressed as time *left* rather than time elapsed, and that is load-bearing
 #: rather than a style: a bomb takes five seconds off the clock, so elapsed and
 #: remaining are not two views of one number. A player who sliced three bombs
-#: still gets their Ultimate with twenty seconds on the clock, which is what
-#: the screen promised them, instead of fifteen seconds after the warning has
+#: still gets their Ultimate with fifteen seconds on the clock, which is what
+#: the screen promised them, instead of ten seconds after the warning has
 #: already gone.
-ULTIMATE_WARNING_AT = 22.0
-ULTIMATE_START_AT = 20.0
-
-#: How long the warning is owed, once it has started.
 #:
-#: The same two seconds the two constants above describe, but as a *duration*
-#: rather than as the distance between two clock positions — and that is the
-#: whole point of it. A bomb takes five seconds off, so a bomb sliced with 24
-#: seconds left moves the clock straight from above the warning to below the
-#: start in one frame, and the version of this that reads the clock alone
-#: skipped the warning entirely: no sound, no banner, and a dragon fruit
-#: arriving unannounced on the frame the bomb went off. Counting the warning
-#: down in seconds of play means the clock can jump past the window and the
-#: player still gets the notice the screen promised them.
-ULTIMATE_WARNING_S = ULTIMATE_WARNING_AT - ULTIMATE_START_AT
+#: **The last fifteen seconds are the Ultimate, all of them.** `ULTIMATE_START_AT`
+#: and `ultimate.DURATION_S` are equal on purpose, so the dragon fruit is born
+#: at the fifteen second mark and runs out with the round. Nothing follows it.
+#:
+#: **The warning window is exactly `BOMB_PENALTY_S` wide, and that is the whole
+#: mechanism.** A bomb is the only thing that moves the clock other than time
+#: itself, and it moves it by five seconds; a window five seconds wide cannot
+#: be jumped by one, because a clock at 20+e lands at 15+e, which is still
+#: inside it. The previous version used a two second window and counted the
+#: warning down as a *duration* to survive exactly this — and that fix is what
+#: broke it, because a duration can outlive its own window: five bombs sliced
+#: inside a two second warning burn twenty-five seconds of clock while the
+#: warning still has time owed, and the round ends having never spawned the
+#: dragon fruit at all. Measured, not theorised — see
+#: `test_bombs_during_the_warning_cannot_swallow_the_ultimate`.
+#:
+#: So the window is a pair of clock readings again, and it is made wide enough
+#: that the thing which used to jump it no longer can.
+ULTIMATE_WARNING_AT = 20.0
+ULTIMATE_START_AT = 15.0
 
 #: What slicing a bomb costs, in seconds off the clock. Section 26's bomb
 #: cannot cost a life any more, and it has to cost *something* or it is a free
@@ -97,6 +103,25 @@ BOMB_PENALTY_S = 5.0
 #: How long a sliced fruit stays in the state so the page can animate its
 #: halves flying apart. Purely visual; it cannot be hit again.
 SLICE_LINGER_S = 0.55
+
+#: What slicing an ice cube does: every fruit in flight moves at this fraction
+#: of its speed, for this many seconds.
+#:
+#: **It is a scale on `dt`, not on the velocities** — see `Session.tick`. The
+#: two are indistinguishable while the effect is running and completely
+#: different when it ends: halving `vx` and `vy` and doubling them again five
+#: seconds later gives back a *different* trajectory from the one the fruit was
+#: on, because gravity has been adding to a halved velocity the whole time, so
+#: every fruit on screen would visibly jump at the moment the ice wore off.
+#: Slowing time instead means the arc is the same arc, walked more slowly, and
+#: nothing changes at either end except the rate.
+#:
+#: The round's own clock is deliberately *not* slowed. Five seconds of half
+#: speed is meant to be five seconds the player can use, and a slow that also
+#: slowed the countdown would hand out nothing at all — the same fruit, the
+#: same time to reach them, at half the frame-to-frame distance.
+SLOW_FACTOR = 0.5
+SLOW_SECONDS = 5.0
 
 #: The longest step the simulation will take in one go. A tab that was
 #: backgrounded, a pose frame that arrived late after a stall — without this,
@@ -237,12 +262,20 @@ class Session:
     #: a second dragon fruit in one round would be a much worse bug than a
     #: redundant boolean.
     ultimate_spawned: bool = False
-    #: Seconds of warning still owed, counted down by `tick` like the clock is.
-    #: In seconds rather than as a deadline so that a pause does not spend it —
-    #: `tick` does not run while paused, so nothing here can tick away under the
-    #: pause sheet, which is the same reason the round's own clock is a quantity
-    #: and not a function of the wall clock. See `ULTIMATE_WARNING_S`.
-    _warning_left: float = 0.0
+    #: Whether the warning has been given this round. Not derivable from the
+    #: phase, which has moved on by the time it matters, and not from
+    #: `ultimate_spawned`, which is set at the wrong moment. It exists for one
+    #: pathological case: two bombs taken by a single swing move the clock ten
+    #: seconds, which *can* clear a five second window, and the player should
+    #: still hear the warning even if it arrives on the same frame as the fruit
+    #: it was warning about. See `_advance_phase`.
+    ultimate_warned: bool = False
+
+    #: Seconds of half speed still owed, counted down by `tick` in seconds of
+    #: play — so a pause does not spend it, for the same reason the round's own
+    #: clock is a quantity rather than a function of the wall clock. Zero for
+    #: almost all of a round. See `SLOW_FACTOR`.
+    slow_left: float = 0.0
 
     started_at: float = 0.0
     ended_at: float = 0.0
@@ -294,13 +327,14 @@ class Session:
         self.streak = self.best_streak = 0
         self.combo = self.best_combo = 0
         self._combo_until = 0.0
+        self.slow_left = 0.0
 
         self.phase = Phase.NORMAL
         self.dragon = None
         self.ultimate_hits = self.ultimate_points = 0
         self.ultimate_done = False
         self.ultimate_spawned = False
-        self._warning_left = 0.0
+        self.ultimate_warned = False
 
     def pause(self, now: float) -> bool:
         if self.state is not State.PLAYING:
@@ -327,8 +361,14 @@ class Session:
         if self.state is State.OVER:
             return
         # Before the state changes, so the events go out in the order they
-        # happened and the page does not play the game-over phrase over the
-        # top of the Ultimate's own ending.
+        # happened.
+        #
+        # They are now the *same* frame rather than ten seconds apart: the
+        # Ultimate runs to the whistle, so every round ends with the dragon
+        # fruit bursting and the game-over phrase arriving together. The page
+        # holds the phrase back when it sees both in one batch — see the
+        # `game-over` case in `handleGameEvent` — which is the right place for
+        # it, because it is a question about sound and not about the game.
         self._finalise_ultimate(now)
         self.state = State.OVER
         self.ended_at = now
@@ -364,11 +404,6 @@ class Session:
         # never charged, and a stalled frame cannot take ten seconds off the
         # player at once.
         self.time_left = max(0.0, self.time_left - dt)
-        # Off the same `dt`, and for the same reason: what the warning owes the
-        # player is two seconds of *play*, not two seconds of the clock reading
-        # a particular pair of numbers. See `ULTIMATE_WARNING_S`.
-        if self._warning_left > 0:
-            self._warning_left = max(0.0, self._warning_left - dt)
 
         # Before anything moves, so that the frame the dragon fruit appears on
         # is a frame it can already be hit on, and so that the spawn
@@ -376,9 +411,22 @@ class Session:
         # one's.
         self._advance_phase(now)
 
+        # The ice cube's half speed, applied to the step rather than to the
+        # velocities — see `SLOW_FACTOR`. Read before it is spent, so the frame
+        # an ice cube's last fraction of a second falls on is still a slow one.
+        slow = SLOW_FACTOR if self.slow_left > 0 else 1.0
+        self.slow_left = max(0.0, self.slow_left - dt)
+
         for item in self.fruit:
             if not item.sliced:
-                item.advance(dt)
+                item.advance(dt * slow)
+        # The dragon fruit is not slowed. It does not fly — it hovers, and the
+        # bob is a decoration rather than a trajectory, so halving it makes the
+        # target no easier and only makes the one moment of the round that is
+        # supposed to feel frantic look like it has stalled. Nothing new is
+        # thrown during the Ultimate either (see below), so the only way to be
+        # in both states at once is to have sliced an ice cube in the second
+        # before it began.
         if self.dragon is not None:
             self.dragon.advance(dt)
 
@@ -426,7 +474,7 @@ class Session:
         dragon fruit on its first frame, which is not a shorter version of the
         game so much as a different one.
         """
-        return self.duration >= ULTIMATE_WARNING_AT + ultimate.DURATION_S
+        return self.duration > ULTIMATE_WARNING_AT
 
     def _finalise_ultimate(self, now: float) -> None:
         """Bank what the dragon fruit earned and take it off the screen.
@@ -463,39 +511,38 @@ class Session:
         Written as "what should the phase be, given the clock" followed by
         "what changed", rather than as a chain of `if` statements that each do
         something. The difference matters when a frame is long enough to skip a
-        phase — a two-second warning and a `MAX_STEP_S` of 0.1 s means it takes
-        twenty stalled frames, but the version that cannot go wrong costs
-        nothing over the version that can.
+        phase, and the version that cannot go wrong costs nothing over the
+        version that can.
 
-        **The warning's length is a duration, not a pair of clock readings.**
-        The clock can move by five seconds in one frame, because a bomb takes
-        five seconds off it, and reading the phase off the clock alone meant a
-        bomb sliced between 20 s and 25 s left jumped `NORMAL` straight to
-        `ULTIMATE` — the one transition in the round that the player is
-        explicitly promised advance notice of, skipped by the one event that
-        makes them least ready for it. So the window below is entered on the
-        clock and left on `_warning_left`.
+        **The order of the branches is the guarantee.** `left <=
+        ULTIMATE_START_AT` is tested before anything that could hold the dragon
+        fruit back, so from the fifteen second mark onwards there is a dragon
+        fruit on the screen no matter how the clock got there — counted down
+        to, or dropped past by any number of bombs in any number of frames.
+        The previous arrangement let the warning gate the spawn, and a warning
+        that is owed time can outlive the window it was owed in; that is how a
+        round could end having never shown the Ultimate at all.
         """
         previous = self.phase
         left = self.time_left
 
         if not self.has_ultimate:
             return
-        if left > ULTIMATE_WARNING_AT:
-            wanted = Phase.NORMAL
-        elif self.dragon is not None and not self.dragon.expired:
+
+        if self.dragon is not None and not self.dragon.expired:
             wanted = Phase.ULTIMATE
         elif self.ultimate_spawned:
-            # There has been a dragon fruit and it is gone. The coda.
+            # There has been a dragon fruit and it is gone. Unreachable while
+            # `ultimate.DURATION_S` equals `ULTIMATE_START_AT` — the fruit and
+            # the round run out together — and kept because it is what catches
+            # the two being set apart, in either direction.
             wanted = Phase.FINAL
-        elif previous is Phase.WARNING:
-            # The warning is up. It gives way to the dragon fruit when it has
-            # had its full two seconds of play, whatever the clock says by then.
-            wanted = Phase.ULTIMATE if self._warning_left <= 0 else Phase.WARNING
-        else:
-            # The first frame inside the window, however the clock got here —
-            # counted down to it, or dropped past it by a bomb.
+        elif left <= ULTIMATE_START_AT:
+            wanted = Phase.ULTIMATE
+        elif left <= ULTIMATE_WARNING_AT:
             wanted = Phase.WARNING
+        else:
+            wanted = Phase.NORMAL
 
         if wanted is previous:
             return
@@ -504,16 +551,28 @@ class Session:
         if wanted is Phase.WARNING:
             # Section 17. The sound and the banner, and nothing else — the
             # player keeps full control through the warning.
-            self._warning_left = ULTIMATE_WARNING_S
-            self.events.append({"name": "ultimate-warning"})
-            log.info("Game: ultimate warning")
+            self._warn(now)
         elif wanted is Phase.ULTIMATE:
+            # A warning that never happened, because the clock cleared the
+            # whole window in one frame. Only two bombs on one swing can do
+            # that, and the notice is worth more late than not at all.
+            if not self.ultimate_warned:
+                self._warn(now)
             self.dragon = UltimateDragon(born_at=now)
             self.ultimate_spawned = True
             self.events.append({"name": "ultimate-spawn"})
-            log.info("Game: ultimate dragon fruit spawned")
+            log.info("Game: ultimate dragon fruit spawned with %.1fs left",
+                     left)
         elif wanted is Phase.FINAL:
             self._finalise_ultimate(now)
+
+    def _warn(self, now: float) -> None:
+        """Announce the Ultimate, once per round."""
+        if self.ultimate_warned:
+            return
+        self.ultimate_warned = True
+        self.events.append({"name": "ultimate-warning"})
+        log.info("Game: ultimate warning")
 
     def _slice(self, now: float, hands, dt: float) -> None:
         """Test each live hand's path against each unsliced fruit."""
@@ -623,6 +682,22 @@ class Session:
                      BOMB_PENALTY_S, self.time_left)
             return
 
+        if item.is_ice:
+            # Refreshed rather than stacked. Two ice cubes in one flurry is a
+            # perfectly ordinary thing to manage, and ten seconds of half speed
+            # off the back of it is long enough to be most of the stretch that
+            # follows — the reward for the second cube is that the five seconds
+            # start again, which is what a player expects from every other
+            # timed pickup they have ever seen.
+            self.slow_left = SLOW_SECONDS
+            self.events.append({"name": "ice", "seconds": SLOW_SECONDS,
+                                "factor": SLOW_FACTOR,
+                                "x": round(item.x, 1),
+                                "y": round(item.y, 1)})
+            log.info("Game: ice sliced — fruit at %.0f%% speed for %.0fs",
+                     SLOW_FACTOR * 100, SLOW_SECONDS)
+            # And then falls through to score exactly like a fruit.
+
         self.streak += 1
         self.best_streak = max(self.best_streak, self.streak)
         self.sliced_total += 1
@@ -726,6 +801,16 @@ class Session:
             "duration": round(self.duration, 1),
             "streak": self.streak,
             "combo": self.combo,
+            # The ice cube's remaining half speed, and the factor itself. Both,
+            # because the page extrapolates fruit between snapshots with the
+            # same closed form this module integrates (see `drawFruit`) and it
+            # cannot do that correctly without knowing the rate time is running
+            # at — a page that drew at full speed through a slow would run
+            # every fruit ahead of where it is and snap it back thirty times a
+            # second. Sending the seconds left as well as the factor lets it
+            # split a frame that straddles the end of the effect.
+            "slow": round(self.slow_left, 2),
+            "slow_factor": SLOW_FACTOR,
             "fruit": [item.as_dict() for item in self.fruit],
             # Absent rather than null when there is no Ultimate on screen, so
             # the page's test is `if (game.dragon)` and never has to know the

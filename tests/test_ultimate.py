@@ -116,12 +116,18 @@ class TenFruit(unittest.TestCase):
                 self.assertGreater(kind.weight, 0)
 
     def test_every_fruit_actually_gets_thrown(self):
-        """Section 42: all ten must be able to spawn.
+        """Section 42: all ten must be able to spawn — and both hazards.
 
         Run long enough that even the rarest — dragon, at weight 0.35 out of
         about 10.4 — is overwhelmingly likely. Seeded, so it either passes
         every time or fails every time; a flaky test about spawn rates is
         worse than none.
+
+        The bomb and the ice cube are checked here rather than in their own
+        tests because what would actually go wrong is the same thing for all
+        twelve: a rate written down and never rolled. `ice_chance` at 0.06 is
+        the smallest of them, which is exactly why it belongs in the set rather
+        than in a comment.
         """
         spawner = Spawner()
         spawner.seed(11)
@@ -131,40 +137,45 @@ class TenFruit(unittest.TestCase):
             now += 0.05
             for item in spawner.due(now=now, elapsed=now):
                 seen.add(item.kind.name)
-        self.assertEqual(seen, {kind.name for kind in KINDS} | {"bomb"})
+        self.assertEqual(seen,
+                         {kind.name for kind in KINDS} | {"bomb", "ice"})
 
     def test_the_dragon_fruit_is_the_rarest(self):
         """Section 10: less common during normal gameplay."""
         rarest = min(KINDS, key=lambda kind: kind.weight)
         self.assertEqual(rarest.name, "dragon")
 
-    def test_three_times_as_much_fruit_as_the_original_rate(self):
-        """The rate the game was asked for, stated as the ratio it is.
+    def test_half_as_much_fruit_as_the_tripled_rate(self):
+        """The rate that goes with `fruit.SIZE`, stated as the ratio it is.
 
-        Against the intervals it was tripled *from* rather than against a count,
+        Against the intervals it was halved *from* rather than against a count,
         because a count is a number somebody has to trust and a ratio is the
-        requirement itself.
+        change itself. It is deliberately measured the same way the tripling
+        was, so the two are comparable: the round is now one and a half times
+        the original rate, made of fruit one and a half times the size.
 
-        The realised ratio is a few percent under three, and the reason is worth
-        knowing rather than papering over: a throw lands on the first pose frame
-        at or after it is due, so every gap is rounded up to a multiple of 33 ms.
-        At the tripled floor of 127 ms that rounding costs about one frame in
-        four, which is real fruit the player never sees and is the point at which
-        tripling the rate again would stop tripling anything.
+        The realised ratio comes out fractionally over two rather than under
+        it, and that is the pose-frame rounding running the other way. A throw
+        lands on the first frame at or after it is due, so every gap is rounded
+        up to a multiple of 33 ms; the tripled floor of 127 ms lost about one
+        frame in four to that, and the halved floor of 254 ms loses about one
+        in eight. Halving the interval therefore buys back a little of what the
+        rounding was taking, which is the same effect that kept the tripling
+        under three.
         """
-        original = Spawner(interval=1.15, floor=0.38)
+        tripled = Spawner(interval=0.383, floor=0.127)
         current = Spawner()
-        self.assertAlmostEqual(original.interval / current.interval, 3.0,
+        self.assertAlmostEqual(current.interval / tripled.interval, 2.0,
                                delta=0.02)
         counts = []
-        for spawner in (original, current):
+        for spawner in (tripled, current):
             spawner.seed(4)
             now = thrown = 0.0
             while now < ROUND_SECONDS:
                 now += STEP
                 thrown += len(spawner.due(now=now, elapsed=now))
             counts.append(thrown)
-        self.assertAlmostEqual(counts[1] / counts[0], 3.0, delta=0.2)
+        self.assertAlmostEqual(counts[0] / counts[1], 2.0, delta=0.2)
 
     def test_the_floor_stays_a_third_of_the_opening_interval(self):
         """What makes the closing stretch read as a climb and not a constant."""
@@ -227,26 +238,42 @@ class Phases(unittest.TestCase):
                   if e["name"] == "ultimate-spawn"]
         self.assertLessEqual(len(spawns), 1)
 
-    def test_the_ultimate_lasts_ten_seconds(self):
+    def test_the_ultimate_lasts_the_whole_last_fifteen_seconds(self):
+        """It arrives at fifteen and is still there at the whistle."""
+        self.assertEqual(ultimate.DURATION_S, ULTIMATE_START_AT)
         self.run_to(ULTIMATE_START_AT - 0.5)
         self.assertIs(self.session.phase, Phase.ULTIMATE)
-        self.run_to(ULTIMATE_START_AT - ultimate.DURATION_S + 0.5)
-        self.assertIs(self.session.phase, Phase.ULTIMATE)
-        self.run_to(ULTIMATE_START_AT - ultimate.DURATION_S - 0.5)
-        self.assertIs(self.session.phase, Phase.FINAL)
-        self.assertIsNone(self.session.dragon)
+        for mark in (10.0, 5.0, 1.0, 0.2):
+            self.run_to(mark)
+            self.assertIs(self.session.phase, Phase.ULTIMATE,
+                          f"the dragon fruit went away at {mark}s left")
+            self.assertIsNotNone(self.session.dragon)
 
-    def test_normal_play_resumes_for_the_last_ten_seconds(self):
-        self.run_to(9.0)
-        self.assertIs(self.session.phase, Phase.FINAL)
-        self.assertIs(self.session.state, State.PLAYING)
+    def test_there_is_a_dragon_fruit_on_every_frame_of_the_last_fifteen(self):
+        """The guarantee, checked frame by frame rather than at samples.
 
-    def test_fruit_resumes_after_the_ultimate(self):
-        """Section 29: spawning restarts for the coda."""
-        self.run_to(9.0)
-        before = self.session.spawner._counter
-        self.run_to(3.0)
-        self.assertGreater(self.session.spawner._counter, before)
+        A round is played to the end and every single tick under the fifteen
+        second mark is required to have a dragon fruit on it. This is the test
+        the old arrangement could not pass: it left ten seconds of coda after
+        the Ultimate, so the last third of the round had no dragon fruit by
+        design.
+        """
+        now = self.session._last_tick
+        naked = []
+        while self.session.state is State.PLAYING:
+            now += STEP
+            self.session.tick(now=now)
+            if 0 < self.session.time_left <= ULTIMATE_START_AT:
+                if self.session.dragon is None:
+                    naked.append(round(self.session.time_left, 2))
+        self.assertEqual(naked, [], f"no dragon fruit at {naked}s left")
+
+    def test_no_fruit_is_thrown_in_the_last_fifteen_seconds(self):
+        """The coda is gone, so spawning never restarts."""
+        self.run_to(ULTIMATE_START_AT - 0.5)
+        thrown = self.session.spawner._counter
+        self.run_to(0.2)
+        self.assertEqual(self.session.spawner._counter, thrown)
 
     def test_a_short_round_has_no_ultimate_at_all(self):
         """A ten-second round must not open inside the Ultimate window.
@@ -285,14 +312,20 @@ class AWarningNoBombCanSkip(unittest.TestCase):
 
     A bomb takes five seconds off, so the clock does not pass through the
     warning window — it can land on the far side of it. Reading the phase off
-    the clock alone meant a bomb sliced with 21 to 25 seconds left went straight
+    the clock alone meant a bomb sliced just above the window went straight
     from normal play to a dragon fruit on screen: no sound, no banner, and the
     one transition the player is promised notice of, skipped by the one event
     that leaves them least ready for it.
 
     The first person to play the finished game reported this as the countdown
-    being broken, which is the honest reading of a clock that drops five seconds
-    while something new arrives unannounced.
+    being broken, which is the honest reading of a clock that drops five
+    seconds while something new arrives unannounced.
+
+    **The fix used to be a duration and is now a wide window**, because the
+    duration had a failure of its own that was worse than the one it cured —
+    see `test_bombs_during_the_warning_cannot_swallow_the_ultimate`. The window
+    is `BOMB_PENALTY_S` wide, so a single bomb cannot clear it: a clock at
+    20 + e lands at 15 + e, which is still inside.
     """
 
     def setUp(self):
@@ -318,11 +351,67 @@ class AWarningNoBombCanSkip(unittest.TestCase):
     def names(self):
         return [event["name"] for event in self.session.events]
 
-    def test_a_bomb_that_jumps_the_window_still_warns(self):
-        self.session.time_left = ULTIMATE_START_AT + BOMB_PENALTY_S - 0.4
+    def test_the_window_is_as_wide_as_a_bomb_is_long(self):
+        """The whole mechanism, as the one line of arithmetic it rests on."""
+        self.assertAlmostEqual(ULTIMATE_WARNING_AT - ULTIMATE_START_AT,
+                               BOMB_PENALTY_S)
+
+    def test_no_single_bomb_can_skip_the_warning(self):
+        """Swept across the window rather than tested at one point in it.
+
+        The old two-second window had exactly one bomb position that jumped it
+        and the test used that position; a window is either wide enough for
+        every position or it is not, and only the sweep says which.
+        """
+        for offset in (0.4, 1.0, 2.5, 4.0, 4.9, 5.4, 7.0):
+            with self.subTest(bomb_at=ULTIMATE_START_AT + offset):
+                session = Session()
+                session.spawner.seed(3)
+                session.start(now=0.0)
+                session.time_left = ULTIMATE_START_AT + offset
+                session.fruit.append(
+                    Fruit(kind=BOMB, x=640, y=400, vx=0, vy=0, spin=0))
+                seen, now = [], 0.0
+                while session.state is State.PLAYING:
+                    now += STEP
+                    session.tick(now=now, hands=[
+                        screen_hand("right_wrist", 400, 400, 900, 400)])
+                    seen += [e["name"] for e in session.events]
+                    session.events.clear()
+                self.assertIn("ultimate-warning", seen)
+                self.assertIn("ultimate-spawn", seen)
+                self.assertLess(seen.index("ultimate-warning"),
+                                seen.index("ultimate-spawn"))
+
+    def test_bombs_during_the_warning_cannot_swallow_the_ultimate(self):
+        """The bug this was rebuilt for, as the round that produced it.
+
+        The warning used to be owed a fixed two seconds *of play*, which meant
+        the clock could run out from under it: five bombs sliced inside those
+        two seconds take twenty-five seconds off, the warning still has time
+        owed, and the round ends having never spawned the dragon fruit. Not
+        hypothetical — it is what "the ultimate fruit does not show up
+        sometimes" turned out to be.
+        """
+        self.session.time_left = ULTIMATE_WARNING_AT + 2.4
+        while self.session.state is State.PLAYING:
+            if self.session.time_left <= ULTIMATE_WARNING_AT:
+                self.slice_a_bomb()          # appends its own bomb and cuts it
+            else:
+                self.play_for(STEP)
+        # Five bombs is twenty-five seconds, which is more clock than the round
+        # had left when the first one went off.
+        self.assertGreaterEqual(self.session.bombs_hit, 4)
+        self.assertTrue(self.session.ultimate_spawned,
+                        "bombs in the warning window ate the Ultimate")
+        self.assertGreater(self.session.ultimate_hits + 1, 0)
+
+    def test_a_bomb_that_lands_inside_the_window_still_warns_first(self):
+        self.session.time_left = ULTIMATE_START_AT + BOMB_PENALTY_S + 0.4
         self.session.events.clear()
         self.slice_a_bomb()
-        self.assertLess(self.session.time_left, ULTIMATE_START_AT)
+        self.assertLess(self.session.time_left, ULTIMATE_WARNING_AT)
+        self.assertGreater(self.session.time_left, ULTIMATE_START_AT)
         # The phase is read at the top of `tick`, before the slash is tested, so
         # the frame that reacts to the bomb is the one after it — 33 ms, and it
         # is the same one frame of delay the score and the streak already have.
@@ -332,33 +421,6 @@ class AWarningNoBombCanSkip(unittest.TestCase):
         self.assertNotIn("ultimate-spawn", self.names())
         self.assertIsNone(self.session.dragon)
 
-    def test_the_warning_still_gets_its_two_seconds(self):
-        """And the dragon fruit still arrives, a little later than usual."""
-        self.session.time_left = ULTIMATE_START_AT + BOMB_PENALTY_S - 0.4
-        self.slice_a_bomb()
-        self.session.events.clear()
-        self.play_for(ULTIMATE_WARNING_AT - ULTIMATE_START_AT - 0.3)
-        self.assertIs(self.session.phase, Phase.WARNING)
-        self.assertIsNone(self.session.dragon)
-        self.play_for(0.6)
-        self.assertIs(self.session.phase, Phase.ULTIMATE)
-        self.assertIsNotNone(self.session.dragon)
-        self.assertEqual(self.names().count("ultimate-spawn"), 1)
-
-    def test_a_bomb_during_the_warning_does_not_cut_it_short(self):
-        while self.session.phase is not Phase.WARNING:
-            self.now += STEP
-            self.session.tick(now=self.now)
-        self.session.events.clear()
-        self.slice_a_bomb()
-        self.assertIs(self.session.phase, Phase.WARNING)
-        self.assertIsNone(self.session.dragon)
-        # The warning was already part-spent, so what is left of it is less than
-        # the full two seconds — but it is not nothing, which is what a clock
-        # five seconds past the window used to leave.
-        self.assertGreater(self.session._warning_left, 0.0)
-        self.assertNotIn("ultimate-warning", self.names())
-
     def test_the_warning_still_fires_exactly_once_in_an_ordinary_round(self):
         self.play_for(ROUND_SECONDS - ULTIMATE_START_AT + 0.5)
         warnings = [e for e in self.session.events
@@ -366,17 +428,17 @@ class AWarningNoBombCanSkip(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertIs(self.session.phase, Phase.ULTIMATE)
 
-    def test_a_pause_does_not_spend_the_warning(self):
-        """`tick` does not run while paused, so nothing can tick away under it."""
+    def test_a_pause_inside_the_warning_keeps_it(self):
+        """`tick` does not run while paused, so the clock cannot move under it."""
         while self.session.phase is not Phase.WARNING:
             self.now += STEP
             self.session.tick(now=self.now)
-        owed = self.session._warning_left
+        left = self.session.time_left
         self.session.pause(now=self.now)
         self.now += 30.0
         self.session.tick(now=self.now)
         self.session.resume(now=self.now)
-        self.assertAlmostEqual(self.session._warning_left, owed)
+        self.assertAlmostEqual(self.session.time_left, left)
         self.assertIs(self.session.phase, Phase.WARNING)
         self.assertIsNone(self.session.dragon)
 
@@ -418,7 +480,11 @@ class NoSpawningDuringTheUltimate(unittest.TestCase):
         """
         self.play_to(ULTIMATE_START_AT - 0.5)
         during = []
-        while self.session.phase is Phase.ULTIMATE:
+        # Guarded on the *state* as well as the phase. The Ultimate now runs to
+        # the whistle, so the phase is still `ULTIMATE` when the round ends and
+        # `tick` has become a no-op — a loop on the phase alone never exits.
+        while (self.session.phase is Phase.ULTIMATE
+               and self.session.state is State.PLAYING):
             self.now += STEP
             before = set(id(f) for f in self.session.fruit)
             self.session.tick(now=self.now)
@@ -668,6 +734,17 @@ class Hits(unittest.TestCase):
         ratio = self.dragon.radius / BY_NAME["dragon"].radius
         self.assertGreaterEqual(ratio, 1.5)
         self.assertLessEqual(ratio, 2.0)
+
+    def test_it_is_bigger_than_anything_thrown_at_it(self):
+        """What `ultimate.SCALE` being a ratio rather than a pixel count buys.
+
+        The check the size test above cannot make on its own, and the one that
+        caught the mistake: holding the Ultimate at the 86 px it was tuned at
+        while `fruit.SIZE` grew a watermelon to 90 px leaves the boss of the
+        round smaller than an ordinary fruit. Both tests pass in that state.
+        """
+        biggest = max(kind.radius for kind in KINDS)
+        self.assertGreater(self.dragon.radius, biggest * 1.3)
 
 
 class TheUltimateInAWholeRound(unittest.TestCase):

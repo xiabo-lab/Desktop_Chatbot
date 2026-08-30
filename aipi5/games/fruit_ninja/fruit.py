@@ -29,15 +29,27 @@ repository still has no artwork to license. See `ASSET_LICENSES.md`.
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, field
 
 #: The play area, matching `display.width` x `display.height`.
 WIDTH, HEIGHT = 1280, 800
 
+#: How much bigger every thrown object is than the radii the game shipped with.
+#:
+#: A multiplier rather than ten rewritten numbers, because the *relative* sizes
+#: are the tuning that matters — a watermelon is an easy target and a grape is
+#: not — and that relation is what a table of ten hand-scaled literals loses the
+#: first time somebody adjusts one of them. It is also what `EDGE_MARGIN` and
+#: `ceiling_speed` need: a bigger fruit has less room above it before its own
+#: rim leaves the screen, so the launch bounds below are derived from the
+#: radius rather than written down next to it.
+SIZE = 1.5
+
 #: Downward acceleration, px/s². Chosen with the launch speeds below to give a
-#: 2.2-2.7 s arc that peaks near the top of the screen: long enough to line a
-#: swing up, short enough that the screen does not fill with fruit.
+#: 1.7-2.5 s arc that peaks just under the top of the screen: long enough to
+#: line a swing up, short enough that the screen does not fill with fruit.
 GRAVITY = 1000.0
 
 #: Fruit are launched from just off the bottom edge so they appear to be thrown
@@ -48,9 +60,24 @@ SPAWN_Y = HEIGHT + 60
 #: very corner spend their whole arc leaving the screen.
 SPAWN_MARGIN = 160
 
-#: Launch speeds, px/s. The vertical range is what makes some fruit reach the
-#: top and others peak halfway, which is most of the variety in the game.
-LAUNCH_VY = (-1350.0, -1080.0)
+#: How close a fruit's *rim* may come to the top or the side of the screen.
+#:
+#: Every thrown object stays inside the play area on three sides, and it is
+#: arranged at launch rather than by clamping mid-flight: a fruit that is
+#: stopped at an edge has visibly stopped obeying gravity, and worse, the page
+#: extrapolates between snapshots with the same closed form the simulation
+#: integrates (see `Fruit.advance`), so any rule the page does not also know
+#: about is a rule the drawn fruit and the collidable one disagree over. A
+#: launch the arithmetic below has already bounded needs no such rule.
+EDGE_MARGIN = 24.0
+
+#: Launch speed as a fraction of the fastest this fruit could be thrown without
+#: its top leaving the screen — see `ceiling_speed`. A range rather than a
+#: number because which fruit reach the top and which peak halfway is most of
+#: the variety in the game, and a fraction rather than a speed because the
+#: ceiling depends on the radius: a 90 px watermelon runs out of room sooner
+#: than a 48 px grape, so one absolute range cannot be right for both.
+LAUNCH_FRACTION = (0.74, 0.98)
 LAUNCH_VX = (-170.0, 170.0)
 
 #: Degrees per second. Cosmetic.
@@ -117,34 +144,34 @@ class FruitKind:
 #: Ultimate at the end of the round feeling like the same fruit turning up
 #: enormous rather than like an unrelated object.
 KINDS: tuple[FruitKind, ...] = (
-    FruitKind("watermelon", "#2e8b3d", "#f2536a", 60, 10, "🍉",
+    FruitKind("watermelon", "#2e8b3d", "#f2536a", 60 * SIZE, 10, "🍉",
               shape="melon", juice="#ff3b5c", wetness=1.55, sound="heavy",
               weight=1.0, launch=0.94, spin=0.7),
-    FruitKind("apple", "#c62828", "#ffe9c9", 44, 10, "🍎",
+    FruitKind("apple", "#c62828", "#ffe9c9", 44 * SIZE, 10, "🍎",
               shape="round", juice="#e53935", wetness=1.0, sound="crisp",
               weight=1.5, launch=1.0, spin=1.0),
-    FruitKind("orange", "#ef6c1a", "#ffb74d", 45, 10, "🍊",
+    FruitKind("orange", "#ef6c1a", "#ffb74d", 45 * SIZE, 10, "🍊",
               shape="citrus", juice="#ff9420", wetness=1.25, sound="juicy",
               weight=1.4, launch=1.0, spin=0.9),
-    FruitKind("lime", "#5fae2e", "#d6f57a", 38, 15, "🍈",
+    FruitKind("lime", "#5fae2e", "#d6f57a", 38 * SIZE, 15, "🍈",
               shape="citrus", juice="#7ed321", wetness=1.15, sound="sharp",
               weight=1.1, launch=1.06, spin=1.1),
-    FruitKind("banana", "#e9c229", "#fff3c4", 48, 10, "🍌",
+    FruitKind("banana", "#e9c229", "#fff3c4", 48 * SIZE, 10, "🍌",
               shape="banana", juice="#ffe066", wetness=0.8, sound="soft",
               weight=1.2, launch=0.98, spin=1.35),
-    FruitKind("pearl", "#dfe6ef", "#ffffff", 34, 20, "🫧",
+    FruitKind("pearl", "#dfe6ef", "#ffffff", 34 * SIZE, 20, "🫧",
               shape="pearl", juice="#cfe8ff", wetness=0.55, sound="polished",
               weight=0.6, launch=1.1, spin=1.2),
-    FruitKind("grape", "#7b3fa0", "#c9a0e0", 32, 20, "🍇",
+    FruitKind("grape", "#7b3fa0", "#c9a0e0", 32 * SIZE, 20, "🍇",
               shape="grape", juice="#9b51e0", wetness=0.9, sound="pop",
               weight=1.0, launch=1.12, spin=1.4),
-    FruitKind("strawberry", "#d81b52", "#ff8fa8", 35, 15, "🍓",
+    FruitKind("strawberry", "#d81b52", "#ff8fa8", 35 * SIZE, 15, "🍓",
               shape="strawberry", juice="#ff4d7d", wetness=1.05, sound="soft",
               weight=1.2, launch=1.05, spin=1.15),
-    FruitKind("kiwi", "#8d6e3a", "#a5d84a", 38, 15, "🥝",
+    FruitKind("kiwi", "#8d6e3a", "#a5d84a", 38 * SIZE, 15, "🥝",
               shape="kiwi", juice="#8bc34a", wetness=1.1, sound="crisp",
               weight=1.0, launch=1.02, spin=1.0),
-    FruitKind("dragon", "#e0399b", "#fff0f7", 48, 25, "🐉",
+    FruitKind("dragon", "#e0399b", "#fff0f7", 48 * SIZE, 25, "🐉",
               shape="dragon", juice="#ff2fa0", wetness=1.35, sound="exotic",
               weight=0.35, launch=0.97, spin=0.85),
 )
@@ -158,8 +185,29 @@ DRAGON = BY_NAME["dragon"]
 
 #: Section 26. Deliberately last, deliberately its own kind rather than a flag
 #: on a fruit, so that nothing about scoring or slicing has to ask "unless".
-BOMB = FruitKind("bomb", "#22262b", "#ff7043", 42, 0, "💣",
+#:
+#: Scaled with everything else. A hazard that stayed the old size while the
+#: fruit around it grew by half would be the smallest object on the screen,
+#: which is the opposite of what the bomb's whole visual treatment is for.
+BOMB = FruitKind("bomb", "#22262b", "#ff7043", 42 * SIZE, 0, "💣",
                  shape="bomb", juice="#ff7043", wetness=1.0, sound="bomb")
+
+#: The ice cube: slicing it halves every fruit's speed for five seconds. See
+#: `game.SLOW_FACTOR` and `game.SLOW_SECONDS`, which own the effect — this file
+#: only says what the thing looks like and how it flies.
+#:
+#: Its own kind rather than an eleventh entry in `KINDS`, for the same reason
+#: the bomb is: how often it turns up has to be a rate the round can reason
+#: about (`Spawner.ice_after`, `Spawner.ice_chance`) rather than a weight
+#: competing with the fruit, and a power-up that could be the *only* thing
+#: thrown in a quiet stretch is a different game.
+#:
+#: It still scores like a fruit — points, streak, combo — because a power-up
+#: that breaks a streak to grant a bonus asks the player to choose between two
+#: rewards, and there is nothing in this game that wants that choice.
+ICE = FruitKind("ice", "#8ad8ff", "#eafaff", 38 * SIZE, 10, "🧊",
+                shape="ice", juice="#bfefff", wetness=0.7, sound="ice",
+                launch=1.04, spin=0.8)
 
 #: Cumulative weights, built once. `random.choices` would do this on every
 #: call; a fruit is chosen a few hundred times a round and the list never
@@ -203,6 +251,10 @@ class Fruit:
     def is_bomb(self) -> bool:
         return self.kind is BOMB
 
+    @property
+    def is_ice(self) -> bool:
+        return self.kind is ICE
+
     def advance(self, dt: float) -> None:
         """Integrate one step. `dt` in seconds — never a frame count.
 
@@ -239,9 +291,11 @@ class Fruit:
         """Off the screen entirely and not coming back."""
         if self.y > GONE_Y and self.vy > 0:
             return True
-        # Sideways drift takes a fruit out of play permanently too, and a
-        # generous margin means one that is briefly off the edge at the top of
-        # its arc is not deleted mid-flight.
+        # Sideways drift takes a fruit out of play permanently too. Nothing
+        # `Spawner` throws can reach this any more — see `EDGE_MARGIN`, which
+        # bounds the drift at launch — but a `Fruit` can be constructed
+        # anywhere by a test or by a future mode, and the generous margin means
+        # one that is briefly off the edge is not deleted mid-flight.
         return self.x < -300 or self.x > WIDTH + 300
 
     def as_dict(self) -> dict:
@@ -304,24 +358,31 @@ class Spawner:
     #: down to by the end. The floor is a third of the opening interval, so the
     #: closing stretch throws roughly three times as much fruit.
     #:
-    #: **Both divided by three, for three times the fruit.** The rate is the
-    #: lever rather than the number thrown per throw: the doubles and triples
-    #: below are chances *per throw*, so tripling the throws triples the count
-    #: exactly, everywhere in the round, without touching the ramp's shape or
-    #: making the clumps three times bigger. Nine fruit arriving together would
-    #: be a different game; the same nine spread across the second they were
-    #: always going to occupy is this one, three times as busy.
+    #: **Both doubled, for half the fruit**, now that every fruit is half again
+    #: as big. The two changes are one change: at the old rate a screen of
+    #: 1.5x fruit is a wall rather than a set of targets, and a swing that
+    #: cannot miss is not a swing. Halving the *rate* rather than the clump
+    #: sizes is the same lever the tripling used, in reverse — the doubles and
+    #: triples below are chances *per throw*, so this halves the count exactly,
+    #: everywhere in the round, without touching the ramp's shape or thinning
+    #: out the flurries that are the most interesting thing in it.
     #:
     #: The ratio between the two is kept at a third, because that is what makes
     #: the closing stretch read as a climb rather than as a constant.
-    interval: float = 0.383
-    floor: float = 0.127
+    interval: float = 0.766
+    floor: float = 0.254
     #: Seconds of play by which the floor is reached. Chosen against the
     #: Ultimate rather than against the round: full tilt should arrive shortly
     #: before the warning, so the player is at their busiest when the screen
     #: clears for the dragon fruit.
     ramp_over: float = 85.0
     #: Chance a given throw is a bomb, once bombs start appearing.
+    #:
+    #: Unchanged by the halved throw rate, and deliberately so: this is a
+    #: proportion of what is on screen, not a rate, and a round with half the
+    #: fruit and the same *fraction* of bombs is the same round played at a
+    #: calmer pace. Holding the count instead would have doubled the share of
+    #: the screen that is a hazard.
     bomb_chance: float = 0.14
     #: No bombs for the opening seconds, so the round teaches the game before
     #: it starts punishing. Section 26: bombs must not hold up the basic thing
@@ -336,6 +397,21 @@ class Spawner:
     double_chance: float = 0.34
     triple_after: float = 62.0
     triple_chance: float = 0.22
+    #: Chance a given throw is an ice cube, and how long the round waits before
+    #: any are thrown.
+    #:
+    #: 6%, against the bomb's 14%: the two are the round's only non-fruit and
+    #: the ice is the rarer of them on purpose — five seconds of half speed is
+    #: the strongest thing a player can be handed, and one arriving every few
+    #: seconds would make the slow the normal state and full speed the
+    #: surprise. At this rate and the halved throw rate above, a two-minute
+    #: round throws roughly a dozen, which is a handful of moments rather than
+    #: a mode.
+    #:
+    #: Eight seconds rather than the bomb's ten, so the first one lands while
+    #: the round is still quiet enough to see what it did.
+    ice_chance: float = 0.06
+    ice_after: float = 8.0
     #: No new fruit in the last moment of a round — see `Session.tick`. A fruit
     #: launched with less than this left cannot be reached before the whistle.
     dead_air: float = 1.4
@@ -393,16 +469,38 @@ class Spawner:
         self._counter += 1
         rng = self._random
 
-        bomb = (elapsed >= self.bomb_after and rng.random() < self.bomb_chance)
-        kind = BOMB if bomb else self._pick()
+        # Bomb first, then ice, then a fruit. Rolled in sequence rather than
+        # from one number so each rate means what it says on its own: adding
+        # the ice cube did not change how often a bomb is thrown, and neither
+        # will the next thing that is not a fruit.
+        if elapsed >= self.bomb_after and rng.random() < self.bomb_chance:
+            kind = BOMB
+        elif elapsed >= self.ice_after and rng.random() < self.ice_chance:
+            kind = ICE
+        else:
+            kind = self._pick()
 
+        radius = kind.radius
         x = rng.uniform(SPAWN_MARGIN, WIDTH - SPAWN_MARGIN)
+
         # Scaled per kind, so a grape is flicked and a watermelon is lobbed.
         # Only the vertical component is scaled: `launch` is about how high it
         # goes and therefore how long there is to reach it, and scaling the
         # sideways drift too would make the fast fruit also the ones that leave
         # the screen, which is a different and worse kind of difficulty.
-        vy = rng.uniform(*LAUNCH_VY) * kind.launch
+        #
+        # The scale is applied to the *fraction* of the ceiling rather than to
+        # a speed, and the top of the band is capped at the ceiling itself.
+        # Capping the fraction rather than the resulting speed is what keeps
+        # the fast kinds from all being thrown at exactly the same speed: a
+        # clamp applied afterwards piles every grape onto the ceiling and the
+        # variety that `launch` exists to create disappears at precisely the
+        # kinds it matters most for.
+        ceiling = ceiling_speed(radius)
+        low = LAUNCH_FRACTION[0] * kind.launch
+        high = min(1.0, LAUNCH_FRACTION[1] * kind.launch)
+        vy = -ceiling * rng.uniform(min(low, high), high)
+
         vx = rng.uniform(*LAUNCH_VX)
         # Nudge fruit launched near an edge back towards the middle, so they
         # arc into the play area rather than straight out of it.
@@ -410,6 +508,14 @@ class Spawner:
             vx = abs(vx)
         elif x > WIDTH * 0.75:
             vx = -abs(vx)
+        # And then hold it to whatever drift actually fits in the time this
+        # fruit has left. The nudge above only fixes the *direction*; a fruit
+        # launched 200 px from the edge at 170 px/s still leaves through the
+        # side well before it comes down, which is the case this bounds.
+        seconds = flight_seconds(vy, radius)
+        room_right = max(0.0, WIDTH - EDGE_MARGIN - radius - x)
+        room_left = max(0.0, x - EDGE_MARGIN - radius)
+        vx = max(-room_left / seconds, min(room_right / seconds, vx))
 
         return Fruit(kind=kind, x=x, y=SPAWN_Y, vx=vx, vy=vy,
                      spin=rng.uniform(*SPIN) * kind.spin, id=self._counter)
@@ -427,3 +533,36 @@ def apex_height(vy: float) -> float:
 def airborne_seconds(vy: float) -> float:
     """How long it stays up. Symmetric, so twice the time to apex."""
     return 2 * abs(vy) / GRAVITY
+
+
+def ceiling_speed(radius: float) -> float:
+    """The fastest a fruit of `radius` may be thrown and still stay on screen.
+
+    The apex is `vy²/2g` above the launch point, so the room available is the
+    distance from `SPAWN_Y` down to where the fruit's *top* would touch the
+    margin — its own radius plus `EDGE_MARGIN` below the edge — and this is
+    that inverted.
+
+    Rounded down by construction: a fruit thrown at exactly this speed has its
+    rim `EDGE_MARGIN` from the top for one instant and never crosses it.
+    """
+    room = max(0.0, SPAWN_Y - radius - EDGE_MARGIN)
+    return math.sqrt(2 * GRAVITY * room)
+
+
+def flight_seconds(vy: float, radius: float) -> float:
+    """How long a fruit launched at `vy` is in play, up and back down.
+
+    Not `airborne_seconds`: that is the time to return to the height it was
+    thrown from, and a fruit keeps falling from `SPAWN_Y` to `GONE_Y` after
+    that. The difference is about a tenth of a second and it is the tenth in
+    which a fast sideways drift leaves the screen, which is exactly what the
+    horizontal bound in `Spawner._make` is computed against.
+
+    The positive root of `½gt² + vy·t - (GONE_Y - SPAWN_Y + radius) = 0`, with
+    the radius included so the bound is on the fruit's rim rather than on its
+    centre.
+    """
+    drop = GONE_Y - SPAWN_Y + radius
+    speed = abs(vy)
+    return (speed + math.sqrt(speed * speed + 2 * GRAVITY * drop)) / GRAVITY

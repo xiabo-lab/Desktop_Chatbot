@@ -39,16 +39,40 @@ from dataclasses import dataclass, field
 from aipi5.games.fruit_ninja import collision
 from aipi5.games.fruit_ninja.fruit import DRAGON, HEIGHT, WIDTH
 
-#: How long it stays. Section 16: twenty seconds left to ten.
-DURATION_S = 10.0
+#: How long it stays: the last fifteen seconds of the round, start to whistle.
+#:
+#: **Deliberately equal to `game.ULTIMATE_START_AT`, and that equality is the
+#: feature.** The dragon fruit is born the moment the clock reaches fifteen and
+#: ages on the same `dt` the clock counts down with, so it runs out exactly
+#: when the round does. There is no coda any more and no gap: from the fifteen
+#: second mark to the whistle there is a dragon fruit on the screen, always.
+#:
+#: It used to be ten, sitting between the twenty and ten second marks with ten
+#: seconds of ordinary play after it. The coda was pleasant and it cost the
+#: thing it followed: a player who was mid-flurry on the dragon fruit had it
+#: taken away with a third of the round still to go.
+#:
+#: If this and `ULTIMATE_START_AT` are ever set apart, the shorter one wins and
+#: `Phase.FINAL` becomes reachable again — see `Session._advance_phase`.
+DURATION_S = 15.0
 
 #: Valid cuts to complete it. Section 20.
 HITS_REQUIRED = 30
 
 #: How big, against an ordinary dragon fruit. Section 19 asks for 1.5x-2x;
-#: 1.8x is 86 px of radius, which is a target a person a metre and a half back
-#: can hit repeatedly without aiming, and that is the point — the challenge is
-#: how fast you can swing, not whether you can find it.
+#: 1.8x is a target a person a metre and a half back can hit repeatedly without
+#: aiming, and that is the point — the challenge is how fast you can swing, not
+#: whether you can find it.
+#:
+#: **A ratio and not a pixel count, which is what carried it through
+#: `fruit.SIZE`.** The absolute radius went from 86 px to 130 px when the
+#: thrown fruit grew by half, untouched, because this is stated against the
+#: dragon fruit it is an enormous version of rather than against the screen.
+#: Holding the 86 px instead was tried and is wrong in the way that matters:
+#: the biggest fruit in the game is now a 90 px watermelon, so an 86 px
+#: Ultimate is a boss that is *smaller than the fruit thrown at it* — and being
+#: unmistakably the largest thing on the screen is most of how this object
+#: says what it is.
 SCALE = 1.8
 
 #: Where it sits, as a fraction of the play area. Slightly above centre because

@@ -38,11 +38,22 @@ import math
 #: same shape as the thing being drawn: a capsule of this half-width swept
 #: along the hand's path, which is exactly the tapered streak in `drawTrail`.
 #:
-#: 27 px, because the trail's head is now 54 px wide (`BLADE_WIDTH_SCALE` of 3
-#: applied to the 18 px it was) and half of that is its reach from the centre
-#: line. Moving the two together is the point — a collision radius the player
-#: cannot see is a difficulty setting they cannot learn.
-BLADE_HALF_WIDTH = 27.0
+#: 54 px, because the trail's bloom is now 108 px across at its widest and half
+#: of that is its reach from the centre line. Moving the two together is the
+#: point — a collision radius the player cannot see is a difficulty setting they
+#: cannot learn, and one the player *can* see but which does not cut is worse
+#: still, because it looks like broken tracking rather than like a near miss.
+#:
+#: **Doubled from 27 along with the drawn blade.** The blade is measured
+#: against the bloom rather than against the bright core inside it, and that is
+#: deliberate: the bloom is what the eye reads as the extent of the thing, so
+#: it is what the player aims by. A reach set to the core instead would be a
+#: blade that visibly overlaps a fruit and does not cut it.
+#:
+#: This makes fruit easier to hit and, by `game._blade_reach`, does **not**
+#: make bombs easier to hit — a hazard is still judged by its own edge. That
+#: asymmetry is the whole reason the widening is safe to do: it can only give.
+BLADE_HALF_WIDTH = 54.0
 
 
 def segment_hits_circle(x1: float, y1: float, x2: float, y2: float,

@@ -452,6 +452,41 @@
      from under the hand that is aiming at it, which is the one thing this
      effect must not do. Moving the whole stage moves the HUD with it and
      leaves the coordinate space alone. */
+  /* The bomb's whiteout: the screen goes white and comes back over two
+     seconds.
+
+     Above the canvas and the HUD, below the sheets at `z-index: 10`. A pause
+     or a game over during the flash has to be readable — those are the two
+     moments a player most needs to see a button — and the flash is a
+     consequence of play rather than part of it.
+
+     The shape of the fade is the whole design here. Full white is held for
+     well under half of it and the rest is a long ease back, because the
+     alternative — an even fade from 1 to 0 — spends the middle second at
+     around 50% white, which is the worst possible state: bright enough to
+     wash out every fruit and solid enough to hide none of them, so the player
+     is neither blinded nor able to play. A hard hold followed by a long
+     recovery reads as an explosion, and the fruit come back through it.
+
+     `pointer-events: none` because the pause button is underneath. */
+  #game-whiteout {
+    position: absolute; inset: 0; z-index: 9;
+    background: #ffffff; opacity: 0; pointer-events: none;
+  }
+  #game-whiteout.on { animation: bomb-whiteout 2s ease-out forwards; }
+  /* Shortened from 2.5 s, and the *hold* is what was kept rather than the
+     proportions: 40% of 2 s is the same 0.8 s of solid white the longer
+     version held, and the 0.5 s that came off is all fade. That is the right
+     half to shorten — the hold is the punch and the fade is the part the
+     player is waiting through. A real round slices six of these, so half a
+     second each is three seconds of the round handed back. */
+  @keyframes bomb-whiteout {
+    0% { opacity: 0; }
+    4% { opacity: 1; }
+    40% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
   #game-stage.shake { animation: stage-shake 0.34s ease-out; }
   @keyframes stage-shake {
     0%, 100% { transform: translate(0, 0); }
@@ -1877,6 +1912,10 @@
   <div id="game-stage">
     <canvas id="game-canvas" width="1280" height="800"></canvas>
     <canvas id="yoga-3d-canvas" width="1280" height="800"></canvas>
+
+    <!-- The bomb's flash. Empty and invisible for all but two and a half
+         seconds of a round; see `whiteoutScreen`. -->
+    <div id="game-whiteout"></div>
 
     <div class="game-hud">
       <div class="game-hud-top">
@@ -6361,6 +6400,23 @@ function handleGameEvent(e) {
       // where the player will next look for the number that changed.
       flashClockPenalty(bombSeconds(e));
       shakeScreen();
+      // And the whiteout over all of it. The splat and the sparks above are
+      // still worth drawing: they are painted on the canvas underneath and the
+      // flash fades off them rather than replacing them, so what the player
+      // sees as the white recedes is the mess the bomb made.
+      whiteoutScreen();
+      break;
+
+    case "ice":
+      // The slice itself has already fired above — an ice cube emits a normal
+      // `slice` event as well, because it scores like a fruit — so this adds
+      // only what is different about it: the chime, a burst of shards, and the
+      // one line that says what just happened to the game.
+      playGameSound("ice");
+      sparks(e.x, e.y, "#dff6ff", 26, 720);
+      sparks(e.x, e.y, "#ffffff", 14, 460);
+      popup(Math.min(GAME_W - 190, Math.max(190, e.x)), e.y - 74,
+            "SLOW MOTION", "#bfefff", 36);
       break;
 
     case "miss":
@@ -6416,10 +6472,17 @@ function handleGameEvent(e) {
         sparks(e.x, e.y, "#ff6fc4", e.completed ? 60 : 26, 640);
         if (e.completed) shakeScreen();
       }
+      lastUltimateEndAt = performance.now();
       break;
 
     case "game-over":
-      playGameSound("game-over");
+      // Held back when the Ultimate ended on the same frame, which since the
+      // dragon fruit started running to the whistle is *every* round rather
+      // than none of them. The burst is the loudest sound in the game and the
+      // phrase is the quietest; started together the phrase is simply not
+      // there, and the round ends on a bang with no full stop after it.
+      playGameSound("game-over",
+                    performance.now() - lastUltimateEndAt < 250 ? 0.55 : 0);
       break;
   }
 }
@@ -6452,7 +6515,41 @@ function shakeScreen() {
   stage.classList.add("shake");
 }
 
+// The bomb's whiteout. Retriggered the same way the shake is — removed,
+// reflowed, re-added — because two bombs inside two and a half seconds is an
+// ordinary thing to do and a CSS animation does not restart while its class is
+// still on the element.
+//
+// The class is taken off when the animation ends rather than left on, so the
+// element is inert between bombs and `animationend` is the only timer: a
+// `setTimeout` here would have to be kept in step with a duration written in
+// the stylesheet, and the two would drift the first time either was tuned.
+function whiteoutScreen() {
+  const flash = gameEl("game-whiteout");
+  if (!flash) return;
+  flash.classList.remove("on");
+  void flash.offsetWidth;
+  flash.classList.add("on");
+}
+
+// Attached at parse time rather than on `DOMContentLoaded`: this script is
+// inline below the markup, so the element already exists, and a listener that
+// waits is a listener that is missing for however long the rest of the page
+// takes to parse.
+{
+  const flash = gameEl("game-whiteout");
+  if (flash) {
+    flash.addEventListener("animationend", () => flash.classList.remove("on"));
+  }
+}
+
 // ── the HUD's two announcements ─────────────────────────────────────
+
+//: When the Ultimate last burst, so the game-over phrase can stand out of its
+//: way. `-Infinity` rather than 0 because `performance.now()` starts near zero
+//: and a round begun in the first quarter-second of the page's life would
+//: otherwise look like it had just ended an Ultimate.
+let lastUltimateEndAt = -Infinity;
 
 let lastComboShown = 0;
 function updateCombo(count) {
@@ -6581,13 +6678,33 @@ function renderGame(now) {
   // pause sheet and then snap back on resume.
   const ahead = game.state === "playing"
     ? Math.min(0.2, (now - gameStateAt) / 1000) : 0;
+  // How much *simulated* time that is worth. While an ice cube's slow is
+  // running the Pi advances fruit at `slow_factor`, so extrapolating the raw
+  // wall time would run every fruit ahead of where it actually is and snap it
+  // back on each snapshot — visibly, at thirty times a second.
+  //
+  // Split rather than scaled, because a frame can straddle the end of the
+  // effect: `game.slow` is how many seconds of it are left as of the snapshot,
+  // so at most that much of `ahead` is slowed and the rest is not.
+  const slowLeft = Math.max(0, game.slow || 0);
+  const slowFactor = game.slow_factor || 0.5;
+  const slowed = Math.min(ahead, slowLeft);
+  const fruitAhead = slowed * slowFactor + (ahead - slowed);
   // Frame time for the client-side effects, which are simulated here rather
   // than on the Pi. Clamped for the same reason `Session.tick` clamps: a
   // backgrounded tab returning after ten seconds must not fling every
   // particle across the screen in one step.
   const dt = Math.min(0.05, (now - (lastFxAt || now)) / 1000);
   lastFxAt = now;
-  if (game.state === "playing") stepEffects(dt, now);
+  // The debris obeys the ice cube too. It is cosmetic and it could be left at
+  // full speed, but it is the one thing on screen moving alongside the fruit
+  // it came off: half a watermelon sailing away from a watermelon that is
+  // crawling reads as the fruit having stalled rather than as time having
+  // slowed. The popups are excluded inside `stepEffects` — text that fades at
+  // half speed is text that is still sitting in front of the next fruit.
+  if (game.state === "playing") {
+    stepEffects(dt, now, slowLeft > 0 ? slowFactor : 1);
+  }
 
   // Section 31's layer order, top to bottom of this function. The one
   // deliberate departure is the juice: it exists in two halves. The *stains*
@@ -6603,7 +6720,7 @@ function renderGame(now) {
     // velocities and spins, from the moment the slice event arrived. Drawing
     // the server's copy as well would put a whole fruit behind the two halves
     // that just came off it.
-    if (!item.sliced) drawFruit(ctx, item, ahead); // 4
+    if (!item.sliced) drawFruit(ctx, item, fruitAhead); // 4
   }
   if (game.dragon) drawDragon(ctx, game.dragon, now); // 5
   drawHalves(ctx);                                 // 6
@@ -6615,11 +6732,57 @@ function renderGame(now) {
   if (gameState.debug) {
     for (const slash of game.slashes || []) drawSlash(ctx, slash);
   }
+  if (slowLeft > 0) drawFrost(ctx, now, slowLeft); // 8.5
   drawHands(ctx, now);                             // 9
   drawPopups(ctx);                                 // 10
   drawClockHud(game, ahead);                       // 11, in the DOM
 }
 let lastFxAt = 0;
+
+// The ice cube's slow, made visible for as long as it lasts.
+//
+// A state and not an event, so it is drawn from the snapshot in the render
+// loop rather than fired from `handleGameEvent` — the popup at the moment of
+// the cut says it *started*, and this is the only thing on screen that says it
+// is still running. Without it the effect is invisible: half speed looks
+// exactly like a quiet stretch of the round, and the player has no way to tell
+// whether their cube did anything.
+//
+// Drawn as a frame rather than a wash. A tint over the whole screen at any
+// alpha strong enough to notice sits between the player and the fruit for five
+// seconds, which is the one thing this must not do; a border fades to nothing
+// well before the middle of the screen, and the eye still reads the whole
+// picture as cold.
+//
+// The last second pulses, which is the part that is actually useful — it is
+// the cue to get the next swing in before the fruit speed up again.
+function drawFrost(ctx, now, secondsLeft) {
+  const fade = Math.min(1, secondsLeft / 0.6);
+  const ending = secondsLeft < 1
+    ? 0.6 + 0.4 * Math.abs(Math.sin(now / 1000 * Math.PI * 3)) : 1;
+  const alpha = 0.5 * fade * ending;
+  const band = 150;
+
+  ctx.save();
+  // Each row is the pair of points the gradient runs between: from the edge
+  // inwards. A linear gradient clamps to its end stops, so filling the whole
+  // canvas with one paints only the band — everything past the second stop is
+  // already fully transparent.
+  const edges = [
+    [0, 0, 0, band],                   // top
+    [0, GAME_H, 0, GAME_H - band],     // bottom
+    [0, 0, band, 0],                   // left
+    [GAME_W, 0, GAME_W - band, 0],     // right
+  ];
+  for (const [x0, y0, x1, y1] of edges) {
+    const g = ctx.createLinearGradient(x0, y0, x1, y1);
+    g.addColorStop(0, `rgba(170,232,255,${alpha})`);
+    g.addColorStop(1, "rgba(170,232,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+  }
+  ctx.restore();
+}
 
 // ── the wood ────────────────────────────────────────────────────────
 //
@@ -6864,20 +7027,24 @@ function popup(x, y, text, colour, size) {
   });
 }
 
-function stepEffects(dt, now) {
+function stepEffects(dt, now, slow = 1) {
+  // Only the two lists that *fly* are slowed, and only their motion — a
+  // droplet that also aged at half speed would live twice as long, so a slow
+  // would leave twice as much on the screen for no reason anybody asked for.
+  const fly = dt * slow;
   for (const s of gameFx.splats) s.life -= s.decay * dt;
   for (const d of gameFx.drops) {
     d.life -= d.decay * dt;
-    d.x += d.vx * dt;
-    d.y += d.vy * dt + 0.5 * FX_GRAVITY * dt * dt;
-    d.vy += FX_GRAVITY * dt;
+    d.x += d.vx * fly;
+    d.y += d.vy * fly + 0.5 * FX_GRAVITY * fly * fly;
+    d.vy += FX_GRAVITY * fly;
   }
   for (const h of gameFx.halves) {
     h.life -= h.decay * dt;
-    h.x += h.vx * dt;
-    h.y += h.vy * dt + 0.5 * FX_GRAVITY * dt * dt;
-    h.vy += FX_GRAVITY * dt;
-    h.angle += h.spin * dt;
+    h.x += h.vx * fly;
+    h.y += h.vy * fly + 0.5 * FX_GRAVITY * fly * fly;
+    h.vy += FX_GRAVITY * fly;
+    h.angle += h.spin * fly;
   }
   for (const p of gameFx.popups) {
     p.life -= p.decay * dt;
@@ -7300,6 +7467,87 @@ const SHAPES = {
   // pulsing warning ring and a burning fuse, both drawn additively. The body
   // stays black, because a bomb should still look like a bomb and not like an
   // eleventh fruit.
+  // The ice cube. The one object in the game that is not organic, and drawn
+  // that way on purpose: straight edges and hard corners against ten rounded
+  // silhouettes is what makes a power-up readable at a glance from across the
+  // room, which is the same argument the ten shapes are made of.
+  //
+  // Faceted rather than shaded, for the reason at the top of this table: no
+  // gradient objects. Three flat fills at different alphas over one pale body
+  // read as a solid block of ice at this size, and the whole cube is four
+  // paths.
+  ice(ctx, r, item) {
+    // A square inscribed in the fruit's radius, so an ice cube occupies the
+    // same collision circle as a fruit of the same `r` and does not look
+    // bigger or smaller than the number the Pi is testing against.
+    const h = r * 0.72;
+
+    ctx.fillStyle = item.colour;
+    ctx.beginPath();
+    ctx.rect(-h, -h, h * 2, h * 2);
+    ctx.fill();
+
+    // The top face and the right face, lighter and darker, which is the whole
+    // of the three-dimensionality and costs two quads.
+    //
+    // Shallow — the inner corners are at 0.76 of the half-width, not 0.62 —
+    // and the top is a wash of white over the body rather than the opaque
+    // `flesh`. Both were deeper and solid first, and drawn that way the top
+    // face reads as an open lid on a white box rather than as the lit face of
+    // a solid block. What sells ice is that the body colour shows through
+    // every face.
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.beginPath();
+    ctx.moveTo(-h, -h);
+    ctx.lineTo(h, -h);
+    ctx.lineTo(h * 0.76, -h * 0.76);
+    ctx.lineTo(-h * 0.76, -h * 0.76);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(20,70,110,0.24)";
+    ctx.beginPath();
+    ctx.moveTo(h, -h);
+    ctx.lineTo(h, h);
+    ctx.lineTo(h * 0.76, h * 0.76);
+    ctx.lineTo(h * 0.76, -h * 0.76);
+    ctx.closePath();
+    ctx.fill();
+
+    // Two internal fractures. Fixed rather than random, so a cube that is
+    // spinning is one object rather than a flicker.
+    ctx.strokeStyle = "rgba(255,255,255,0.5)";
+    ctx.lineWidth = Math.max(1.5, r * 0.05);
+    ctx.beginPath();
+    ctx.moveTo(-h * 0.35, -h * 0.3);
+    ctx.lineTo(h * 0.1, h * 0.15);
+    ctx.moveTo(h * 0.2, -h * 0.4);
+    ctx.lineTo(h * 0.42, h * 0.05);
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(255,255,255,0.7)";
+    ctx.lineWidth = Math.max(1.5, r * 0.045);
+    ctx.strokeRect(-h, -h, h * 2, h * 2);
+
+    // A cold halo, drawn additively like the bomb's warning halo and for the
+    // same reason: this is the other object on the screen that is not a fruit,
+    // and the player has to see which one it is before deciding to swing.
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    // Kept well under the bomb's, and blue rather than white. Additive light
+    // on dark wood saturates fast: this was 0.3 out to 1.6r first and it read
+    // as a white blob with a cube in it, which is the opposite of a cold
+    // object. The halo only has to say "not a fruit" from across the room.
+    const glow = ctx.createRadialGradient(0, 0, r * 0.85, 0, 0, r * 1.35);
+    glow.addColorStop(0, "rgba(90,190,255,0.16)");
+    glow.addColorStop(1, "rgba(90,190,255,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  },
+
   bomb(ctx, r, item) {
     const t = performance.now() / 1000;
     // The pulse is fast — about three a second — because it has to be caught
@@ -7573,10 +7821,19 @@ function drawSlash(ctx, slash) {
 
 // ── the hands ───────────────────────────────────────────────────────
 //
-// Three times the size they were, and with a comet tail. Both because of where
+// Three times the size they were, and drawn as a blade. Both because of where
 // the player is standing: a metre and a half back is far enough that a 9 px
 // dot and a one-frame line are genuinely hard to see, and a blade you cannot
 // see is a blade you cannot aim.
+//
+// **A knife cut rather than a shooting star.** The trail used to be a comet —
+// round-capped segments of even width with a glowing ball at the head — and a
+// comet is the wrong object: it says "something is flying here", where what
+// the player is doing is cutting. A cut has a shape, and the shape is a lens:
+// it comes out of nothing, swells where the blade bit deepest, and closes to a
+// point again at the tip. Drawn that way the streak tells the player where the
+// edge is, which the even-width version never did — it was as thick at the
+// wisp as at the head, so it looked like it should cut along its whole length.
 //
 // The tail is kept here rather than sent by the Pi. It is pure decoration —
 // collision has already been decided against the segment in the snapshot — and
@@ -7584,7 +7841,23 @@ function drawSlash(ctx, slash) {
 // be serialised thirty times a second to draw something the browser already
 // knows.
 
-const HAND_COLOURS = { left_wrist: "#4da3ff", right_wrist: "#ffb454" };
+//: One blade each: white and gold. Three colours apiece rather than one,
+//: because that is how the reference blade is actually built and it is not a
+//: decoration — a blade is a *white-hot edge inside a coloured bloom*, and the
+//: colour is what surrounds the light rather than what the light is made of.
+//: Filling the whole ribbon with the hand's colour, which is what the first
+//: version did, gives a coloured smear: legible, but it reads as paint rather
+//: than as something glowing.
+//:
+//: `glow` is the wide soft halo, `body` the blade itself; the core is white
+//: for both, since an edge catching the light is white whatever the blade is.
+//: The white blade's halo is faintly blue and the gold blade's is deep amber,
+//: which is what keeps two overlapping blades distinguishable in the moment
+//: they cross — the part a single flat colour each cannot do.
+const HAND_COLOURS = {
+  left_wrist: { glow: "#9fc6ff", body: "#eaf3ff" },
+  right_wrist: { glow: "#ff9c1a", body: "#ffd24a" },
+};
 //: How long a point stays in the tail. Long enough to read as a streak
 //: behind a fast hand, short enough that a slow one does not trail spaghetti.
 const TRAIL_MS = 260;
@@ -7592,22 +7865,26 @@ const TRAIL_MS = 260;
 //: limit above is what usually decides, and this is what stops a stalled
 //: frame from letting the array grow.
 const TRAIL_MAX = 48;
-//: Radius of the outer glow. 3x the 34 px it was.
-const HAND_GLOW = 46;
-const HAND_CORE = 15;
-//: How much wider the blade is than the one this game shipped with.
+//: Radius of the halo behind the ninja star. Back up with the doubled blade:
+//: a halo narrower than the bloom around the ribbon leaves the star sitting in
+//: a dark spot at the one end of the blade that is supposed to be brightest.
+const HAND_GLOW = 52;
+//: How much wider the blade is than the one this game shipped with. Six times
+//: the original 9 px half-width, doubled from three when the trail was widened
+//: to make fruit easier to reach.
 //:
 //: **The same number widens the collision test**, in
 //: `aipi5/games/fruit_ninja/collision.py::BLADE_HALF_WIDTH` — a streak drawn
-//: 54 px across that only cuts along its centre line is a game lying about
+//: 108 px across that only cuts along its centre line is a game lying about
 //: where its blade is, and the complaint it produces ("it went straight
 //: through and nothing happened") is indistinguishable from dropped tracking.
 //: Change one and the other has to move with it.
-const BLADE_WIDTH_SCALE = 3;
-//: The half-width the Pi actually tests with, for the debug overlay only.
+const BLADE_WIDTH_SCALE = 6;
+//: The half-width the Pi actually tests with, and the peak of the blade's own
+//: width profile — `bladeHalf` is scaled so its widest point is exactly this.
 //: Kept equal to `collision.BLADE_HALF_WIDTH` by hand; the snapshot does not
-//: carry it, because nothing the player sees depends on it.
-const BLADE_HALF_WIDTH_PX = 27;
+//: carry it, because nothing the player sees depends on reading it back.
+const BLADE_HALF_WIDTH_PX = 54;
 
 const handTrails = { left_wrist: [], right_wrist: [] };
 
@@ -7644,83 +7921,265 @@ function drawHands(ctx, now) {
     drawTrail(ctx, trail, colour, now);
 
     if (hand && hand.live) {
-      drawHandMarker(ctx, trail[trail.length - 1], colour);
+      drawHandMarker(ctx, trail[trail.length - 1], colour, now);
     }
   }
 }
 
-// The shooting star. Drawn as a run of tapered segments rather than one
-// stroked polyline, because the width has to fall off along the tail and a
-// single `lineWidth` cannot do that — the head is a blade and the far end is
-// a wisp.
+// The cut, in three layers: a wide soft bloom, the blade inside it, and a
+// white-hot core down the middle. One filled ribbon each rather than a run of
+// stroked segments, because the shape *is* the effect and a stroke has one
+// width at a time.
+//
+// Each ribbon is built by walking the trail and offsetting every point
+// perpendicular to the local direction by a half-width from `bladeHalf`. Down
+// one side and back up the other gives a closed polygon that comes to a point
+// at both ends — which is what a cut looks like, and what a round-capped
+// stroke can never look like.
+//
+// **Three layers is what makes it a blade rather than a streak.** The first
+// version was one ribbon filled with the hand's colour at the full width of
+// the capsule, and it read as a fat coloured leaf. The reference is the
+// opposite proportion: a slender bright edge with a broad, faint bloom around
+// it, so the eye reads a thin sharp thing that happens to be glowing. Same
+// outer extent, a fifth of the solid width.
 function drawTrail(ctx, trail, colour, now) {
+  // Drop anything already expired, and record how far along the blade each
+  // surviving point is. Distance along the ribbon rather than age drives the
+  // width: age would make a hand that paused mid-swing grow a lump, because
+  // the points it left while stationary are all the same age and all in the
+  // same place.
+  const live = [];
+  for (const point of trail) {
+    if (now - point.t < TRAIL_MS) live.push(point);
+  }
+  if (live.length < 2) return;
+
+  const along = [0];
+  for (let i = 1; i < live.length; i++) {
+    along.push(along[i - 1] + Math.hypot(live[i].x - live[i - 1].x,
+                                         live[i].y - live[i - 1].y));
+  }
+  const total = along[along.length - 1];
+  // A swing that covered almost no ground is a hand being held still, and a
+  // blade drawn along it is a blob. Below this it is the tip only.
+  if (total < 12) return;
+
+  // The unit normal at each point, computed once and shared by all three
+  // layers — it is the only trigonometry in here and doing it per layer would
+  // triple the cost of the whole effect for nothing.
+  const nx = [], ny = [], half = [];
+  for (let i = 0; i < live.length; i++) {
+    const previous = live[Math.max(0, i - 1)];
+    const next = live[Math.min(live.length - 1, i + 1)];
+    let dx = next.x - previous.x, dy = next.y - previous.y;
+    const length = Math.hypot(dx, dy) || 1;
+    nx.push(-dy / length);
+    ny.push(dx / length);
+    half.push(bladeHalf(along[i] / total));
+  }
+
+  const tail = live[0], tip = live[live.length - 1];
+  const chord = Math.hypot(tip.x - tail.x, tip.y - tail.y);
+
   ctx.save();
-  // `lighter` is what makes the overlaps at the head glow instead of just
-  // stacking opacity, which is most of what reads as "hot" about a comet.
+  // `lighter`, so a blade crossing its own path brightens rather than just
+  // stacking opacity — a figure-of-eight should read as one continuous edge —
+  // and so the three layers sum into a hot centre instead of the core simply
+  // hiding the body.
   ctx.globalCompositeOperation = "lighter";
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
 
-  for (let i = 1; i < trail.length; i++) {
-    const a = trail[i - 1], b = trail[i];
-    // Age of the *older* end, so a segment fades as a unit.
-    const life = 1 - Math.min(1, (now - a.t) / TRAIL_MS);
-    if (life <= 0) continue;
-
-    // Squared, so the tail thins fast near the end and stays broad near the
-    // head. Linear looked like a wedge rather than a streak.
-    const width = (2 + 16 * life * life) * BLADE_WIDTH_SCALE;
-    ctx.strokeStyle = colour + alphaHex(0.55 * life);
-    ctx.lineWidth = width;
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
-  }
-
-  // A brighter, thinner core down the same path — the white-hot centre of the
-  // streak. Cheap: the same points, half the width.
-  ctx.strokeStyle = "#ffffff";
-  for (let i = 1; i < trail.length; i++) {
-    const a = trail[i - 1], b = trail[i];
-    const life = 1 - Math.min(1, (now - a.t) / TRAIL_MS);
-    if (life <= 0.35) continue;
-    ctx.globalAlpha = 0.5 * (life - 0.35) / 0.65;
-    ctx.lineWidth = (1 + 4 * life * life) * BLADE_WIDTH_SCALE;
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
-  }
+  // Wide and faint, then narrow and bright. The fractions are the proportions
+  // of the reference: the visible blade is about a fifth of the bloom around
+  // it, and the core about a fifth of that again.
+  ribbon(ctx, live, nx, ny, half, 1.0, fade(ctx, tail, tip, chord, total,
+                                            colour.glow, 0.0, 0.1, 0.26));
+  ribbon(ctx, live, nx, ny, half, 0.42, fade(ctx, tail, tip, chord, total,
+                                             colour.body, 0.0, 0.28, 0.7));
+  ribbon(ctx, live, nx, ny, half, 0.15, fade(ctx, tail, tip, chord, total,
+                                             "#ffffff", 0.0, 0.5, 0.95));
   ctx.restore();
 }
 
-function drawHandMarker(ctx, point, colour) {
+//: One closed ribbon at `scale` of the profile width, filled with `style`.
+function ribbon(ctx, live, nx, ny, half, scale, style) {
+  ctx.beginPath();
+  for (let i = 0; i < live.length; i++) {
+    const w = half[i] * scale;
+    const x = live[i].x + nx[i] * w, y = live[i].y + ny[i] * w;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  for (let i = live.length - 1; i >= 0; i--) {
+    const w = half[i] * scale;
+    ctx.lineTo(live[i].x - nx[i] * w, live[i].y - ny[i] * w);
+  }
+  ctx.closePath();
+  ctx.fillStyle = style;
+  ctx.fill();
+}
+
+//: The fill for one layer: a gradient along the chord from tail to tip, so the
+//: old end of the cut has faded out by the time it gets there.
+//:
+//: **Unless the swing came back to where it started**, which is not a corner
+//: case — a figure-of-eight or a circular flourish is one of the first things
+//: anybody does with two hands in this game. The chord is then near zero, and
+//: a canvas gradient whose two points coincide paints *nothing*: the whole
+//: blade disappears and all that is left is the tip, which reads as the
+//: tracking having failed. So a short chord falls back to a flat fill, which
+//: is what the gradient is approaching anyway when the ribbon doubles back
+//: over itself.
+function fade(ctx, tail, tip, chord, total, colour, a0, a1, a2) {
+  if (chord <= total * 0.25) return colour + alphaHex(a2 * 0.7);
+  const wash = ctx.createLinearGradient(tail.x, tail.y, tip.x, tip.y);
+  wash.addColorStop(0, colour + alphaHex(a0));
+  wash.addColorStop(0.45, colour + alphaHex(a1));
+  wash.addColorStop(1, colour + alphaHex(a2));
+  return wash;
+}
+
+//: Half the blade's width at `u`, the fraction of the way from the oldest kept
+//: point (0) to the hand (1).
+//:
+//: Zero at both ends and widest at `2 / 2.28`, so the cut comes out of nothing
+//: as a needle behind the hand, swells late, and closes to a point at the tip.
+//: The high exponent on the leading term is what makes the tail *long and
+//: fine* rather than a wedge — at a third of the way along it is still under a
+//: fifth of full width, which is the proportion the reference blade has.
+//:
+//: **The peak is `BLADE_HALF_WIDTH_PX` and must stay there.** That is the
+//: half-width the Pi actually tests with, so the bloom's widest point is
+//: exactly the capsule that cuts — see the note on `BLADE_WIDTH_SCALE`. The
+//: blade drawn inside it is narrower, and that is not a lie about the reach:
+//: the glow is part of the blade and is drawn at full brightness of its own.
+//: The taper is honest in the same way — the needle at the tail genuinely does
+//: not cut any more, because whatever it would have reached was already tested
+//: against the segment that made it.
+function bladeHalf(u) {
+  const shape = Math.pow(u, 2.0) * Math.pow(1 - u, 0.28);
+  // Normalised so the peak of the profile is 1 and the constant below is a
+  // width in pixels rather than an arbitrary scale.
+  return (shape / BLADE_PROFILE_PEAK) * BLADE_HALF_WIDTH_PX;
+}
+
+//: The maximum of `u^2 * (1-u)^0.28`, at `u = 2 / 2.28`. Derived here rather
+//: than written as a literal, because it is a property of the two exponents in
+//: `bladeHalf` and would silently stop being the peak the first time either of
+//: them was tuned.
+const BLADE_PROFILE_PEAK = (() => {
+  const u = 2.0 / (2.0 + 0.28);
+  return Math.pow(u, 2.0) * Math.pow(1 - u, 0.28);
+})();
+
+// The point of the blade: a ninja star, spinning, in the hand's own colour
+// with a white hub.
+//
+// It went arrowhead → shuriken because an arrowhead is the front of something
+// *travelling* and a shuriken is a thing being *wielded*, which is what a hand
+// in this game is. It is also the one shape on screen that says "ninja"
+// without a word of text, on a page whose title says it and whose player is a
+// metre and a half away from being able to read it.
+//
+// It spins, because a throwing star that does not is a logo. Four-fold
+// symmetry means a quarter turn looks identical, so the rate below is chosen
+// against the *apparent* period rather than the real one — see `STAR_SPIN`.
+//
+// It also has to exist for a reason that is nothing to do with looks: the
+// trail is gone when a hand stops moving, and a player who has lowered their
+// hands needs to see where they are before the next swing.
+function drawHandMarker(ctx, point, colour, now) {
   const { x, y } = point;
+
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
 
+  // A modest halo — enough to find a still hand against the wood, far less
+  // than the old comet's, which was bright enough to wash out the fruit.
   const glow = ctx.createRadialGradient(x, y, 0, x, y, HAND_GLOW);
-  glow.addColorStop(0, colour + "e0");
-  glow.addColorStop(0.45, colour + "55");
-  glow.addColorStop(1, colour + "00");
+  glow.addColorStop(0, colour.glow + "8c");
+  glow.addColorStop(0.45, colour.glow + "2e");
+  glow.addColorStop(1, colour.glow + "00");
   ctx.fillStyle = glow;
   ctx.beginPath();
   ctx.arc(x, y, HAND_GLOW, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.beginPath();
-  ctx.arc(x, y, HAND_CORE, 0, Math.PI * 2);
-  ctx.fillStyle = colour;
-  ctx.fill();
+  ctx.translate(x, y);
+  ctx.rotate((now / 1000) * STAR_SPIN * Math.PI * 2);
+  ninjaStar(ctx, STAR_RADIUS, colour.body);
+  ctx.restore();
+}
 
-  // A white centre, so the marker reads against a bright fruit as well as
-  // against the dark background.
+//: Turns per second. A quarter turn of a four-bladed star is indistinguishable
+//: from none, so what the eye actually sees repeat is four times this — 1.6
+//: reads as a fast, steady spin at about six apparent beats a second. Slower
+//: looks like it is winding down; much faster strobes against 60 Hz, where
+//: successive frames land close enough to a quarter turn apart that the star
+//: appears to hang still or run backwards.
+const STAR_SPIN = 1.6;
+//: How big, in pixels. Sized against the blade rather than in the abstract: it
+//: sits at the widest end of a bloom whose half-width is `BLADE_HALF_WIDTH_PX`,
+//: and a star much smaller than that gets lost inside its own blade.
+const STAR_RADIUS = 30;
+
+//: A four-bladed shuriken of radius `r`, centred on the origin, with a hole
+//: through the middle and a white hub.
+//:
+//: **One cubic per *gap*, not two per blade.** The blades are not drawn at all
+//: — they are what is left when four deep notches are cut out of a disc, which
+//: is both fewer curves and the only version that comes out sharp: a blade
+//: built from its own two edges meets its neighbour wherever those edges
+//: happen to end, and that first attempt produced rounded petals that read as
+//: a flower. Defined by the gaps, every tip is exactly where one curve ends
+//: and the next begins, so every tip is a cusp.
+//:
+//: **Cubic rather than quadratic, and that is the whole of the rake.** One
+//: control point cannot bias a gap: it sits near the centre, where swinging it
+//: round barely moves the curve, and a quadratic gap gives a mirror-symmetric
+//: star — a sparkle, not a shuriken. Two let each end of the gap be shaped
+//: independently, and the pair below is deliberately lopsided:
+//:
+//:   `c1` out at the full radius, only a quarter of the way round — the curve
+//:   leaves the first tip almost tangentially, which is the long shallow
+//:   trailing edge that makes a blade look swept.
+//:   `c2` deep at 0.26 and most of the way round — the curve dives to the hub
+//:   and comes back up steeply into the next tip, which is the notch.
+//:
+//: Together they give each blade one sweeping edge and one steep one, which is
+//: the difference between a pinwheel and a compass rose.
+//:
+//: The hole is a second subpath filled with the even-odd rule rather than a
+//: disc drawn over the top, because this is composited with `lighter`: there
+//: is no colour that subtracts, so anything drawn over the top only ever adds.
+//: The white hub is then drawn back into the middle of the hole, which is what
+//: the reference has.
+function ninjaStar(ctx, r, colour) {
+  const blades = 4, step = (Math.PI * 2) / blades;
+  const at = (radius, angle) => [Math.cos(angle) * r * radius,
+                                 Math.sin(angle) * r * radius];
+
   ctx.beginPath();
-  ctx.arc(x, y, HAND_CORE * 0.42, 0, Math.PI * 2);
+  for (let i = 0; i < blades; i++) {
+    const tip = i * step, nextTip = tip + step;
+    const t = at(1, tip);
+    if (i === 0) ctx.moveTo(t[0], t[1]); else ctx.lineTo(t[0], t[1]);
+    const c1 = at(1.0, tip + step * 0.26);
+    const c2 = at(0.26, tip + step * 0.78);
+    const n = at(1, nextTip);
+    ctx.bezierCurveTo(c1[0], c1[1], c2[0], c2[1], n[0], n[1]);
+  }
+  ctx.closePath();
+  // The hole, wound the other way so even-odd leaves it empty.
+  ctx.moveTo(r * 0.25, 0);
+  ctx.arc(0, 0, r * 0.25, 0, Math.PI * 2, true);
+  ctx.fillStyle = colour;
+  ctx.fill("evenodd");
+
+  // The hub, back inside the hole.
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.175, 0, Math.PI * 2);
   ctx.fillStyle = "#ffffff";
   ctx.fill();
-  ctx.restore();
 }
 
 //: 0-1 alpha as the two hex digits a `#rrggbb` string needs to become
@@ -7876,6 +8335,16 @@ const SLICE_VOICES = {
   polished:  { cut: [9000, 3400, 0.07], body: [1180, 900, 0.13], type: "sine",    cg: 0.14, bg: 0.15 },
   pop:       { cut: [5200, 1800, 0.07], body: [640, 200, 0.07], type: "square",   cg: 0.16, bg: 0.16 },
   exotic:    { cut: [7000,  900, 0.22], body: [470, 210, 0.24], type: "triangle", cg: 0.26, bg: 0.20 },
+  // The ice cube. The highest, shortest cut in the table, and a body that is
+  // a brief tick rather than a ring — everything else here lands, and this one
+  // has to sound like something shattering instead.
+  //
+  // The body was a 1560 Hz sine ringing for 220 ms, which sat exactly where
+  // the freeze chime in `playGameSound("ice")` starts and masked it. Both fire
+  // on the same frame — an ice cube emits a `slice` event *and* an `ice`
+  // event — so this one is now short and out of the way, and the chime is what
+  // the player actually hears.
+  ice:       { cut: [12000, 5000, 0.08], body: [900, 620, 0.07], type: "triangle", cg: 0.22, bg: 0.10 },
 };
 
 //: Section 36. A hard ceiling on how many slice voices may start in the same
@@ -8024,21 +8493,75 @@ function playGameSound(name, detail) {
     }
 
     if (name === "bomb") {
-      // Noise for the crack, a low falling tone for the weight of it, and a
+      // Noise for the crack, a falling tone for the weight of it, and a
       // deliberately longer tail than anything else in the game — a bomb costs
       // five seconds and should sound like it cost something.
-      sweptNoise(ctx, now, 4200, 320, 0.3, 0.34);
-      tone(ctx, now, { freq: 190, to: 32, ms: 620, type: "sawtooth", gain: 0.26 });
-      tone(ctx, now + 0.02, { freq: 96, to: 24, ms: 700, type: "sine", gain: 0.22 });
+      //
+      // **Re-voiced after it turned out to be inaudible on the device.** The
+      // first version put the whole body under 100 Hz — a sawtooth from 190
+      // down to 32 and a *sine* from 96 down to 24 — which is correct for what
+      // a bomb sounds like and completely wrong for what this machine plays
+      // through. Audio leaves the Pi over HDMI into a panel speaker; a pure
+      // sine at 24 Hz out of a driver that size is not a quiet sound, it is
+      // silence with the amplifier working. All three layers now live above
+      // 90 Hz and the two pitched ones are a sawtooth and a square rather than
+      // sines, because their harmonics keep the gesture audible even where the
+      // fundamental is not reproduced at all.
+      //
+      // The gains are up as well. This is the one event in the game the player
+      // is being punished for, and it was the quietest thing in the mix.
+      sweptNoise(ctx, now, 6200, 600, 0.28, 0.5);
+      tone(ctx, now, { freq: 430, to: 110, ms: 540, type: "sawtooth", gain: 0.34 });
+      tone(ctx, now + 0.03, { freq: 215, to: 92, ms: 720, type: "square", gain: 0.24 });
+      // The debris, a moment behind the blast, so the tail is something coming
+      // apart rather than a single decaying note.
+      sweptNoise(ctx, now + 0.09, 2600, 380, 0.42, 0.2);
+      return;
+    }
+
+    if (name === "ice") {
+      // The freeze. A crystalline fall with a long shimmer under it —
+      // deliberately the opposite gesture to the bomb directly above, which
+      // cracks and drops, because the two are the only non-fruit in the game
+      // and the player has to know which one they hit without looking.
+      //
+      // **Rewritten after it could not be heard on the device, and the reason
+      // was self-inflicted.** The first version rose through 1568, 2093, 2637
+      // at gain 0.11 — while `SLICE_VOICES.ice`, which fires on the same frame
+      // because an ice cube also emits an ordinary `slice` event, put its body
+      // at 1560 Hz. Two near-identical tones eight hertz apart starting
+      // together do not sound like two sounds; they sound like one indistinct
+      // note, and the quieter of them is the one that disappears.
+      //
+      // So this now *falls* rather than rises, starts a beat late so it reads
+      // as a consequence of the cut rather than part of it, and sits well
+      // above the slice voice's body. The shimmer is two detuned partials —
+      // the beating between them is what makes it read as ice rather than as
+      // a bell.
+      const start = now + 0.045;
+      [3136, 2349, 1760].forEach((freq, i) => {
+        tone(ctx, start + i * 0.06, { freq, to: freq * 0.9, ms: 520,
+                                      type: "triangle", gain: 0.2 });
+      });
+      tone(ctx, start + 0.12, { freq: 3520, to: 3480, ms: 900,
+                                type: "sine", gain: 0.1 });
+      tone(ctx, start + 0.12, { freq: 3546, to: 3506, ms: 900,
+                                type: "sine", gain: 0.1 });
+      // The frost spreading: a long, high sweep downwards, which is the part
+      // that carries over a busy screen.
+      sweptNoise(ctx, now, 12000, 2200, 0.5, 0.26);
       return;
     }
 
     if (name === "game-over") {
       // Three falling notes, spaced. The only sound here that is a phrase
       // rather than an event, because it is the only one that is an ending.
+      // `detail` delays the whole phrase, for the caller that needs to let the
+      // Ultimate finish bursting first.
       const notes = [523.25, 392.0, 261.63];
+      const wait = Number(detail) > 0 ? Number(detail) : 0;
       notes.forEach((freq, i) => {
-        tone(ctx, now + i * 0.16,
+        tone(ctx, now + wait + i * 0.16,
              { freq, to: freq, ms: 260, type: "triangle", gain: 0.2 });
       });
       return;

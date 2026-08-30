@@ -13,10 +13,11 @@ from pathlib import Path
 
 from aipi5.games.fruit_ninja import fruit as fruit_mod
 from aipi5.games.fruit_ninja.collision import BLADE_HALF_WIDTH
-from aipi5.games.fruit_ninja.fruit import (BOMB, BY_NAME, KINDS, Fruit,
+from aipi5.games.fruit_ninja.fruit import (BOMB, BY_NAME, ICE, KINDS, Fruit,
                                            Spawner)
 from aipi5.games.fruit_ninja.game import (BOMB_PENALTY_S, MIN_SLASH_SPEED,
-                                          ROUND_SECONDS, ULTIMATE_START_AT,
+                                          ROUND_SECONDS, SLOW_FACTOR,
+                                          SLOW_SECONDS, ULTIMATE_START_AT,
                                           ULTIMATE_WARNING_AT, HighScores,
                                           Phase, Session, State)
 from aipi5.motion.pose_filter import Hand
@@ -192,18 +193,60 @@ class TestSlicing(unittest.TestCase):
     def test_the_blade_has_width_and_cuts_beside_a_fruit(self):
         """The point of `BLADE_HALF_WIDTH`, stated as the case that failed.
 
-        A grape is 32 px of radius. A horizontal swipe 50 px above its centre
-        used to miss it by 18 px and score nothing, while the drawn streak
-        passed straight over it — which the player reads as dropped tracking
-        rather than as a near miss.
+        A grape is 48 px of radius. A horizontal swipe 90 px above its centre
+        would miss it by 42 px if the blade were a line, and score nothing,
+        while the drawn streak passed straight over it — which the player reads
+        as dropped tracking rather than as a near miss.
+
+        **The distance is 90 px rather than the 50 this was written with.** At
+        50 the test had stopped meaning anything: the grape grew to 48 px with
+        `fruit.SIZE` and the blade to 54, so a swipe 50 px away is now inside
+        the fruit's own radius and would pass with no blade width at all. 90 is
+        clear of the grape and inside the blade, which is the relationship the
+        test is actually for.
         """
         grape = BY_NAME["grape"]
-        self.assertLess(grape.radius, 50)
-        self.assertGreater(grape.radius + BLADE_HALF_WIDTH, 50)
+        self.assertLess(grape.radius, 90)
+        self.assertGreater(grape.radius + BLADE_HALF_WIDTH, 90)
         item = self.place(kind=grape, x=640, y=400)
-        blade = screen_hand("right_wrist", 400, 350, 900, 350)
+        blade = screen_hand("right_wrist", 400, 310, 900, 310)
         self.session.tick(now=0.033, hands=[blade])
         self.assertTrue(item.sliced)
+
+    def test_the_wider_blade_reaches_where_the_old_one_could_not(self):
+        """The widening, stated as the gap it opened rather than as a number.
+
+        A swipe between the old reach and the new one is the whole of what
+        doubling `BLADE_HALF_WIDTH` bought, and it is the only thing that would
+        silently stop being true if somebody put the drawn blade back without
+        the tested one — or the other way round, which is worse.
+        """
+        grape = BY_NAME["grape"]
+        beyond_old = grape.radius + 27 + 8      # outside the blade as it was
+        self.assertLess(beyond_old, grape.radius + BLADE_HALF_WIDTH)
+        item = self.place(kind=grape, x=640, y=400)
+        blade = screen_hand("right_wrist", 400, 400 - beyond_old,
+                            900, 400 - beyond_old)
+        self.session.tick(now=0.033, hands=[blade])
+        self.assertTrue(item.sliced)
+
+    def test_the_wider_blade_did_not_widen_the_bombs(self):
+        """The asymmetry that makes the widening safe to have done.
+
+        `game._blade_reach` gives a bomb none of the blade's width, so doubling
+        it can only ever give the player something. A swipe that now takes a
+        grape at 89 px must still leave a bomb alone at the same distance —
+        otherwise the wider blade takes five seconds off the clock with one
+        hand for every fruit it gives with the other.
+        """
+        distance = BOMB.radius + 26              # clear of the bomb, inside the blade
+        self.assertLess(distance, BOMB.radius + BLADE_HALF_WIDTH)
+        bomb = self.place(kind=BOMB, x=640, y=400)
+        blade = screen_hand("right_wrist", 400, 400 - distance,
+                            900, 400 - distance)
+        self.session.tick(now=0.033, hands=[blade])
+        self.assertFalse(bomb.sliced)
+        self.assertEqual(self.session.bombs_hit, 0)
 
     def test_the_blade_still_has_a_limit(self):
         """Widened, not removed. A swipe well clear of a fruit still misses."""
@@ -243,6 +286,112 @@ class TestSlicing(unittest.TestCase):
         # 10, 10, 11, 12 — the bonus starts on the third of a run.
         self.assertEqual(self.session.score, 43)
         self.assertEqual(self.session.best_streak, 4)
+
+
+class TestTheIceCube(unittest.TestCase):
+    """Slicing ice halves every fruit's speed for five seconds."""
+
+    def setUp(self):
+        self.session = Session()
+        self.session.start(now=0.0)
+        self.session.spawner.seed(7)
+
+    def cut_the_ice(self, at=0.033):
+        """Put an ice cube in the middle of the screen and slash through it."""
+        item = Fruit(kind=ICE, x=640, y=400, vx=0, vy=0, spin=0, id=99)
+        self.session.fruit.append(item)
+        self.session.tick(now=at,
+                          hands=[screen_hand("right_wrist", 400, 400, 900, 400)])
+        self.assertTrue(item.sliced)
+        return item
+
+    def test_slicing_it_arms_the_slow(self):
+        self.cut_the_ice()
+        self.assertAlmostEqual(self.session.slow_left, SLOW_SECONDS, places=3)
+
+    def test_it_scores_and_streaks_like_a_fruit(self):
+        """A power-up that broke a streak would make the player choose."""
+        self.cut_the_ice()
+        self.assertEqual(self.session.score, ICE.points)
+        self.assertEqual(self.session.streak, 1)
+        self.assertEqual(self.session.sliced_total, 1)
+
+    def test_it_says_so_in_an_event(self):
+        self.cut_the_ice()
+        names = [e["name"] for e in self.session.events]
+        self.assertIn("ice", names)
+        ice = next(e for e in self.session.events if e["name"] == "ice")
+        self.assertEqual(ice["seconds"], SLOW_SECONDS)
+        self.assertEqual(ice["factor"], SLOW_FACTOR)
+
+    def test_fruit_travel_half_as_far_while_it_lasts(self):
+        """The effect itself, measured against the same fruit unslowed."""
+        def distance(slow: bool) -> float:
+            session = Session()
+            session.start(now=0.0)
+            item = Fruit(kind=BY_NAME["apple"], x=200, y=400,
+                         vx=300, vy=0, spin=0, id=1)
+            session.fruit.append(item)
+            if slow:
+                session.slow_left = SLOW_SECONDS
+            started = item.x
+            now = 0.0
+            for _ in range(30):
+                now += 0.033
+                session.tick(now=now)
+            return item.x - started
+
+        self.assertAlmostEqual(distance(slow=True) / distance(slow=False),
+                               SLOW_FACTOR, delta=0.02)
+
+    def test_the_round_clock_is_not_slowed(self):
+        """Five seconds of half speed has to be five seconds the player uses."""
+        session = Session()
+        session.start(now=0.0)
+        session.slow_left = SLOW_SECONDS
+        now = 0.0
+        for _ in range(30):
+            now += 0.033
+            session.tick(now=now)
+        self.assertAlmostEqual(session.time_left, ROUND_SECONDS - now,
+                               delta=0.01)
+
+    def test_it_wears_off(self):
+        self.cut_the_ice()
+        now = 0.033
+        while now < SLOW_SECONDS + 0.5:
+            now += 0.033
+            self.session.tick(now=now)
+        self.assertEqual(self.session.slow_left, 0.0)
+
+    def test_a_second_cube_refreshes_rather_than_stacks(self):
+        self.cut_the_ice()
+        now = 0.033
+        while now < 3.0:
+            now += 0.033
+            self.session.tick(now=now)
+        self.assertLess(self.session.slow_left, SLOW_SECONDS)
+        self.cut_the_ice(at=now + 0.033)
+        self.assertAlmostEqual(self.session.slow_left, SLOW_SECONDS, places=3)
+
+    def test_a_pause_does_not_spend_it(self):
+        """Same reason the round's clock is a quantity, not a wall reading."""
+        self.cut_the_ice()
+        self.session.pause(now=0.1)
+        self.session.tick(now=60.0)
+        self.assertAlmostEqual(self.session.slow_left, SLOW_SECONDS, places=3)
+
+    def test_a_new_round_starts_at_full_speed(self):
+        self.cut_the_ice()
+        self.session.start(now=10.0)
+        self.assertEqual(self.session.slow_left, 0.0)
+
+    def test_the_page_is_told_the_rate_time_is_running_at(self):
+        """Without both, the page's extrapolation disagrees with the truth."""
+        self.cut_the_ice()
+        snapshot = self.session.snapshot(now=0.033)
+        self.assertAlmostEqual(snapshot["slow"], SLOW_SECONDS, places=2)
+        self.assertEqual(snapshot["slow_factor"], SLOW_FACTOR)
 
 
 class TestLivesAndGameOver(unittest.TestCase):
@@ -574,6 +723,69 @@ class TestSpawner(unittest.TestCase):
                     self.assertGreaterEqual(item.vx, 0)
                 elif item.x > fruit_mod.WIDTH * 0.75:
                     self.assertLessEqual(item.vx, 0)
+
+    def test_nothing_thrown_ever_leaves_the_top_or_the_sides(self):
+        """The bound `EDGE_MARGIN` exists for, flown rather than derived.
+
+        Every throw of a long round is simulated to the floor at a step far
+        finer than the game's, and the fruit's *rim* is checked against three
+        edges on every one of those steps. Flown rather than checked against
+        `apex_height` and `flight_seconds` because those two functions are
+        exactly what `Spawner._make` computes the bound from: a test written
+        against them would agree with a mistake in them.
+
+        The bottom is deliberately not checked. Leaving through the floor is
+        how a fruit is meant to go — see `Fruit.missed`.
+        """
+        spawner = Spawner()
+        spawner.seed(17)
+        step, now, checked = 1 / 240, 0.0, 0
+        while now < 240.0:
+            now += 0.05
+            for item in spawner.due(now=now, elapsed=now):
+                checked += 1
+                radius = item.kind.radius
+                while item.y < fruit_mod.GONE_Y:
+                    item.advance(step)
+                    self.assertGreater(item.y - radius, 0,
+                                       f"{item.kind.name} left the top")
+                    self.assertGreater(item.x - radius, 0,
+                                       f"{item.kind.name} left the left edge")
+                    self.assertLess(item.x + radius, fruit_mod.WIDTH,
+                                    f"{item.kind.name} left the right edge")
+        self.assertGreater(checked, 500)
+
+    def test_the_ceiling_falls_as_the_fruit_gets_bigger(self):
+        """Why the launch bound is a fraction and not a speed.
+
+        A watermelon's rim reaches the top sooner than a grape's does from the
+        same launch, so one absolute range cannot be right for both.
+        """
+        big = fruit_mod.ceiling_speed(BY_NAME["watermelon"].radius)
+        small = fruit_mod.ceiling_speed(BY_NAME["grape"].radius)
+        self.assertLess(big, small)
+
+    def test_ice_cubes_are_thrown_and_are_rarer_than_bombs(self):
+        spawner = Spawner()
+        spawner.seed(8)
+        now, ice, bombs = 0.0, 0, 0
+        while now < 600.0:
+            now += 0.05
+            for item in spawner.due(now=now, elapsed=now):
+                ice += item.is_ice
+                bombs += item.is_bomb
+        self.assertGreater(ice, 0)
+        self.assertLess(ice, bombs)
+
+    def test_no_ice_in_the_opening_seconds(self):
+        spawner = Spawner()
+        spawner.seed(8)
+        now, thrown = 0.0, []
+        while now < spawner.ice_after:
+            now += 0.05
+            thrown.extend(spawner.due(now=now, elapsed=now))
+        self.assertTrue(thrown)
+        self.assertFalse(any(item.is_ice for item in thrown))
 
     def test_a_seeded_spawner_is_reproducible(self):
         def run():
