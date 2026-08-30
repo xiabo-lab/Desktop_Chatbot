@@ -272,9 +272,15 @@ class HandPilot:
 
         self.seen += 1
         self._last_seen = now
-        # Mirrored, so it moves the way the person sees their own hand move:
-        # rightwards on the screen is rightwards to them.
-        x, y = 1.0 - wrist.x, wrist.y
+        # **Not mirrored here.** `HailoPose._person` already mirrors every
+        # keypoint as it decodes -- `geometry.mirror`, so the room behaves like
+        # one -- and boxing.js:1419 warns about this exact mistake in the same
+        # words: preserve it "instead of applying a second mirror and swapping
+        # it". The browser version had to mirror because it read raw camera
+        # frames; this reads poses, which arrive mirrored already.
+        #
+        # Doing it twice swapped left and right, which is how it was reported.
+        x, y = wrist.x, wrist.y
         self._trail.append((now, x, y))
         cut = now - TRAIL_S
         while self._trail and self._trail[0][0] < cut:

@@ -92,14 +92,31 @@ class TestSweeps(Fixture):
         self.assertIn("scroll_down", self.gestures())
 
     def test_sideways_goes_back_and_forward(self):
-        # `_read` mirrors x, so a wrist travelling to larger camera-x is the
-        # person's hand moving to their left -> back.
+        """**Pose keypoints arrive mirrored**, so x already reads as the person
+        does: growing x is their hand moving to their right.
+
+        `HailoPose._person` applies `geometry.mirror` while decoding, and
+        boxing.js warns in as many words against "applying a second mirror and
+        swapping it". This module did exactly that, and left and right came out
+        backwards -- which is what the test below now pins.
+        """
         self.wave([(0.2, 0.4), (0.8, 0.4)], seconds=0.35)
-        self.assertIn("back", self.gestures())
+        self.assertIn("forward", self.gestures(),
+                      "hand moving to their right should go forward")
 
         self.setUp()
         self.wave([(0.8, 0.4), (0.2, 0.4)], seconds=0.35)
-        self.assertIn("forward", self.gestures())
+        self.assertIn("back", self.gestures(),
+                      "hand moving to their left should go back")
+
+    def test_the_pointer_follows_the_hand_rather_than_opposing_it(self):
+        """The same double mirror moved the pointer the wrong way too, which is
+        the half of the report that says "tracking motion"."""
+        self.wave([(0.25, 0.4), (0.75, 0.4)], seconds=1.2)
+        moves = [at for g, at in self.sent if g == "move"]
+        self.assertGreater(len(moves), 3)
+        self.assertGreater(moves[-1]["x"], moves[0]["x"],
+                           "the pointer went the opposite way to the hand")
 
     def test_the_same_movement_done_slowly_is_not_a_sweep(self):
         """Aiming at a link crosses the same distance, given long enough.
