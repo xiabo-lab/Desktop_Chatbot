@@ -68,7 +68,7 @@ from aia.ui.retention import Retention
 
 from aipi5 import __version__
 from aipi5.call.server import CallServer
-from aipi5.agent.hands import HandFeed
+from aipi5.agent.pilot import HandPilot
 from aipi5.agent.proxy import AgentProxy
 from aipi5.call.signaling import SignalingHub
 from aipi5.call.tokens import TrustedDevices
@@ -313,8 +313,11 @@ class Assistant:
         # camera stops presence detection, so without the hold the idle timer
         # sees a room that has gone quiet and blanks the screen on somebody
         # who is standing right there reading a page.
-        self.hands = HandFeed(self.camera if settings.camera.enabled else None,
-                              screen=self.screen)
+        self.hands = HandPilot(
+            self.camera if settings.camera.enabled else None,
+            settings.motion,
+            send=self._hand_gesture,
+            screen=self.screen)
         self.watcher: PresenceWatcher | None = None
         # What the idle screen switches off. The camera goes away with the
         # screensaver and comes back with a touch — the whole of that handoff,
@@ -620,6 +623,19 @@ class Assistant:
         self.screensaver.suppress(
             person_present=self.tracker.state is Presence.PERSON_PRESENT)
         self.publish()
+
+    def _hand_gesture(self, gesture: str, at: dict | None) -> None:
+        """The pilot's one way out, and the only thing it knows about the agent.
+
+        Here rather than inside `HandPilot` so that module owns no transport:
+        it can be tested with a list for a socket, and the rule that only the
+        assistant holds credentials stays where every other agent path keeps
+        it. Called from the pose thread, thirty times a second at most.
+        """
+        if self.agent is None:
+            return
+        self.agent.say({"type": "agent.gesture", "gesture": gesture,
+                        "at": at})
 
     def on_call_change(self) -> None:
         """The call state moved. Called from an HTTP handler; must not block.

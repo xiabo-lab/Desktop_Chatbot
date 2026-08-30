@@ -131,10 +131,15 @@ class TestThePageEvaluates(unittest.TestCase):
         break: valid syntax, fatal on evaluation.
         """
         script = page_script()
-        declaration = "const HAND_RETRY_MS = 2000;"
-        self.assertIn(declaration, script,
-                      "the constant this test re-breaks has been renamed")
-        moved = script.replace(declaration, "", 1) + "\n" + declaration
+        # Any top-level `const` that is *read while the module evaluates* will
+        # do. The original was in the hand-control code, which has since moved
+        # to Python; the fault this recreates is identical, and the assertion
+        # below fails loudly if the replacement stops being suitable rather
+        # than passing for the wrong reason.
+        found = re.search(r"^const FULLSCREEN_SLACK = [^\n]*\n", script, re.M)
+        self.assertIsNotNone(
+            found, "the constant this test re-breaks has been renamed")
+        moved = script.replace(found.group(0), "", 1) + "\n" + found.group(0)
         done = run_under_node(moved)
         self.assertNotEqual(done.returncode, 0,
                             "a constant used before it is declared went "
