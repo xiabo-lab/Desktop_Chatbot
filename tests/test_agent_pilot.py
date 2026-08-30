@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import unittest
 
-from aipi5.agent.pilot import (DWELL_S, HandPilot, LOST_S, REACH,
+from aipi5.agent.pilot import (CLICK_EVERY_S, DWELL_S, HandPilot, LOST_S,
+                               REACH,
                                SWEEP_SPEED, SWEEP_TRAVEL_X, SWEEP_TRAVEL_Y)
 
 
@@ -481,6 +482,49 @@ class TestTheFistIsBack(GatedFixture):
         self.show(FakeShape(), 10)
         self.show(FakeShape(closed=True), 30)
         self.assertEqual(self.gestures().count("click"), 1)
+
+    def test_a_hand_that_arrives_already_closed_does_not_click(self):
+        """**A click is the closing, not the closed hand.** Reported as too
+        easy to trigger, and this was most of it: a fist held while doing
+        anything else was a press, and so was a hand that came into view shut.
+        """
+        self.show(FakeShape(closed=True), 20)
+        self.assertNotIn("click", self.gestures())
+
+    def test_a_second_click_needs_the_hand_to_open_again(self):
+        """Two presses, two opens. A hand that stays shut cannot repeat, which
+        also settles what a still fist means without having to guess."""
+        self.show(FakeShape(), 8)
+        self.show(FakeShape(closed=True), 6)
+        self.assertEqual(self.gestures().count("click"), 1)
+        # Still closed, well past the cooldown: nothing more.
+        self.clock.tick(CLICK_EVERY_S + 1)
+        self.show(FakeShape(closed=True), 20)
+        self.assertEqual(self.gestures().count("click"), 1)
+
+    def test_two_presses_too_close_together_are_one(self):
+        """Three seconds, asked for and right: on a web page a second click
+        lands somewhere the first one has just navigated to."""
+        self.show(FakeShape(), 8)
+        self.show(FakeShape(closed=True), 6)
+        self.show(FakeShape(), 8)                 # opened again, but too soon
+        self.show(FakeShape(closed=True), 6)
+        self.assertEqual(self.gestures().count("click"), 1)
+
+    def test_and_after_three_seconds_it_presses_again(self):
+        self.show(FakeShape(), 8)
+        self.show(FakeShape(closed=True), 6)
+        self.clock.tick(CLICK_EVERY_S + 0.2)
+        self.show(FakeShape(), 8)
+        self.show(FakeShape(closed=True), 6)
+        self.assertEqual(self.gestures().count("click"), 2)
+
+    def test_the_first_press_of_a_session_does_not_wait(self):
+        """The cooldown starts satisfied, or the first click of every session
+        would be swallowed for three seconds."""
+        self.show(FakeShape(), 8)
+        self.show(FakeShape(closed=True), 6)
+        self.assertIn("click", self.gestures())
 
     def test_dwell_stands_down_when_the_fingers_can_be_read(self):
         """Holding still is just holding still where a fist is available.

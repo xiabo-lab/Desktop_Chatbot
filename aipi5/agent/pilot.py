@@ -176,6 +176,22 @@ PALM_GONE_FRAMES = 12
 #: passing through the shape on its way somewhere.
 FIST_FRAMES = 2
 
+#: **A click is the *closing*, not the closed hand.**
+#:
+#: Reported as too easy to trigger, and this is why: a fist held while doing
+#: anything else was a click, and a hand that entered the frame already closed
+#: was a click the moment it was seen. So an open palm has to be seen first --
+#: the gesture is the transition, which is what a person is actually doing when
+#: they mean to press something.
+#:
+#: It also settles what happens between clicks. Two presses need two opens, so
+#: a hand that stays shut cannot repeat, and there is no need to guess whether
+#: a still fist means "again".
+#:
+#: And three seconds between them, asked for and right: a web page is a place
+#: where a second click lands somewhere the first one just navigated to.
+CLICK_EVERY_S = 3.0
+
 #: Where the landmark model lives. Absent is survivable: sweeps still come off
 #: the wrist, and `armed_by_palm` says whether the gate is real or assumed.
 LANDMARKS = "/home/fuwenxu/AIPI5/models/hand_landmarker.task"
@@ -257,6 +273,13 @@ class HandPilot:
         self._shape_want = None
         self._shape_seen = None
         self._shape_at = 0.0
+        #: Has an open palm been seen since the last click? A click is the
+        #: closing of a hand, so without this a fist held for any reason -- or
+        #: a hand that arrives already shut -- is a press.
+        self._was_open = False
+        #: When the last click fired, for `CLICK_EVERY_S`. Long ago, so the
+        #: first press of a session is not made to wait.
+        self._clicked_at_time = -1e9
 
     # ── lifecycle, the same shape Housekeeping already calls ────────
 
@@ -438,15 +461,20 @@ class HandPilot:
             # pulls the landmarks inwards, so the fist's own centre is not
             # where its owner was pointing a moment earlier.
             self._fist_for += 1
-            if self._fist_for == FIST_FRAMES:
+            if self._fist_for == FIST_FRAMES and self._can_click(now):
                 where = self._sent if self._sent[0] == self._sent[0] else None
                 if where is not None:
+                    self._was_open = False        # the next needs a new open
+                    self._clicked_at_time = now
                     self._gesture_at = now
                     self.gestures += 1
                     self._deliver("click", {"x": where[0], "y": where[1]})
             self._trail.clear()
             return
         self._fist_for = 0
+        if shape is not None and shape.open:
+            # The hand is open, so a closing of it would be a new press.
+            self._was_open = True
         self._trail.append((now, x, y))
         cut = now - TRAIL_S
         while self._trail and self._trail[0][0] < cut:
@@ -612,6 +640,18 @@ class HandPilot:
                 self._smooth = None
             return False
         return self._palm_for >= PALM_FRAMES
+
+    def _can_click(self, now: float) -> bool:
+        """Whether this fist is a press, rather than a hand that is just shut.
+
+        Two conditions, and they answer different halves of "too easy". The
+        hand must have been *open* since the last click, so the gesture is the
+        closing rather than the state; and three seconds must have passed, so
+        a press cannot be doubled by a hand that wavers.
+        """
+        if not self._was_open:
+            return False
+        return now - self._clicked_at_time >= CLICK_EVERY_S
 
     def _driving_wrist(self, person):
         """The raised hand, or None.
