@@ -26,6 +26,20 @@ Environment=WAYLAND_DISPLAY=wayland-0
 ExecStartPre=/bin/sh -c 'until [ -e "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; do sleep 1; done'
 ExecStart=%h/AIPI5/scripts/aipi5-ui.sh
 
+# **1024 descriptors is not enough for a Chromium that decodes video.**
+#
+# Measured on the device after a stretch of hand-control practice: the page's
+# renderer sat at exactly 1024 open files, 987 of them deleted
+# /dev/shm/.org.chromium.Chromium.* segments -- shared-memory buffers from
+# decoding the camera stream. At the ceiling nothing can be opened again, so
+# the video feed cannot reconnect and hand tracking stops for good. It always
+# happened *after* a period of use, which is what a filling limit looks like.
+#
+# The buffer churn is reduced separately (the recognizer is fed one reused
+# canvas instead of a fresh decode per frame). This is the headroom, so a leak
+# anywhere else costs a slow afternoon rather than a dead feature.
+LimitNOFILE=65536
+
 # `always`, not `on-failure`. Kodama-Lite's unit deliberately uses on-failure
 # because it has a Quit button and a deliberate exit must not be undone — but
 # this window has no Quit: it is full-screen with no titlebar and no binding

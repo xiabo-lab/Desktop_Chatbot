@@ -5510,12 +5510,19 @@ async function sendHand(gesture, at) {
   const stop = new AbortController();
   const bell = setTimeout(() => stop.abort(), HAND_INFLIGHT_MS);
   try {
-    await fetch("/api/agent/gesture", {
+    const answer = await fetch("/api/agent/gesture", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(at ? { gesture, at } : { gesture }),
       signal: stop.signal,
     });
+    // **Read the body even though nothing wants it.** An unread response keeps
+    // its stream, and its buffer, alive until the collector gets round to it.
+    // The same pattern one level up -- a `fetch` per telemetry line, never
+    // read -- leaked a shared-memory handle a second and took the renderer to
+    // its descriptor ceiling in a quarter of an hour. This path runs nine
+    // times a second while a hand is being tracked.
+    await answer.arrayBuffer();
   } catch (err) {
     // The agent restarting, or not installed. The next sample tries again.
   } finally {
@@ -5603,7 +5610,7 @@ function resetHandStats() {
   handStats.fired = [];
 }
 
-async function reportHand() {
+function reportHand() {
   // **Reported even when nothing was sampled.** An earlier version returned
   // here on `!handStats.n`, so a reader that was returning early -- which is
   // what a broken feed makes it do -- went completely quiet. A feature that
@@ -5637,12 +5644,21 @@ async function reportHand() {
     rtt: handStats.rttN ? handStats.rtt / handStats.rttN : 0,
   };
   resetHandStats();
+  // **`sendBeacon`, not `fetch`, and for a measured reason.** The renderer was
+  // leaking one `/dev/shm/.org.chromium.Chromium.*` handle a second while hand
+  // control ran and none at all when it stopped -- exactly this function's
+  // interval. A `fetch` builds a response object per call; a beacon is
+  // fire-and-forget and there is nothing here that wants an answer.
+  //
+  // It is why the freeze always came *after* a stretch of practice: at one a
+  // second the renderer reached its descriptor ceiling in about a quarter of
+  // an hour, and at the ceiling the video feed can never reconnect.
   try {
-    await fetch("/api/hand/debug", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const parcel = new Blob([JSON.stringify(body)],
+                            { type: "application/json" });
+    if (!navigator.sendBeacon("/api/hand/debug", parcel)) {
+      handStats.dropped = (handStats.dropped || 0) + 1;
+    }
   } catch (err) { /* the assistant restarting */ }
 }
 
@@ -5677,10 +5693,23 @@ async function readHandOnce(feed) {
   const now = performance.now();
   handStats.gap += handStats.lastAt ? now - handStats.lastAt : 0;
   handStats.lastAt = now;
+  // **One canvas, reused, rather than the live element.**
+  //
+  // Handing `recognizeForVideo` an `<img>` backed by a multipart stream gives
+  // it a *different* decoded bitmap every frame, and Chromium backs those with
+  // shared memory. Measured after a stretch of practice: 987 deleted
+  // `/dev/shm/.org.chromium.Chromium.*` handles and the renderer stuck at its
+  // 1024-descriptor ceiling, where nothing can be opened again and the feed
+  // can never reconnect. That is the freeze, and it is why it always arrived
+  // after use rather than at random.
+  //
+  // Drawing into one canvas that is allocated once gives the recognizer a
+  // single stable buffer for the life of the page.
   let samples;
   const startedInference = performance.now();
   try {
-    samples = gestureSamples(recognizer.recognizeForVideo(feed, now));
+    const slate = handSlate(feed);
+    samples = gestureSamples(recognizer.recognizeForVideo(slate, now));
   } catch (err) {
     // The multipart image can swap frames mid-read. Skipping one is harmless.
     return;
@@ -6393,6 +6422,22 @@ async function prepareGestureRecognizer() {
     }
   })();
   return gestureRecognizerLoad;
+}
+
+// The one buffer the recognizer ever sees. Sized on first use to whatever the
+// feed is, and never replaced.
+let handCanvas = null;
+let handCanvasCtx = null;
+
+function handSlate(feed) {
+  if (!handCanvas) {
+    handCanvas = document.createElement("canvas");
+    handCanvas.width = feed.naturalWidth || 320;
+    handCanvas.height = feed.naturalHeight || 240;
+    handCanvasCtx = handCanvas.getContext("2d", { willReadFrequently: true });
+  }
+  handCanvasCtx.drawImage(feed, 0, 0, handCanvas.width, handCanvas.height);
+  return handCanvas;
 }
 
 function closedHand(points) {
