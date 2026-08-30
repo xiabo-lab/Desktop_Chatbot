@@ -125,6 +125,42 @@ DWELL_REARM = 0.10
 #: How long a hand may be missing before the pointer is taken off the page.
 LOST_S = 0.8
 
+#: **How long an open palm must be held before anything moves.**
+#:
+#: Reported, and the reason this gate exists: "it only sees my arm move then
+#: does the scroll". A wrist alone cannot tell reaching for a cup from a
+#: deliberate sweep, and a page that navigates because somebody scratched their
+#: head is worse than one that needs asking twice.
+#:
+#: So the fingers decide. Nothing is sent until an open palm has been seen for
+#: this long, and it stops as soon as the palm does. Four frames at thirty a
+#: second: long enough that a single bad landmark read cannot arm it, short
+#: enough to feel immediate.
+PALM_FRAMES = 4
+
+#: And how many frames without a palm end it. Higher than the arming count,
+#: because a hand mid-sweep turns edge-on and the model briefly loses the
+#: fingers -- dropping control there would cut every gesture in half.
+PALM_GONE_FRAMES = 12
+
+#: A fist for this many frames is a click. Two, because the shape is read from
+#: geometry rather than a classifier and is steady; one would fire on a hand
+#: passing through the shape on its way somewhere.
+FIST_FRAMES = 2
+
+#: Where the landmark model lives. Absent is survivable: sweeps still come off
+#: the wrist, and `armed_by_palm` says whether the gate is real or assumed.
+LANDMARKS = "/home/fuwenxu/AIPI5/models/hand_landmarker.task"
+
+
+class _At:
+    """A point that looks enough like a keypoint for the code below."""
+
+    __slots__ = ("x", "y")
+
+    def __init__(self, x: float, y: float):
+        self.x, self.y = x, y
+
 
 def _span(value: float) -> float:
     """Camera space to page space, across the usable middle of the frame."""
@@ -135,7 +171,8 @@ def _span(value: float) -> float:
 class HandPilot:
     """Watches the wrists the accelerator reports, and drives the browser."""
 
-    def __init__(self, camera, motion_cfg, *, send, screen=None, clock=None):
+    def __init__(self, camera, motion_cfg, *, send, screen=None, clock=None,
+                 fingers=None):
         self._camera = camera
         self._cfg = motion_cfg
         #: Called with (gesture, at) — the assistant's route to the agent.
@@ -151,12 +188,19 @@ class HandPilot:
         self.error = ""
         self.generation = 0
         self.paused = False
+        #: Reads the fingers on a crop the accelerator pointed at. Injected so
+        #: the gesture logic can be tested without a model, a camera or an
+        #: accelerator -- which is all of these tests.
+        self._fingers = fingers
         self._reset()
         #: Counters, for the settings page and for answering "is it seeing me".
         self.seen = 0
         self.gestures = 0
 
     def _reset(self) -> None:
+        self._palm_for = 0
+        self._no_palm_for = 0
+        self._fist_for = 0
         self._trail: list[tuple[float, float, float]] = []
         self._armed = True
         self._still_since = 0.0
@@ -175,6 +219,11 @@ class HandPilot:
         #: Where the last click landed, so another cannot fire until the hand
         #: has actually gone somewhere.
         self._clicked_at: tuple[float, float] | None = None
+        #: The palm gate. Nothing is sent until `_palm_for` reaches
+        #: `PALM_FRAMES`, and it ends when `_no_palm_for` reaches its own.
+        self._palm_for = 0
+        self._no_palm_for = 0
+        self._fist_for = 0
 
     # ── lifecycle, the same shape Housekeeping already calls ────────
 
@@ -207,14 +256,37 @@ class HandPilot:
     def describe(self) -> dict:
         return {"active": self._pose is not None, "error": self.error,
                 "generation": self.generation, "paused": self.paused,
-                "backend": "hailo pose", "seen": self.seen,
-                "gestures": self.gestures}
+                "backend": "hailo pose + landmarks", "seen": self.seen,
+                "gestures": self.gestures,
+                "palm_gate": self.armed_by_palm,
+                "fingers": (self._fingers.error if self._fingers is not None
+                            else "not built")}
 
     # ── the accelerator ─────────────────────────────────────────────
+
+    @property
+    def armed_by_palm(self) -> bool:
+        """Whether the five-finger gate is actually in force.
+
+        False means the landmark model did not load, so sweeps are running off
+        the wrist alone. Reported rather than hidden: the difference is exactly
+        the false triggers this gate exists to stop.
+        """
+        return bool(self._fingers is not None and self._fingers.ready)
 
     def _start(self) -> None:
         """Caller holds the lock. Sets `error` rather than raising."""
         from aipi5.motion.service import MotionUnavailable, PoseService
+
+        if self._fingers is None:
+            from aipi5.agent.fingers import Fingers
+
+            self._fingers = Fingers(LANDMARKS)
+        if not self._fingers.ready and not self._fingers.start():
+            # Survivable, and said out loud. Sweeps still work off the wrist;
+            # what is lost is the gate and the fist.
+            log.warning("hand control has no finger model: %s -- sweeps will "
+                        "run off the wrist alone", self._fingers.error)
 
         if self._camera is None:
             self.error = "this device has no camera"
@@ -297,6 +369,17 @@ class HandPilot:
 
         self.seen += 1
         self._last_seen = now
+
+        shape = self._shape(wrist)
+        if not self._gate(shape):
+            return
+        if shape is not None:
+            # The palm's centre, not the wrist. It averages five landmarks
+            # instead of trusting one, and it is where a person thinks they
+            # are pointing -- the wrist trails the hand by its own length.
+            from aipi5.motion import geometry
+
+            wrist = _At(geometry.mirror(shape.x), shape.y)
         # **Not mirrored here.** `HailoPose._person` already mirrors every
         # keypoint as it decodes -- `geometry.mirror`, so the room behaves like
         # one -- and boxing.js:1419 warns about this exact mistake in the same
@@ -306,6 +389,20 @@ class HandPilot:
         #
         # Doing it twice swapped left and right, which is how it was reported.
         x, y = wrist.x, wrist.y
+        if shape is not None and shape.closed:
+            # A fist is a click, aimed where the palm last was: closing a hand
+            # pulls the landmarks inwards, so the fist's own centre is not
+            # where its owner was pointing a moment earlier.
+            self._fist_for += 1
+            if self._fist_for == FIST_FRAMES:
+                where = self._sent if self._sent[0] == self._sent[0] else None
+                if where is not None:
+                    self._gesture_at = now
+                    self.gestures += 1
+                    self._deliver("click", {"x": where[0], "y": where[1]})
+            self._trail.clear()
+            return
+        self._fist_for = 0
         self._trail.append((now, x, y))
         cut = now - TRAIL_S
         while self._trail and self._trail[0][0] < cut:
@@ -343,6 +440,52 @@ class HandPilot:
             self._smooth = (sx + SMOOTHING * (target[0] - sx),
                             sy + SMOOTHING * (target[1] - sy))
         self._point(now, self._smooth[0], self._smooth[1])
+
+    def _shape(self, wrist):
+        """The fingers near this wrist, or None if they cannot be read."""
+        if self._fingers is None or not self._fingers.ready:
+            return None
+        pose = self._pose
+        lease = getattr(pose, "_lease", None) if pose is not None else None
+        if lease is None:
+            return None
+        try:
+            frame, _captured = lease.frame(wait=False)
+        except Exception:                             # noqa: BLE001
+            return None
+        if frame is None:
+            return None
+        # Pose keypoints arrive mirrored and the picture does not, so the
+        # crop has to be taken where the hand really is.
+        from aipi5.motion import geometry
+
+        return self._fingers.read(frame, geometry.mirror(wrist.x), wrist.y)
+
+    def _gate(self, shape) -> bool:
+        """Five fingers, held, before anything is allowed to act.
+
+        Without a landmark model there is no gate and this passes everything,
+        which is the old behaviour and is said out loud by `armed_by_palm`.
+        """
+        if not self.armed_by_palm:
+            return True
+        if shape is not None and (shape.open or shape.closed):
+            self._no_palm_for = 0
+            if shape.open:
+                self._palm_for += 1
+            # A fist counts as the hand still being there: it is what a click
+            # looks like, and losing control mid-click would be absurd.
+        else:
+            self._no_palm_for += 1
+            if self._no_palm_for >= PALM_GONE_FRAMES:
+                if self._palm_for >= PALM_FRAMES:
+                    self._deliver("hide", None)
+                self._palm_for = 0
+                self._fist_for = 0
+                self._trail.clear()
+                self._smooth = None
+            return False
+        return self._palm_for >= PALM_FRAMES
 
     def _driving_wrist(self, person):
         """The raised hand, or None.
@@ -457,6 +600,14 @@ class HandPilot:
             gone = math.hypot(x - self._clicked_at[0], y - self._clicked_at[1])
             if gone < DWELL_REARM:
                 return 0.0
+
+        if self.armed_by_palm:
+            # **Dwell stands down when the fingers are readable.** It exists
+            # because a wrist cannot make a fist; where one can, holding still
+            # is just holding still. Keeping both would mean a hand resting
+            # while its owner reads the page clicks the page -- which is the
+            # over-eager clicking that was reported before the fist came back.
+            return 0.0
 
         held = now - self._dwell_since
         if self._armed and held >= DWELL_S:

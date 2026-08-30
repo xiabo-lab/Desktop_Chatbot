@@ -300,6 +300,142 @@ class TestThePointer(Fixture):
         self.assertEqual([g for g, _ in self.sent].count("hide"), 1)
 
 
+class FakeFingers:
+    """Stands in for the landmark model. Says whatever the test wants."""
+
+    def __init__(self):
+        self.ready = True
+        self.error = ""
+        self.answer = None          # a Shape, or None for "no hand read"
+        self.asked = 0
+
+    def start(self):
+        return True
+
+    def read(self, frame, x, y):
+        self.asked += 1
+        return self.answer
+
+
+class FakeShape:
+    def __init__(self, x=0.5, y=0.4, closed=False, score=0.9):
+        self.x, self.y, self.closed, self.score = x, y, closed, score
+        self.spread = 0.2
+
+    @property
+    def open(self):
+        return not self.closed
+
+
+class FakeLease:
+    def frame(self, wait=False):
+        return object(), 0.0
+
+
+class GatedFixture(Fixture):
+    """A pilot whose fingers can be dictated, with a lease to crop from."""
+
+    def setUp(self):
+        super().setUp()
+        self.fingers = FakeFingers()
+        self.pilot._fingers = self.fingers
+        self.pilot._pose = type("P", (), {"_lease": FakeLease()})()
+
+    def show(self, shape, frames, wrist=(0.5, 0.3)):
+        for _ in range(frames):
+            self.fingers.answer = shape
+            self.pilot._read(Frame(Person(wrist)))
+            self.clock.tick()
+
+
+class TestThePalmGate(GatedFixture):
+    """Nothing acts until five fingers say so.
+
+    Reported as "it only sees my arm move then does the scroll": a wrist alone
+    cannot tell reaching for a cup from a deliberate sweep, and a page that
+    navigates because somebody scratched their head is worse than one that has
+    to be asked twice.
+    """
+
+    def test_an_arm_without_a_palm_does_nothing(self):
+        """The whole complaint, in one test."""
+        for _ in range(60):
+            self.fingers.answer = None
+            self.pilot._read(Frame(Person((0.2, 0.3))))
+            self.clock.tick()
+            self.pilot._read(Frame(Person((0.8, 0.3))))
+            self.clock.tick()
+        self.assertEqual(self.sent, [],
+                         "an arm swinging past drove the browser")
+
+    def test_a_held_palm_activates_it(self):
+        self.show(FakeShape(), 20)
+        self.assertTrue([g for g, _ in self.sent if g == "move"])
+
+    def test_one_frame_of_palm_is_not_enough(self):
+        """A single bad landmark read must not arm it."""
+        self.fingers.answer = FakeShape()
+        self.pilot._read(Frame(Person((0.5, 0.3))))
+        self.clock.tick()
+        self.assertEqual(self.sent, [])
+
+    def test_a_palm_lost_for_one_frame_keeps_control(self):
+        """A hand turns edge-on mid-sweep and the fingers vanish for a frame
+        or two. Dropping control there would cut every sweep in half."""
+        self.show(FakeShape(), 10)
+        self.sent.clear()
+        self.show(None, 3)
+        self.show(FakeShape(x=0.62), 6)
+        self.assertTrue([g for g, _ in self.sent if g == "move"],
+                        "a blink of lost fingers stopped the pointer")
+
+    def test_lowering_the_hand_stops_it_and_takes_the_pointer_away(self):
+        self.show(FakeShape(), 10)
+        self.sent.clear()
+        self.show(None, 30)
+        self.assertIn("hide", [g for g, _ in self.sent])
+        self.sent.clear()
+        self.show(None, 30)
+        self.assertEqual(self.sent, [], "it kept talking with no hand there")
+
+    def test_without_a_model_the_gate_is_open_and_says_so(self):
+        """Sweeps still work off the wrist; what is lost is the gate and the
+        fist. That is a different feature, not a broken one, and
+        `armed_by_palm` is how anything downstream can tell."""
+        self.pilot._fingers = None
+        self.assertFalse(self.pilot.armed_by_palm)
+        self.hold((0.5, 0.4), 0.4)
+        self.assertTrue([g for g, _ in self.sent if g == "move"])
+
+
+class TestTheFistIsBack(GatedFixture):
+    def test_closing_the_hand_clicks(self):
+        self.show(FakeShape(), 10)
+        self.show(FakeShape(closed=True), 4)
+        self.assertIn("click", self.gestures())
+
+    def test_a_click_lands_where_the_palm_was_pointing(self):
+        """Closing a hand pulls the landmarks inwards, so the fist's own
+        centre is not where its owner was aiming a moment earlier."""
+        self.show(FakeShape(x=0.3, y=0.35), 12)
+        moved = [at for g, at in self.sent if g == "move"]
+        self.show(FakeShape(x=0.3, y=0.35, closed=True), 4)
+        clicks = [at for g, at in self.sent if g == "click"]
+        self.assertTrue(clicks and moved)
+        self.assertAlmostEqual(clicks[0]["x"], moved[-1]["x"], places=6)
+
+    def test_one_fist_is_one_click(self):
+        self.show(FakeShape(), 10)
+        self.show(FakeShape(closed=True), 30)
+        self.assertEqual(self.gestures().count("click"), 1)
+
+    def test_dwell_stands_down_when_the_fingers_can_be_read(self):
+        """Holding still is just holding still where a fist is available.
+        Keeping both would click the page somebody is reading."""
+        self.show(FakeShape(), int((DWELL_S + 1.0) * 30))
+        self.assertNotIn("click", self.gestures())
+
+
 class TestWhatIsNotDrivingAnything(Fixture):
     def test_an_arm_hanging_at_a_side_is_ignored(self):
         """Otherwise the pointer wanders whenever somebody walks past."""
