@@ -184,10 +184,82 @@ class TestDwellClicking(Fixture):
         self.wave([(0.2, 0.4), (0.8, 0.4)], seconds=DWELL_S * 2)
         self.assertNotIn("click", self.gestures())
 
+    def test_a_click_is_visible_before_it_lands(self):
+        """`hold` rides along with the pointer so the marker can close towards
+        a fist as the dwell builds. A click nobody saw coming feels like a
+        misfire even when it was aimed."""
+        self.hold((0.5, 0.4), DWELL_S * 0.8)
+        holds = [at.get("hold", 0) for g, at in self.sent if g == "move"]
+        self.assertTrue(holds)
+        self.assertGreater(max(holds), 0.4,
+                           "the dwell built with no warning on the marker")
+        self.assertLessEqual(max(holds), 1.0)
+
+    def test_a_hand_left_where_it_clicked_does_not_click_again(self):
+        """It has to go somewhere first. Resting is not choosing again."""
+        self.hold((0.5, 0.4), DWELL_S + 0.3)
+        self.assertEqual(self.gestures().count("click"), 1)
+        self.hold((0.5, 0.4), DWELL_S * 3)
+        self.assertEqual(self.gestures().count("click"), 1)
+
+    def test_but_moving_away_and_settling_clicks_again(self):
+        self.hold((0.5, 0.4), DWELL_S + 0.3)
+        self.wave([(0.5, 0.4), (0.75, 0.6)], seconds=0.9)
+        self.hold((0.75, 0.6), DWELL_S + 0.5)
+        self.assertEqual(self.gestures().count("click"), 2)
+
+    def test_dwell_is_long_enough_not_to_fire_on_a_pause(self):
+        """The first version used nine hundred milliseconds and fired on a
+        hand that had merely stopped on its way past something."""
+        self.assertGreaterEqual(DWELL_S, 1.2)
+
     def test_resting_on_a_button_clicks_once(self):
         """Not four times. The hand has to leave and come back."""
         self.hold((0.5, 0.4), DWELL_S * 3)
         self.assertEqual(self.gestures().count("click"), 1)
+
+
+class TestSteadiness(Fixture):
+    """A wrist keypoint moves every frame even from a hand held still.
+
+    The model re-estimates it from scratch thirty times a second, so an
+    unfiltered pointer twitches constantly -- reported as the marker "jumping
+    around itself". The browser version smoothed by exactly this much and that
+    is the line that did not get ported.
+    """
+
+    def jitter(self, spread, seconds=2.0):
+        """A hand held still, plus the noise a real keypoint carries."""
+        import random
+
+        rng = random.Random(7)
+        steps = int(seconds * 30)
+        for _ in range(steps):
+            self.pilot._read(Frame(Person((0.5 + rng.uniform(-spread, spread),
+                                           0.4 + rng.uniform(-spread, spread)))))
+            self.clock.tick()
+
+    def test_a_still_hand_gives_a_still_pointer(self):
+        self.jitter(0.012)
+        moves = [at for g, at in self.sent if g == "move"]
+        if len(moves) < 2:
+            return                                  # steadier than the test
+        spread = max(abs(a["x"] - b["x"]) for a, b in zip(moves, moves[1:]))
+        self.assertLess(spread, 0.03,
+                        "the pointer jumped about under keypoint noise")
+
+    def test_and_the_hand_is_still_followed(self):
+        """Smoothing that hides a real movement is worse than the jitter."""
+        self.wave([(0.3, 0.4), (0.7, 0.4)], seconds=1.5)
+        moves = [at for g, at in self.sent if g == "move"]
+        self.assertGreater(moves[-1]["x"] - moves[0]["x"], 0.35,
+                           "smoothing swallowed most of the movement")
+
+    def test_sweeps_are_measured_on_the_raw_trail(self):
+        """Smoothing a fast stroke shortens it, and a sweep is judged on how
+        far and how quickly it went. The trail stays unfiltered for that."""
+        self.wave([(0.5, 0.25), (0.5, 0.7)], seconds=0.35)
+        self.assertIn("scroll_down", self.gestures())
 
 
 class TestThePointer(Fixture):

@@ -280,6 +280,15 @@ class AgentService:
                 args["y"] = float((where or {}).get("y"))
             except (TypeError, ValueError):
                 return {"ok": False, "detail": f"a {name} needs somewhere to go"}
+            # How far through a dwell click the pointer is, so the marker can
+            # show one coming. Optional and bounded here rather than trusted:
+            # it only ever changes how a rectangle is drawn, but it arrives
+            # from outside the helper like everything else.
+            try:
+                hold = float((where or {}).get("hold", 0.0))
+            except (TypeError, ValueError):
+                hold = 0.0
+            args["hold"] = min(1.0, max(0.0, hold))
 
         answer = self.toolbox.helper.call(op, args, timeout=15.0)
         if not answer.ok:

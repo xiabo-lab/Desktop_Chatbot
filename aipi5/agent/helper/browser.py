@@ -794,7 +794,7 @@ def _hide_cursor(browser):
     browser.cursor_shown = False
 
 
-def _cursor(browser, x, y, closed=False):
+def _cursor(browser, x, y, closed=False, hold=0.0):
     """Draw the pointer at (x, y). Never fatal -- it is feedback, not control.
 
     **Drawn with `Overlay.highlightRect`, and that choice is the point.**
@@ -840,11 +840,21 @@ def _cursor(browser, x, y, closed=False):
             browser.overlay_error = str(exc)[:120]
             return
     width, height = CURSOR_CLOSED if closed else CURSOR_OPEN
+    if hold > 0 and not closed:
+        # **A click that can be seen coming.** Dwell fires after a second and a
+        # half of stillness, and one that arrives with no warning feels like a
+        # misfire even when it was aimed. The marker closes towards the fist
+        # shape as the hold builds, so the last half-second says plainly what
+        # is about to happen and moving the hand cancels it.
+        shut_w, shut_h = CURSOR_CLOSED
+        width = int(width + (shut_w - width) * hold)
+        height = int(height + (shut_h - height) * hold)
     try:
         browser.call("Overlay.highlightRect",
                      {"x": int(x - width / 2), "y": int(y - height / 2),
                       "width": width, "height": height,
-                      "color": CURSOR_CLOSED_FILL if closed else CURSOR_FILL,
+                      "color": (CURSOR_CLOSED_FILL if closed or hold > 0.66
+                                else CURSOR_FILL),
                       "outlineColor": CURSOR_EDGE},
                      timeout=5.0)
         browser.cursor_shown = True
@@ -877,9 +887,13 @@ def hand_move(args):
         if not browser.alive:
             raise Refused("no page is open")
         x, y = _point(args, browser)
+        try:
+            hold = float(args.get("hold") or 0.0)
+        except (TypeError, ValueError):
+            hold = 0.0
         browser.call("Input.dispatchMouseEvent",
                      {"type": "mouseMoved", "x": x, "y": y})
-        _cursor(browser, x, y)
+        _cursor(browser, x, y, hold=min(1.0, max(0.0, hold)))
         # Reported so a missing pointer is visible from outside rather than
         # inferred from a screenshot.
         return {"at": {"x": round(x), "y": round(y)},

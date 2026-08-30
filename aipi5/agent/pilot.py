@@ -95,14 +95,32 @@ GESTURE_INTERVAL_S = 0.45
 #: Do not resend a pointer that has barely moved.
 MOVE_MIN = 0.015
 
+#: **How much of each new reading the pointer takes.**
+#:
+#: A wrist keypoint moves a little every frame even from a hand held perfectly
+#: still -- the model re-estimates it from scratch thirty times a second -- and
+#: an unfiltered pointer twitches constantly, which was reported as the marker
+#: "jumping around itself". The browser version smoothed by exactly this much
+#: and this is the line that did not get ported.
+#:
+#: A third of each reading is a time constant of about three frames: still
+#: quick enough to feel attached to the hand, steady enough to rest on a
+#: target. **Only the pointer and the dwell use it.** Sweeps read the raw
+#: trail, because smoothing a fast stroke shortens it and a sweep is measured
+#: by how far and how quickly it went.
+SMOOTHING = 0.35
+
 #: Dwell: hold the pointer inside this radius for this long and it clicks.
-#: Nine hundred milliseconds is long enough not to fire while somebody is
-#: still choosing and short enough not to feel like waiting.
-DWELL_S = 0.9
-DWELL_RADIUS = 0.05
-#: After a click, the hand must leave the radius before another can start, so
-#: resting on a button does not click it four times.
-DWELL_REARM = 0.07
+#:
+#: A second and a half, not the nine hundred milliseconds it started at. Short
+#: dwells fire on a hand that merely paused -- while its owner was deciding,
+#: or on the way to somewhere else -- and a click nobody meant on a web page
+#: can navigate away from what they were reading.
+DWELL_S = 1.5
+DWELL_RADIUS = 0.035
+#: And it will not start until the hand has travelled this far since the last
+#: one. A hand resting where it already was is not somebody choosing again.
+DWELL_REARM = 0.10
 
 #: How long a hand may be missing before the pointer is taken off the page.
 LOST_S = 0.8
@@ -144,12 +162,19 @@ class HandPilot:
         self._still_since = 0.0
         self._sent = (float("nan"), float("nan"))
         self._move_at = 0.0
+        self._sent_hold = 0.0
         self._gesture_at = 0.0
         self._last_seen = 0.0
         self._dwell_from = None
         self._dwell_since = 0.0
         self._dwell_done = False
         self._pointing = False
+        #: The filtered pointer. `None` until the first wrist arrives, so it
+        #: starts where the hand is rather than sliding in from a corner.
+        self._smooth: tuple[float, float] | None = None
+        #: Where the last click landed, so another cannot fire until the hand
+        #: has actually gone somewhere.
+        self._clicked_at: tuple[float, float] | None = None
 
     # ── lifecycle, the same shape Housekeeping already calls ────────
 
@@ -308,7 +333,16 @@ class HandPilot:
                 self._deliver(sweep, None)
                 return
 
-        self._point(now, _span(x), _span(y))
+        # Smoothed for the pointer and the dwell; the trail above stays raw so
+        # a sweep is measured on the movement that was actually made.
+        target = (_span(x), _span(y))
+        if self._smooth is None:
+            self._smooth = target
+        else:
+            sx, sy = self._smooth
+            self._smooth = (sx + SMOOTHING * (target[0] - sx),
+                            sy + SMOOTHING * (target[1] - sy))
+        self._point(now, self._smooth[0], self._smooth[1])
 
     def _driving_wrist(self, person):
         """The raised hand, or None.
@@ -374,39 +408,65 @@ class HandPilot:
         return ""
 
     def _point(self, now: float, x: float, y: float) -> None:
-        """Move the pointer, and click if it has rested long enough."""
-        if self._dwell_from is None:
-            self._dwell_from = (x, y)
-            self._dwell_since = now
-            self._dwell_done = False
-        else:
-            drift = math.hypot(x - self._dwell_from[0], y - self._dwell_from[1])
-            if drift > DWELL_RADIUS:
-                self._dwell_from = (x, y)
-                self._dwell_since = now
-                self._dwell_done = False
-            elif (not self._dwell_done and self._armed
-                    and now - self._dwell_since >= DWELL_S):
-                self._dwell_done = True
-                self._gesture_at = now
-                self.gestures += 1
-                self._deliver("click", {"x": x, "y": y})
-                return
-            elif self._dwell_done and drift > DWELL_REARM:
-                self._dwell_from = (x, y)
-                self._dwell_since = now
-                self._dwell_done = False
+        """Move the pointer, and click if it has rested somewhere on purpose."""
+        hold = self._dwell(now, x, y)
+        if hold is None:
+            return
 
         if now - self._move_at < MOVE_INTERVAL_S:
             return
         last_x, last_y = self._sent
         if (last_x == last_x                       # not NaN
-                and math.hypot(x - last_x, y - last_y) < MOVE_MIN):
+                and math.hypot(x - last_x, y - last_y) < MOVE_MIN
+                and abs(hold - self._sent_hold) < 0.12):
             return
         self._move_at = now
         self._sent = (x, y)
+        self._sent_hold = hold
         self._pointing = True
-        self._deliver("move", {"x": x, "y": y})
+        # `hold` rides along so the marker can show a click coming rather than
+        # springing one. A dwell nobody saw building is a dwell that feels like
+        # a misfire even when it was not.
+        self._deliver("move", {"x": x, "y": y, "hold": round(hold, 2)})
+
+    def _dwell(self, now: float, x: float, y: float):
+        """How far through a click this is, 0..1, or None once it has fired.
+
+        **A hand has to arrive somewhere to click it.** The first version only
+        asked whether the pointer had been still, so a hand pausing on its way
+        past a link -- or its owner thinking -- was a click. Now the hand must
+        also have travelled `DWELL_REARM` from wherever the last click landed,
+        which is the difference between resting and choosing.
+        """
+        if self._dwell_from is None:
+            self._dwell_from = (x, y)
+            self._dwell_since = now
+            self._dwell_done = False
+            return 0.0
+
+        drift = math.hypot(x - self._dwell_from[0], y - self._dwell_from[1])
+        if drift > DWELL_RADIUS:
+            self._dwell_from = (x, y)
+            self._dwell_since = now
+            self._dwell_done = False
+            return 0.0
+        if self._dwell_done:
+            return 0.0
+
+        if self._clicked_at is not None:
+            gone = math.hypot(x - self._clicked_at[0], y - self._clicked_at[1])
+            if gone < DWELL_REARM:
+                return 0.0
+
+        held = now - self._dwell_since
+        if self._armed and held >= DWELL_S:
+            self._dwell_done = True
+            self._clicked_at = (x, y)
+            self._gesture_at = now
+            self.gestures += 1
+            self._deliver("click", {"x": x, "y": y})
+            return None
+        return min(1.0, held / DWELL_S)
 
     def _deliver(self, gesture: str, at: dict | None) -> None:
         if gesture == "hide":
