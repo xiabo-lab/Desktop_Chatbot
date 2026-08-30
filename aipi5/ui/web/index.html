@@ -5373,6 +5373,11 @@ const HAND_SAMPLE_MS = 60;          // the guard in `readHand` sets the real rat
 // appears.
 const HAND_STOP_AFTER_MS = 30 * 60 * 1000;
 
+//: How long one message to the agent may take before it is abandoned. The
+//: round trip measures 60-75 ms, so this is twenty times what it needs and is
+//: only ever reached by a request that is not coming back.
+const HAND_INFLIGHT_MS = 1500;
+
 const HAND_RETRY_MS = 2000;
 const HAND_RETRY_MAX_MS = 30000;
 const HAND_TRAIL_MS = 600;          // about seven samples, at that rate
@@ -5439,6 +5444,9 @@ const handControl = {
   deadSince: 0,         // when the picture went away; see HAND_DEAD_MS
   connectedAt: 0,       // so a stream is given time to arrive before judging
   moving: false,        // a pointer update is in flight; skip the next one
+  movingAt: 0,          // when it went out; see HAND_INFLIGHT_MS
+  lastHandX: NaN,       // the previous palm position, for the jitter above
+  lastHandY: NaN,
   reading: false,       // recognition is running; see `readHand`
   reporter: null,
   rtt: 0,
@@ -5466,20 +5474,38 @@ async function sendHand(gesture, at) {
   // deliberately, and is the thing the person is waiting for.
   const pointer = gesture === "move" || gesture === "hide";
   if (pointer) {
-    if (handControl.moving) return;
+    // **A guard with no way out is a freeze.** `fetch` has no timeout of its
+    // own, so a request that never settles leaves this set for ever: every
+    // later pointer update is dropped while sweeps, which do not check it,
+    // go on working. That is exactly the reported shape -- "the tracker is
+    // frozen, the marker will not move" with scrolling still fine. Measured:
+    // 73 of 209 seconds with a hand plainly in view sent nothing at all.
+    if (handControl.moving) {
+      if (performance.now() - handControl.movingAt < HAND_INFLIGHT_MS) {
+        handStats.blocked += 1;
+        return;
+      }
+      handStats.stuck += 1;      // held too long; take it back
+    }
     handControl.moving = true;
+    handControl.movingAt = performance.now();
   }
   const startedRequest = performance.now();
   if (!pointer) handStats.fired.push(gesture);
+  // And an abort, so the request cannot outlive the guard that waits on it.
+  const stop = new AbortController();
+  const bell = setTimeout(() => stop.abort(), HAND_INFLIGHT_MS);
   try {
     await fetch("/api/agent/gesture", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(at ? { gesture, at } : { gesture }),
+      signal: stop.signal,
     });
   } catch (err) {
     // The agent restarting, or not installed. The next sample tries again.
   } finally {
+    clearTimeout(bell);
     handControl.rtt = performance.now() - startedRequest;
     handStats.rtt += handControl.rtt;
     handStats.rttN += 1;
@@ -5550,7 +5576,7 @@ function readSweep(now) {
 const handStats = {
   n: 0, infer: 0, gap: 0, hand: 0, palm: 0, fist: 0, other: 0,
   dx: 0, dy: 0, trail: 0, fired: [], rtt: 0, rttN: 0, lastAt: 0,
-  speed: 0,
+  speed: 0, blocked: 0, stuck: 0, skipped: 0, jitter: 0, same: 0,
 };
 
 function resetHandStats() {
@@ -5558,6 +5584,8 @@ function resetHandStats() {
   handStats.palm = handStats.fist = handStats.other = 0;
   handStats.dx = handStats.dy = handStats.trail = 0;
   handStats.rtt = handStats.rttN = handStats.speed = 0;
+  handStats.blocked = handStats.stuck = handStats.skipped = 0;
+  handStats.jitter = handStats.same = 0;
   handStats.fired = [];
 }
 
@@ -5584,6 +5612,11 @@ async function reportHand() {
     dead: handControl.deadSince
       ? Math.round(performance.now() - handControl.deadSince) : 0,
     recog: gestureLoadState,
+    blocked: handStats.blocked,
+    stuck: handStats.stuck,
+    skipped: handStats.skipped,
+    jitter: handStats.jitter,
+    same: handStats.same,
     speed: handStats.speed,
     armed: handControl.armed ? 1 : 0,
     rtt: handStats.rttN ? handStats.rtt / handStats.rttN : 0,
@@ -5674,6 +5707,22 @@ async function readHandOnce(feed) {
   }
   handControl.lastSeen = now;
 
+  // **How far the palm moved since the last frame, exactly.**
+  //
+  // `travel` is rounded to two places and cannot tell "the hand was steady"
+  // from "the picture is not changing" -- and those need completely different
+  // fixes. A live camera never gives the same landmark twice, so an *exactly*
+  // identical position is proof the image is frozen, and a small but non-zero
+  // one is proof it is not.
+  if (Number.isFinite(handControl.lastHandX)) {
+    const moved = Math.hypot(hand.x - handControl.lastHandX,
+                             hand.y - handControl.lastHandY);
+    handStats.jitter = Math.max(handStats.jitter, moved);
+    if (moved === 0) handStats.same += 1;
+  }
+  handControl.lastHandX = hand.x;
+  handControl.lastHandY = hand.y;
+
   if (hand.shape === "Closed_Fist") {
     // A fist is a click, and it is aimed where the palm last was -- a hand
     // closing pulls the landmarks in, so the fist's own centre is not where
@@ -5723,6 +5772,10 @@ async function readHandOnce(feed) {
       Math.hypot(x - handControl.sentX, y - handControl.sentY) >= HAND_MOVE_MIN) {
     handControl.sentX = x; handControl.sentY = y;
     sendHand("move", { x, y });
+  } else {
+    // The other reason nothing is sent, and a very different one: the hand is
+    // where it already was. Counted so the two cannot be confused.
+    handStats.skipped += 1;
   }
 }
 
