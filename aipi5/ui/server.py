@@ -513,14 +513,14 @@ class _Handler(BaseHTTPRequestHandler):
         log.info(
             "HAND n=%d infer=%dms gap=%dms hand=%d%% palm=%d fist=%d "
             "other=%d ready=%d unused=%ds dead=%dms travel=%.2f/%.2f speed=%.2f armed=%d "
-            "trail=%d fired=%s rtt=%dms recog=%s blocked=%d stuck=%d still=%d jitter=%.4f same=%d",
+            "trail=%d fired=%s rtt=%dms recog=%s blocked=%d stuck=%d still=%d jitter=%.4f same=%d edge=%d",
             _n("n"), _n("infer"), _n("gap"), _n("handpct"), _n("palm"),
             _n("fist"), _n("other"), _n("ready"), _n("unused"), _n("dead"), _n("dx", 2), _n("dy", 2),
             _n("speed", 2), _n("armed"), _n("trail"),
             str(payload.get("fired") or "-")[:60], _n("rtt"),
             str(payload.get("recog") or "?")[:100],
             _n("blocked"), _n("stuck"), _n("skipped"),
-            _n("jitter", 4), _n("same"))
+            _n("jitter", 4), _n("same"), _n("edge"))
         self._json({"ok": True})
 
     def _gesture_post(self, payload: dict) -> None:

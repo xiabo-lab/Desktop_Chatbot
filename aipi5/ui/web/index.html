@@ -5421,10 +5421,22 @@ const HAND_LOST_MS = 900;
 const HAND_SETTLE_MS = 260;
 const HAND_SETTLE_SPEED = 0.35;     // fractions of the frame, per second
 
-// The hand never reaches the edges of the camera's view, so the middle of the
+// The hand rarely reaches the edges of the camera's view, so the middle of the
 // frame is stretched over the whole page. Without this the page's corners are
 // unreachable and everything sits in a small box in the centre.
-const HAND_REACH = 0.22;            // trimmed from each side before stretching
+//
+// **But the trim silently freezes the pointer.** Anything outside the kept
+// band clamps to the edge, so a hand still moving out there produces a marker
+// that does not -- which is precisely how it was reported: "my hand moves but
+// the yellow box does not". A camera looking at somebody standing off to one
+// side puts their hand in that band most of the time. Verified by looking at
+// the frame: the person filled the left third and the raised hand sat in the
+// outer margin.
+//
+// Ten percent, not twenty-two. That keeps 80% of the width usable instead of
+// 56% and still reaches the corners, and `edge` in the telemetry counts the
+// frames that clamp anyway, so this can never again be invisible.
+const HAND_REACH = 0.10;            // trimmed from each side before stretching
 
 const handControl = {
   on: false,
@@ -5455,7 +5467,9 @@ const handControl = {
 function handSpan(value) {
   // 0..1 across the trimmed middle of the camera, clamped at the edges.
   const span = 1 - 2 * HAND_REACH;
-  return Math.max(0, Math.min(1, (value - HAND_REACH) / span));
+  const mapped = (value - HAND_REACH) / span;
+  if (mapped < 0 || mapped > 1) handStats.edge += 1;
+  return Math.max(0, Math.min(1, mapped));
 }
 
 async function sendHand(gesture, at) {
@@ -5576,7 +5590,7 @@ function readSweep(now) {
 const handStats = {
   n: 0, infer: 0, gap: 0, hand: 0, palm: 0, fist: 0, other: 0,
   dx: 0, dy: 0, trail: 0, fired: [], rtt: 0, rttN: 0, lastAt: 0,
-  speed: 0, blocked: 0, stuck: 0, skipped: 0, jitter: 0, same: 0,
+  speed: 0, blocked: 0, stuck: 0, skipped: 0, jitter: 0, same: 0, edge: 0,
 };
 
 function resetHandStats() {
@@ -5585,7 +5599,7 @@ function resetHandStats() {
   handStats.dx = handStats.dy = handStats.trail = 0;
   handStats.rtt = handStats.rttN = handStats.speed = 0;
   handStats.blocked = handStats.stuck = handStats.skipped = 0;
-  handStats.jitter = handStats.same = 0;
+  handStats.jitter = handStats.same = handStats.edge = 0;
   handStats.fired = [];
 }
 
@@ -5617,6 +5631,7 @@ async function reportHand() {
     skipped: handStats.skipped,
     jitter: handStats.jitter,
     same: handStats.same,
+    edge: handStats.edge,
     speed: handStats.speed,
     armed: handControl.armed ? 1 : 0,
     rtt: handStats.rttN ? handStats.rtt / handStats.rttN : 0,
