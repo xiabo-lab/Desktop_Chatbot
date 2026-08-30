@@ -637,6 +637,21 @@ files:
 #
 # Requires `scripts/install-agent.sh` to have been run once as root: it creates
 # the `aipi5-agent` user, the privileged helper and both sockets.
+# ── how loud the device is ──────────────────────────────────────────────
+#
+# One number, 0-100, applied to whatever the device is playing through. It is
+# here rather than in a mixer somewhere because this file is what the agent can
+# change: "turn the volume down" edits this key, the assistant restarts, and
+# the new level is in force -- through the same propose-approve-verify-rollback
+# path as every other setting, with nothing new that can go wrong.
+#
+# Applied with `wpctl set-volume @DEFAULT_AUDIO_SINK@`, so it follows the
+# output rather than naming a card. Out-of-range values are clamped, not
+# refused: a device that will not start because of a typo in a volume is worse
+# than one that is as loud as it goes.
+audio:
+  volume: 100
+
 agent:
   enabled: false
 

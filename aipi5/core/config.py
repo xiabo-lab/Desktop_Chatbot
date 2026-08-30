@@ -504,6 +504,25 @@ class AssistantConfig:
 
 
 @dataclass(frozen=True)
+class AudioConfig:
+    """How loud the device is.
+
+    One number, because that is the whole of it and because the agent's write
+    path edits one key in place. Anything richer -- a per-voice level, a night
+    setting -- would be a second thing to keep in step with the sink, and the
+    sink is what decides what a room hears.
+
+    Applied by `aipi5.core.volume` at startup and after any change; changing it
+    restarts the assistant, which is how every other setting takes effect.
+    """
+
+    #: 0-100. Clamped rather than refused: a file asking for 120 wants it loud,
+    #: and a device that will not start because of a typo in a volume is worse
+    #: than a device that is as loud as it goes.
+    volume: int = 100
+
+
+@dataclass(frozen=True)
 class Settings:
     display: DisplayConfig = field(default_factory=DisplayConfig)
     location: LocationConfig = field(default_factory=LocationConfig)
@@ -521,6 +540,7 @@ class Settings:
     call: CallConfig = field(default_factory=CallConfig)
     files: FilesConfig = field(default_factory=FilesConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
+    audio: AudioConfig = field(default_factory=AudioConfig)
     assistant: AssistantConfig = field(default_factory=AssistantConfig)
 
     #: Where this was loaded from, for the settings page.
@@ -719,6 +739,7 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
     call = _require_mapping(raw.get("call"), "call")
     files = _require_mapping(raw.get("files"), "files")
     agent = _require_mapping(raw.get("agent"), "agent")
+    audio = _require_mapping(raw.get("audio"), "audio")
     assistant = _require_mapping(raw.get("assistant"), "assistant")
 
     feeds = news.get("feeds") or list(_DEFAULT_FEEDS)
@@ -925,6 +946,9 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
             reserve_bytes=int(_positive(files.get("reserve_gb", 2.0), 2.0,
                                         "files.reserve_gb") * 1024 ** 3),
             max_concurrent=max(1, int(files.get("max_concurrent", 2))),
+        ),
+        audio=AudioConfig(
+            volume=max(0, min(100, int(audio.get("volume", 100)))),
         ),
         agent=AgentConfig(
             enabled=bool(agent.get("enabled", False)),

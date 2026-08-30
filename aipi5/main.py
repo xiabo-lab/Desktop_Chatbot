@@ -69,6 +69,7 @@ from aia.ui.retention import Retention
 from aipi5 import __version__
 from aipi5.call.server import CallServer
 from aipi5.agent.pilot import HandPilot
+from aipi5.core import volume as volume_control
 from aipi5.agent.proxy import AgentProxy
 from aipi5.call.signaling import SignalingHub
 from aipi5.call.tokens import TrustedDevices
@@ -263,6 +264,10 @@ class Assistant:
         # The transfer folder, shared by both servers so a file the phone sent
         # is on the screen's list with nothing synchronising the two. Built
         # before the call server, which is handed it.
+        # The output level, before anything can speak. Never fatal:
+        # a device that will not set its volume is slightly too
+        # loud, and that must not be a device that will not start.
+        volume_control.apply(settings.audio.volume)
         self.files = FileStore(settings.files)
         self.files.start()
         # The agent console, when the agent is installed. This is a socket path
