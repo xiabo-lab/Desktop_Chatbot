@@ -42,15 +42,21 @@ from aipi5.motion import geometry
 
 log = logging.getLogger(__name__)
 
-#: How long one round lasts. Section 27 originally asked for three lives; the
-#: game is a fixed clock and the score at the end of it.
+#: How long one round lasts. The game is a fixed clock, a score, and — since
+#: the bomb was rebuilt — three lives that only a bomb can take.
 #:
-#: **The change is not cosmetic — it changes what the game rewards.** With
-#: lives, a dropped fruit ended the game a third sooner, so the safe play was
-#: to ignore anything awkward and wait for an easy one. With a clock, doing
-#: nothing costs exactly as much as trying and missing, so there is never a
-#: reason not to swing. It also makes every round the same length, which is
-#: what makes two scores comparable and a high score worth having.
+#: **The clock and the lives are not the same rule wearing two hats, and the
+#: split is the whole design.** A *dropped* fruit costs no life and no time,
+#: which is what keeps the round honest: doing nothing costs exactly as much as
+#: trying and missing, so there is never a reason not to swing at something
+#: awkward. A *sliced bomb* costs a life, which is the one thing on the screen
+#: the player is asked to steer around and the only place a life can go. Lives
+#: therefore measure judgement and the clock measures the round, and neither
+#: punishes the other's mistake.
+#:
+#: The fixed length is what makes two scores comparable and a high score worth
+#: having; a round that ends early now means one thing only, and it is a thing
+#: the player did `MAX_LIVES` times on purpose.
 #:
 #: Two minutes as of the Ultimate upgrade, up from one. The extra minute is not
 #: more of the same: it is what makes room for a round to have a *shape* — a
@@ -61,44 +67,71 @@ ROUND_SECONDS = 120.0
 
 #: Where the Ultimate sits in the round, as seconds remaining. Section 16.
 #:
-#: Expressed as time *left* rather than time elapsed, and that is load-bearing
-#: rather than a style: a bomb takes five seconds off the clock, so elapsed and
-#: remaining are not two views of one number. A player who sliced three bombs
-#: still gets their Ultimate with fifteen seconds on the clock, which is what
-#: the screen promised them, instead of ten seconds after the warning has
-#: already gone.
+#: Expressed as time *left* rather than time elapsed, which is the reading that
+#: matches the promise: the Ultimate is the last fifteen seconds of the round,
+#: whatever the round has been. It was load-bearing when a bomb could move the
+#: clock and the two were genuinely different quantities; it is now the same
+#: number said the right way round, and left alone because the *screen* counts
+#: down and a constant the screen can be checked against is worth more than one
+#: that has to be subtracted first.
 #:
 #: **The last fifteen seconds are the Ultimate, all of them.** `ULTIMATE_START_AT`
 #: and `ultimate.DURATION_S` are equal on purpose, so the dragon fruit is born
 #: at the fifteen second mark and runs out with the round. Nothing follows it.
 #:
-#: **The warning window is exactly `BOMB_PENALTY_S` wide, and that is the whole
-#: mechanism.** A bomb is the only thing that moves the clock other than time
-#: itself, and it moves it by five seconds; a window five seconds wide cannot
-#: be jumped by one, because a clock at 20+e lands at 15+e, which is still
-#: inside it. The previous version used a two second window and counted the
-#: warning down as a *duration* to survive exactly this — and that fix is what
-#: broke it, because a duration can outlive its own window: five bombs sliced
-#: inside a two second warning burn twenty-five seconds of clock while the
-#: warning still has time owed, and the round ends having never spawned the
-#: dragon fruit at all. Measured, not theorised — see
-#: `test_bombs_during_the_warning_cannot_swallow_the_ultimate`.
+#: **Nothing can jump this window any more, and it is worth saying why the five
+#: seconds are still five seconds.** A bomb used to take five seconds off the
+#: clock, which meant the countdown did not pass *through* the warning window
+#: so much as land somewhere in or beyond it — the window was made exactly one
+#: bomb wide so that a single one could not clear it, and the two constants
+#: were arithmetic on `BOMB_PENALTY_S` rather than two chosen numbers. The
+#: bomb costs a life and a score now and does not touch the clock at all, so
+#: the countdown is monotone in real time and every window is unjumpable
+#: including a one-second one.
 #:
-#: So the window is a pair of clock readings again, and it is made wide enough
-#: that the thing which used to jump it no longer can.
+#: The five seconds stay because five seconds is a good warning: long enough to
+#: finish the swing in progress and look up, short enough not to be a lull. It
+#: is now a choice about pacing rather than a defence against the clock, and
+#: `_advance_phase` below is deliberately still written to survive a clock that
+#: skips — the edge-once transitions cost nothing and the guarantee they give
+#: outlives whatever the bomb does next.
 ULTIMATE_WARNING_AT = 20.0
 ULTIMATE_START_AT = 15.0
 
-#: What slicing a bomb costs, in seconds off the clock. Section 26's bomb
-#: cannot cost a life any more, and it has to cost *something* or it is a free
-#: extra target.
+#: How many lives a round starts with, and the ceiling a heart fruit heals up
+#: to.
 #:
-#: Five, chosen against the clock rather than in the abstract: it is a twelfth
-#: of the round, which is enough to be worth avoiding and not enough to end a
-#: good run. A score penalty was the alternative and is worse — it can make the
-#: number on screen go backwards, which reads as the game taking something away
-#: rather than as a mistake costing time.
-BOMB_PENALTY_S = 5.0
+#: Five, up from three, alongside halving the bomb rate — and the two together
+#: are one decision about what a two-minute round should feel like. Three lives
+#: against one bomb in seven meant a round could be over in forty seconds on
+#: three unlucky swings, which is the failure mode a fixed-length round exists
+#: to avoid: the score stops being comparable when half the games do not reach
+#: the Ultimate.
+#:
+#: Five is also about what the corner can hold. The hearts are drawn at full
+#: size in a single row above the clock, and a row that has to shrink or wrap
+#: to fit is a readout the player has to *look* at rather than glance at.
+MAX_LIVES = 5
+
+#: What slicing a bomb costs: one life of `MAX_LIVES`, and this many points.
+#:
+#: **The clock is no longer part of it, and that reversed an earlier decision
+#: on purpose.** The bomb used to take five seconds, and the argument against a
+#: score penalty was that a number going backwards reads as the game taking
+#: something away rather than as a mistake costing time. That argument was
+#: right about the *feeling* and wrong about which feeling this game wants: a
+#: penalty the player is supposed to steer around should be felt, and a clock
+#: that drops five seconds in one frame was read by the first person who saw it
+#: as the countdown being broken — which is the honest reading, because a
+#: countdown that jumps is broken. A life and a score are both things a player
+#: can watch themselves lose.
+#:
+#: Twenty-five is the most any single fruit is worth (the dragon), so a bomb
+#: costs a very good cut. It is clamped at zero rather than allowed to go
+#: negative — a negative score is a different game — which means the opening
+#: seconds are the one stretch where a bomb costs only a life, and that is
+#: fine: the bomb cannot be thrown for the first ten of them anyway.
+BOMB_PENALTY_POINTS = 25
 
 #: How long a sliced fruit stays in the state so the page can animate its
 #: halves flying apart. Purely visual; it cannot be hit again.
@@ -220,12 +253,17 @@ class Session:
     #: How long this round lasts. A field rather than the constant so a future
     #: game — or a test — can run a ten-second round without patching a module.
     duration: float = ROUND_SECONDS
-    #: Seconds left, recomputed every tick. Held rather than derived from
-    #: `started_at` because bombs take time off it, so it is genuinely its own
-    #: quantity and not a function of the wall clock.
+    #: Seconds left, counted down every tick by the same clamped `dt` the
+    #: physics uses. Held rather than derived from `started_at` because it is
+    #: not a function of the wall clock: a pause does not spend it and a stalled
+    #: frame cannot take ten seconds off the player at once. It was also, until
+    #: the bomb stopped costing time, a quantity the game itself could move.
     time_left: float = ROUND_SECONDS
     score: int = 0
     best: int = 0
+    #: Lives left. Spent only on bombs and refilled only by heart fruit, up to
+    #: `MAX_LIVES` — see `_cut`. A dropped fruit does not touch this.
+    lives: int = MAX_LIVES
     state: State = State.READY
     fruit: list[Fruit] = field(default_factory=list)
     spawner: Spawner = field(default_factory=Spawner)
@@ -256,19 +294,19 @@ class Session:
     ultimate_hits: int = 0
     ultimate_points: int = 0
     ultimate_done: bool = False
-    #: Guards the once-per-round guarantee against a clock that can be pushed
-    #: back over a threshold. A bomb takes five seconds off, so `time_left`
-    #: crosses 20 exactly once — but nothing in the rules *promises* that, and
-    #: a second dragon fruit in one round would be a much worse bug than a
-    #: redundant boolean.
+    #: Guards the once-per-round guarantee against a clock that crosses a
+    #: threshold twice. Nothing moves `time_left` but time itself any more, so
+    #: this cannot currently fire — and it stays, because a second dragon fruit
+    #: in one round would be a much worse bug than a redundant boolean, and the
+    #: thing that used to push the clock about was a gameplay rule rather than a
+    #: law of nature.
     ultimate_spawned: bool = False
     #: Whether the warning has been given this round. Not derivable from the
     #: phase, which has moved on by the time it matters, and not from
-    #: `ultimate_spawned`, which is set at the wrong moment. It exists for one
-    #: pathological case: two bombs taken by a single swing move the clock ten
-    #: seconds, which *can* clear a five second window, and the player should
-    #: still hear the warning even if it arrives on the same frame as the fruit
-    #: it was warning about. See `_advance_phase`.
+    #: `ultimate_spawned`, which is set at the wrong moment. It exists so that
+    #: a frame long enough to clear the whole five-second window still gets its
+    #: warning — late, on the same frame as the fruit it was warning about,
+    #: which is worth more than nothing at all. See `_advance_phase`.
     ultimate_warned: bool = False
 
     #: Seconds of half speed still owed, counted down by `tick` in seconds of
@@ -288,6 +326,10 @@ class Session:
     sliced_total: int = 0
     missed_total: int = 0
     bombs_hit: int = 0
+    #: Heart fruit sliced, whether or not there was a life to give back. The
+    #: count the game-over screen reports, so it is the number of times the
+    #: player *took* one rather than the number of times it helped.
+    hearts_hit: int = 0
     #: Consecutive fruit sliced without a miss, for the combo readout.
     streak: int = 0
     best_streak: int = 0
@@ -315,6 +357,7 @@ class Session:
         """
         self.time_left = self.duration
         self.score = 0
+        self.lives = MAX_LIVES
         self.fruit.clear()
         self.slashes.clear()
         self.events.clear()
@@ -324,6 +367,7 @@ class Session:
         self.ended_at = 0.0
         self._last_tick = now
         self.sliced_total = self.missed_total = self.bombs_hit = 0
+        self.hearts_hit = 0
         self.streak = self.best_streak = 0
         self.combo = self.best_combo = 0
         self._combo_until = 0.0
@@ -372,12 +416,21 @@ class Session:
         self._finalise_ultimate(now)
         self.state = State.OVER
         self.ended_at = now
-        self.events.append({"name": "game-over"})
+        # Why it ended, because there are two ways now and the game-over screen
+        # says different things about them. Derived from the lives rather than
+        # passed in by the caller: `finish` is reached from the clock, from the
+        # last bomb and from the Stop button, and a reason threaded through
+        # three call sites is a reason that will one day be wrong at one of
+        # them.
+        self.events.append({"name": "game-over",
+                            "reason": "lives" if self.lives <= 0 else "time"})
         if self.score > self.best:
             self.best = self.score
-        log.info("Game: Fruit Ninja over — score %d, best %d, %d sliced, "
-                 "%d missed", self.score, self.best, self.sliced_total,
-                 self.missed_total)
+        log.info("Game: Fruit Ninja over (%s) — score %d, best %d, %d sliced, "
+                 "%d missed, %d lives left",
+                 "out of lives" if self.lives <= 0 else "time up",
+                 self.score, self.best, self.sliced_total, self.missed_total,
+                 self.lives)
 
     # ── the simulation ───────────────────────────────────────────────
 
@@ -451,11 +504,17 @@ class Session:
         # for a swing they were making at something else. Fruit already in the
         # air when it began is left to finish its arc — deleting it would look
         # like the game confiscating a fruit the player was about to reach.
-        if self.time_left > self.spawner.dead_air and not self.in_ultimate:
+        if (self.time_left > self.spawner.dead_air and self.lives > 0
+                and not self.in_ultimate):
             for spawned in self.spawner.due(now, self.elapsed):
                 self.fruit.append(spawned)
 
-        if self.time_left <= 0:
+        # The two ways a round ends, tested in the same place and after
+        # everything else has happened. Out of lives is checked here rather
+        # than inside `_cut` for the reason given there: a swing that takes the
+        # last two bombs at once must be one game over, and the frame it
+        # happens on should finish drawing the explosions it caused.
+        if self.time_left <= 0 or self.lives <= 0:
             self.finish(now)
 
     @property
@@ -518,10 +577,10 @@ class Session:
         ULTIMATE_START_AT` is tested before anything that could hold the dragon
         fruit back, so from the fifteen second mark onwards there is a dragon
         fruit on the screen no matter how the clock got there — counted down
-        to, or dropped past by any number of bombs in any number of frames.
-        The previous arrangement let the warning gate the spawn, and a warning
-        that is owed time can outlive the window it was owed in; that is how a
-        round could end having never shown the Ultimate at all.
+        to, or arrived at in one long frame. The previous arrangement let the
+        warning gate the spawn, and a warning that is owed time can outlive the
+        window it was owed in; that is how a round could end having never shown
+        the Ultimate at all.
         """
         previous = self.phase
         left = self.time_left
@@ -554,8 +613,10 @@ class Session:
             self._warn(now)
         elif wanted is Phase.ULTIMATE:
             # A warning that never happened, because the clock cleared the
-            # whole window in one frame. Only two bombs on one swing can do
-            # that, and the notice is worth more late than not at all.
+            # whole window in one frame. Nothing in an ordinary round can do
+            # that now that the bomb has stopped moving the clock — a frame
+            # would have to be five seconds long, and `MAX_STEP_S` clamps it to
+            # a tenth — and the notice is worth more late than not at all.
             if not self.ultimate_warned:
                 self._warn(now)
             self.dragon = UltimateDragon(born_at=now)
@@ -664,22 +725,26 @@ class Session:
         item.slice_angle = collision.slash_angle(from_point, to_point)
 
         if item.is_bomb:
-            # Section 26, in the timed game: a bomb costs seconds rather than a
-            # life, and breaks the streak. It does not subtract score, because
-            # a number that goes backwards reads as the game taking something
-            # away rather than as a mistake costing time — and the clock is
-            # already the thing the player is watching.
+            # Section 26: a bomb costs a life and a score, breaks the streak,
+            # and leaves the clock alone. `MAX_LIVES` of them end the round —
+            # but not here. The state change happens at the bottom of `tick`, next to
+            # the clock running out, so that one swing through two bombs is one
+            # game over and not a `finish` called from inside the loop that is
+            # still iterating the fruit it is finishing over.
             self.bombs_hit += 1
-            self.time_left = max(0.0, self.time_left - BOMB_PENALTY_S)
+            self.lives = max(0, self.lives - 1)
+            self.score = max(0, self.score - BOMB_PENALTY_POINTS)
             self.streak = 0
-            # The penalty travels with the event so the page can say how much
-            # time went and animate the clock losing exactly that — a five
-            # second drop with no reaction from the clock itself reads as the
-            # countdown being broken rather than as the bomb costing something.
-            self.events.append({"name": "bomb", "seconds": BOMB_PENALTY_S,
+            # What it cost and what is left, both on the event, so the page can
+            # animate the exact number that changed without keeping its own
+            # copy of a constant that lives in this file.
+            self.events.append({"name": "bomb",
+                                "points": BOMB_PENALTY_POINTS,
+                                "lives": self.lives, "max_lives": MAX_LIVES,
                                 "x": round(item.x, 1), "y": round(item.y, 1)})
-            log.info("Game: bomb sliced — %.0fs off the clock, %.0fs left",
-                     BOMB_PENALTY_S, self.time_left)
+            log.info("Game: bomb sliced — -%d points, %d %s left",
+                     BOMB_PENALTY_POINTS, self.lives,
+                     "life" if self.lives == 1 else "lives")
             return
 
         if item.is_ice:
@@ -697,6 +762,32 @@ class Session:
             log.info("Game: ice sliced — fruit at %.0f%% speed for %.0fs",
                      SLOW_FACTOR * 100, SLOW_SECONDS)
             # And then falls through to score exactly like a fruit.
+
+        if item.is_heart:
+            # One life back, and never more than the round started with. A
+            # heart taken at full health is not refused and not wasted either:
+            # it still scores, and the event says which of the two happened so
+            # the page can say "+1 LIFE" or "FULL HEALTH" rather than flashing
+            # a heart that did not change.
+            #
+            # Capping rather than banking a spare is deliberate. A stockpile
+            # would make the last thirty seconds of a lucky round unloseable,
+            # and the three hearts in the corner are the whole readout — a
+            # fourth life that is not drawn anywhere is a rule the player
+            # cannot see.
+            self.hearts_hit += 1
+            healed = self.lives < MAX_LIVES
+            if healed:
+                self.lives += 1
+            self.events.append({"name": "heart", "healed": healed,
+                                "lives": self.lives, "max_lives": MAX_LIVES,
+                                "x": round(item.x, 1), "y": round(item.y, 1)})
+            log.info("Game: heart sliced — %s, %d %s",
+                     "life restored" if healed else "already full",
+                     self.lives, "life" if self.lives == 1 else "lives")
+            # And then falls through to score exactly like a fruit, for the
+            # reason the ice cube does: a reward that broke a streak would ask
+            # the player to choose between two rewards.
 
         self.streak += 1
         self.best_streak = max(self.best_streak, self.streak)
@@ -751,12 +842,14 @@ class Session:
                     kept.append(item)
                 continue
             if item.missed:
-                # A dropped fruit costs no time, only the points it was worth
-                # and the streak. That is the whole point of a timed round:
-                # with lives, an awkward fruit was better ignored than
-                # attempted, because a failed swing ended the game a third
-                # sooner. On a clock, doing nothing costs exactly what trying
-                # and missing costs, so there is never a reason not to swing.
+                # A dropped fruit costs no time and no life, only the points it
+                # was worth and the streak — and that survived the lives coming
+                # back, because it is what the lives are *for*. If a drop cost
+                # one, an awkward fruit would be better ignored than attempted:
+                # a failed swing would end the round sooner than not swinging
+                # at all, and the safe play would be to stand still and wait
+                # for something easy. Lives are spent on bombs, which are the
+                # one thing on the screen a player chooses to touch.
                 #
                 # A bomb reaching the floor is still a *good* outcome — the
                 # player correctly left it alone — and does not break a streak.
@@ -777,10 +870,12 @@ class Session:
         """Seconds of play so far, from the clock rather than the wall.
 
         `duration - time_left`, not `now - started_at`, so it does not count
-        paused time and *does* count the seconds a bomb took away. It is what
-        the spawner ramps on, which means a player who slices a bomb gets the
-        difficulty of the time they have used rather than the time they have
-        sat there — the penalty is the lost clock, not a harder game.
+        paused time and is not thrown off by a stalled frame the step clamp
+        shortened. It is what the spawner ramps on, so the difficulty follows
+        the seconds actually played.
+
+        It used to also carry the seconds a bomb took away, which was the
+        interesting half of this docstring and is gone with the time penalty.
         """
         return max(0.0, self.duration - self.time_left)
 
@@ -797,6 +892,11 @@ class Session:
             "phase": self.phase.value,
             "score": self.score,
             "best": self.best,
+            # Both, so the HUD can draw three hearts with one of them spent
+            # without knowing how many a round starts with. The page never
+            # hard-codes `MAX_LIVES`; it draws whatever it is told.
+            "lives": self.lives,
+            "max_lives": MAX_LIVES,
             "time_left": round(self.time_left, 2),
             "duration": round(self.duration, 1),
             "streak": self.streak,
@@ -822,6 +922,8 @@ class Session:
                 "sliced": self.sliced_total,
                 "missed": self.missed_total,
                 "bombs": self.bombs_hit,
+                "hearts": self.hearts_hit,
+                "lives": self.lives,
                 "best_streak": self.best_streak,
                 "best_combo": self.best_combo,
                 "ultimate_hits": self.ultimate_hits,

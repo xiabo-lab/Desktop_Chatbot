@@ -11,12 +11,18 @@ justify a second way in.
 from __future__ import annotations
 
 import subprocess
+import json
+import http.client
+import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from aipi5.core import volume
 from aipi5.core.config import load
+from aipi5.ui.server import WebUI
+from aipi5.ui.state import UiState
 
 CONFIG = Path(__file__).resolve().parent.parent / "config" / "aipi5.yaml"
 
@@ -31,9 +37,11 @@ class TestSettingIt(unittest.TestCase):
     def test_a_percentage_becomes_a_fraction_of_the_default_sink(self):
         with mock.patch("subprocess.run", ran()) as call:
             self.assertTrue(volume.apply(55))
-        args = call.call_args[0][0]
+        args = call.call_args_list[0].args[0]
         self.assertEqual(args[:3], ["wpctl", "set-volume", volume.SINK])
         self.assertEqual(args[3], "0.55")
+        self.assertEqual(["wpctl", "set-mute", volume.SINK, "0"],
+                         call.call_args_list[1].args[0])
 
     def test_the_sink_is_named_by_role_rather_than_by_card(self):
         """`@DEFAULT_AUDIO_SINK@` follows the output. A card and a control --
@@ -47,7 +55,7 @@ class TestSettingIt(unittest.TestCase):
             with self.subTest(asked=asked):
                 with mock.patch("subprocess.run", ran()) as call:
                     volume.apply(asked)
-                self.assertEqual(call.call_args[0][0][3], wanted)
+                self.assertEqual(call.call_args_list[0].args[0][3], wanted)
 
 
 class TestWhenItCannotBeSet(unittest.TestCase):
@@ -88,6 +96,108 @@ class TestReadingItBack(unittest.TestCase):
     def test_something_unparseable_is_None_rather_than_a_guess(self):
         with mock.patch("subprocess.run", ran(stdout="Volume: loud\n")):
             self.assertIsNone(volume.read())
+
+    def test_levels_above_the_supported_range_are_clamped(self):
+        with mock.patch("subprocess.run", ran(stdout="Volume: 1.25\n")):
+            self.assertEqual(volume.read(), 100)
+
+
+class TestMasterControl(unittest.TestCase):
+    def _config(self, folder: str, text: str = "audio:\n  volume: 100\n") -> Path:
+        path = Path(folder) / "aipi5.yaml"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_one_change_applies_to_the_sink_and_survives_restart(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._config(folder)
+            control = volume.VolumeControl(100, path)
+            with (mock.patch.object(volume, "read", return_value=100),
+                  mock.patch.object(volume, "apply", return_value=True) as apply):
+                self.assertTrue(control.set(37))
+            apply.assert_called_once_with(37)
+            self.assertEqual(load(path).audio.volume, 37)
+
+    def test_persistence_keeps_comments_and_the_rest_of_the_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._config(
+                folder, "display:\n  width: 1280\n\naudio:\n"
+                        "  volume: 70  # room level\n\nagent:\n  enabled: false\n")
+            control = volume.VolumeControl(70, path)
+            with (mock.patch.object(volume, "read", return_value=70),
+                  mock.patch.object(volume, "apply", return_value=True)):
+                self.assertTrue(control.set(42))
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("  volume: 42  # room level", text)
+            self.assertIn("display:\n  width: 1280", text)
+            self.assertIn("agent:\n  enabled: false", text)
+
+    def test_a_save_failure_rolls_the_audible_level_back(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._config(folder, "audio:\n  gain: 10\n")
+            control = volume.VolumeControl(40, path)
+            with (mock.patch.object(volume, "read", return_value=40),
+                  mock.patch.object(volume, "apply", return_value=True) as apply):
+                self.assertFalse(control.set(60))
+            self.assertEqual([mock.call(60), mock.call(40)], apply.call_args_list)
+
+    def test_description_names_every_stream_behind_the_master_sink(self):
+        control = volume.VolumeControl(55)
+        with mock.patch.object(volume, "read", return_value=55):
+            info = control.describe()
+        self.assertEqual(55, info["level"])
+        self.assertEqual(["Game", "Call", "Kodama-Lite", "Browser",
+                          "Agent Talk"], info["controls"])
+
+
+class TestVolumeAPI(unittest.TestCase):
+    class Control:
+        def __init__(self):
+            self.level = 64
+
+        def set(self, level):
+            self.level = level
+            return True
+
+        def describe(self):
+            return {"level": self.level, "available": True,
+                    "persistent": True, "error": "", "controls": []}
+
+    def setUp(self):
+        cfg = SimpleNamespace(host="127.0.0.1", port=0,
+                              url="http://127.0.0.1:0")
+        self.control = self.Control()
+        self.web = WebUI(cfg, state=UiState(), history=None, info=lambda: {},
+                         volume=self.control)
+        self.assertTrue(self.web.start())
+        self.port = self.web._server.server_address[1]
+
+    def tearDown(self):
+        self.web.stop()
+
+    def test_the_local_endpoint_sets_and_reads_the_master_level(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=2)
+        body = json.dumps({"level": 23})
+        connection.request("POST", "/api/volume", body,
+                           {"Content-Type": "application/json"})
+        response = connection.getresponse()
+        answer = json.loads(response.read())
+        connection.close()
+        self.assertEqual(200, response.status)
+        self.assertTrue(answer["ok"])
+        self.assertEqual(23, answer["level"])
+        self.assertEqual(23, self.control.level)
+
+    def test_out_of_range_input_is_refused(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=2)
+        body = json.dumps({"level": 101})
+        connection.request("POST", "/api/volume", body,
+                           {"Content-Type": "application/json"})
+        response = connection.getresponse()
+        response.read()
+        connection.close()
+        self.assertEqual(400, response.status)
+        self.assertEqual(64, self.control.level)
 
 
 class TestTheSetting(unittest.TestCase):

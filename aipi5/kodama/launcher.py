@@ -174,7 +174,7 @@ class KodamaLauncher(Plugin):
         env.setdefault("WAYLAND_DISPLAY", "wayland-0")
         return env
 
-    def open(self) -> Result:
+    def open(self, who: str = "something unnamed") -> Result:
         """Start the player, or raise the window it already has.
 
         Idempotent, and idempotent in the way a person means it: somebody
@@ -184,16 +184,31 @@ class KodamaLauncher(Plugin):
 
         `systemctl start` on a running unit is a no-op anyway, so the branch is
         about what is done for the window, not about avoiding a restart.
+
+        **`who` is why this parameter exists, and it is not decoration.** The
+        player was reported as starting on its own and the log could not settle
+        it: every caller produced the same line, so a button press, a spoken
+        command and a model deciding by itself were indistinguishable after the
+        fact — and journald here is volatile (`Storage=auto` over an empty
+        /var/log/journal), so by the time anybody asks, the only record of the
+        launch is gone anyway. A launch that cannot be attributed is a launch
+        that gets argued about instead of fixed. Every caller now names itself,
+        the default names nothing so an unattributed one is visible as such,
+        and the line survives long enough to read because it is written the
+        moment it happens.
         """
         if not self.cfg.enabled:
             return Result.failed("The music player is turned off in the settings.",
                                  "音乐播放器在设置里被关闭了。")
 
         if self.running():
+            log.info("%s asked for the player, which is already running; "
+                     "raising its window", who)
             self.raise_window()
             return Result.done("Kodama-Lite is already open.",
                                "Kodama-Lite 已经打开了。")
 
+        log.info("%s asked to open the music player", who)
         started, detail = self._systemctl("start")
         if not started:
             log.error("could not start %s: %s", self.cfg.service, detail)
@@ -227,7 +242,10 @@ class KodamaLauncher(Plugin):
             CommandSpec(
                 name="open_kodama",
                 description="Open the Kodama-Lite music player",
-                handler=self.open,
+                # Named, so the log says a person asked out loud rather than
+                # leaving the launch unattributed. The router calls the handler
+                # with no arguments, so the caller's name is bound here.
+                handler=lambda: self.open("a spoken command"),
                 # Speaks, for the same reason AIA's `now_playing` does: for the
                 # several seconds this takes there is nothing on screen and no
                 # sound, so silence is indistinguishable from having been

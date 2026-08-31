@@ -236,6 +236,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._feed(params)
         elif route.path == "/api/system":
             self._system()
+        elif route.path == "/api/volume":
+            self._volume()
         elif route.path == "/api/weather":
             self._weather(params)
         elif route.path == "/api/calendar/birthdays":
@@ -313,7 +315,7 @@ class _Handler(BaseHTTPRequestHandler):
                         "/api/game/command", "/api/game/debug",
                         "/api/game/settings", "/api/agent/gesture",
                         "/api/hand/debug", "/api/hand/pause",
-                        "/api/calendar/birthdays"):
+                        "/api/calendar/birthdays", "/api/volume"):
             self._json({"error": "not found"}, 404)
             return
 
@@ -349,6 +351,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/api/calendar/birthdays":
             self._calendar_birthdays_post(payload)
+            return
+
+        if path == "/api/volume":
+            self._volume_post(payload)
             return
 
         if path.startswith("/api/game/"):
@@ -1015,6 +1021,33 @@ class _Handler(BaseHTTPRequestHandler):
             log.exception("could not build the system snapshot")
             self._json({"error": "system information is unavailable"}, 500)
 
+    def _volume(self) -> None:
+        control = getattr(self.ui, "volume", None)
+        if control is None:
+            self._json({"available": False,
+                        "error": "volume control is unavailable"}, 503)
+            return
+        self._json(control.describe())
+
+    def _volume_post(self, payload: dict) -> None:
+        """Set the one sink downstream of every application audio stream."""
+        control = getattr(self.ui, "volume", None)
+        if control is None:
+            self._json({"ok": False, "available": False,
+                        "error": "volume control is unavailable"}, 503)
+            return
+        value = payload.get("level")
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not 0 <= value <= 100 or int(value) != value):
+            self._json({"ok": False,
+                        "error": "level must be a whole number from 0 to 100"},
+                       400)
+            return
+        ok = control.set(int(value))
+        answer = control.describe()
+        answer["ok"] = ok
+        self._json(answer, 200 if ok else 503)
+
     def _weather(self, params: dict) -> None:
         """Today's weather, for the weather page.
 
@@ -1354,7 +1387,7 @@ class WebUI:
                  weather=None, news=None, camera=None, call=None,
                  on_call_change=lambda: None, countdown=None, files=None,
                  photos=None, screen=None, games=None, on_wake=lambda why: None,
-                 agent=None, hands=None, birthdays=None):
+                 agent=None, hands=None, birthdays=None, volume=None):
         self.cfg = cfg
         self.state = state
         # Called the moment a `wake` arrives, before it is queued for the voice
@@ -1382,6 +1415,9 @@ class WebUI:
         # server without either.
         self.photos = photos
         self.screen = screen
+        # The master PipeWire sink controller. Optional so lightweight UI
+        # tests and deployments without audio still serve every other page.
+        self.volume = volume
         # The shutdown countdown, which this module only ever answers about:
         # it is started by the voice loop and drawn by the page.
         self.countdown = countdown

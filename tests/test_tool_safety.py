@@ -3,7 +3,7 @@
 The most important tests in this project. Everything else here is about the
 assistant working; these are about it not doing something nobody asked for.
 
-Three properties, checked against the *real* AIA command declarations rather
+Four properties, checked against the *real* AIA command declarations rather
 than against a mock, because the whole design rests on those declarations being
 the source of truth:
 
@@ -12,6 +12,10 @@ the source of truth:
    model is not part of that conversation.
 2. Nothing from the `system` plugin is offered at all.
 3. A tool name or a command name the model invents is refused, not guessed at.
+4. The model cannot *start* the music player. It may drive one that is already
+   running; opening it is a person's decision, made with the Music button or
+   out loud. This one is here because it was violated: the player was reported
+   as starting on its own, and `open_kodama` was how.
 
 The filter is on the `confirm` flag and not on a list of names, which is what
 makes property 1 survive AIA growing a new destructive command — the test below
@@ -29,6 +33,7 @@ from aia.plugins.base import CommandSpec, Plugin, Registry, Result
 from aia.plugins.kodama import KodamaLite
 from aia.plugins.system import System
 
+from aipi5.llm.prompts import with_facts
 from aipi5.llm.tools import ToolBox
 
 
@@ -116,7 +121,21 @@ class TestWhatIsOffered(unittest.TestCase):
         names = {t["function"]["name"] for t in self.tools}
         self.assertNotIn("get_weather", names)
         self.assertNotIn("describe_camera_image", names)
+
+    def test_the_model_is_never_offered_a_way_to_start_the_player(self):
+        # Property 4. Not "with this configuration": there is no argument that
+        # puts a launcher into a ToolBox any more, so there is no arrangement of
+        # services that brings this tool back by accident.
+        names = {t["function"]["name"] for t in self.tools}
         self.assertNotIn("open_kodama", names)
+        self.assertNotIn("open_kodama", ToolBox()._handlers)
+
+    def test_a_toolbox_cannot_be_given_a_launcher(self):
+        # The structural half, and the reason this is a guarantee rather than a
+        # removed line somebody could put back without weighing it. A ToolBox
+        # holds no launcher, so no tool has an object to call `open()` on.
+        with self.assertRaises(TypeError):
+            ToolBox(launcher=object())
 
     def test_every_schema_refuses_extra_properties(self):
         for tool in self.tools:
@@ -184,7 +203,12 @@ class TestDispatch(unittest.TestCase):
         box = ToolBox(registry=Registry([FakePlayer(running=False)]))
         result = parse(box.call("execute_kodama_command", '{"command": "pause"}'))
         self.assertFalse(result["ok"])
-        self.assertIn("open_kodama", result["error"])
+        # And the message sends the model to the person, not to a tool. It used
+        # to say "call open_kodama first", which is how a music request the
+        # model merely inferred became an app starting up and playing its last
+        # queue into the room.
+        self.assertNotIn("open_kodama", result["error"])
+        self.assertIn("Music button", result["error"])
 
     def test_a_tool_that_throws_becomes_an_error_not_an_exception(self):
         class Exploding:
@@ -194,6 +218,34 @@ class TestDispatch(unittest.TestCase):
         box = ToolBox(weather=Exploding())
         result = parse(box.call("get_weather", "{}"))
         self.assertFalse(result["ok"])
+
+
+class TestThePromptDoesNotInviteALaunch(unittest.TestCase):
+    """The tool list is half the boundary; the prompt is the other half.
+
+    Removing `open_kodama` while the standing facts still said "it can be
+    started with the open_kodama tool" would leave the model being told, every
+    turn the player was closed, to reach for something that no longer exists —
+    which is a model that answers "I'll start it" and then does not.
+    """
+
+    def facts_when_closed(self) -> str:
+        return with_facts("Anytown", "en", {"kodama_running": False})
+
+    def test_the_standing_facts_never_name_a_launch_tool(self):
+        self.assertNotIn("open_kodama", self.facts_when_closed())
+
+    def test_a_closed_player_is_reported_with_the_way_to_open_it(self):
+        # The fact stays — the model needs it to answer "why isn't it playing?"
+        # — but it now points at the person rather than at itself.
+        self.assertIn("no way to start it", self.facts_when_closed())
+
+    def test_a_running_player_is_told_none_of_this(self):
+        # Asserted on the standing-facts line rather than on the whole prompt:
+        # the fixed part of the prompt says "you cannot start it" always, and
+        # should. It is the per-turn fact that must appear only when true.
+        facts = with_facts("Anytown", "en", {"kodama_running": True})
+        self.assertNotIn("no way to start it", facts)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""The game itself: physics, scoring, lives, bombs and game over.
+"""The game itself: physics, scoring, lives, bombs, hearts and game over.
 
 Sections 24 to 28. Every one of these plays a real session — `tick` takes time
 as an argument and never reads a clock, so a two-minute game runs in a
@@ -13,11 +13,12 @@ from pathlib import Path
 
 from aipi5.games.fruit_ninja import fruit as fruit_mod
 from aipi5.games.fruit_ninja.collision import BLADE_HALF_WIDTH
-from aipi5.games.fruit_ninja.fruit import (BOMB, BY_NAME, ICE, KINDS, Fruit,
-                                           Spawner)
-from aipi5.games.fruit_ninja.game import (BOMB_PENALTY_S, MIN_SLASH_SPEED,
-                                          ROUND_SECONDS, SLOW_FACTOR,
-                                          SLOW_SECONDS, ULTIMATE_START_AT,
+from aipi5.games.fruit_ninja.fruit import (BOMB, BY_NAME, HEART, ICE, KINDS,
+                                           Fruit, Spawner)
+from aipi5.games.fruit_ninja.game import (BOMB_PENALTY_POINTS, MAX_LIVES,
+                                          MIN_SLASH_SPEED, ROUND_SECONDS,
+                                          SLOW_FACTOR, SLOW_SECONDS,
+                                          ULTIMATE_START_AT,
                                           ULTIMATE_WARNING_AT, HighScores,
                                           Phase, Session, State)
 from aipi5.motion.pose_filter import Hand
@@ -236,8 +237,8 @@ class TestSlicing(unittest.TestCase):
         `game._blade_reach` gives a bomb none of the blade's width, so doubling
         it can only ever give the player something. A swipe that now takes a
         grape at 89 px must still leave a bomb alone at the same distance —
-        otherwise the wider blade takes five seconds off the clock with one
-        hand for every fruit it gives with the other.
+        otherwise the wider blade takes a life with one hand for every fruit it
+        gives with the other.
         """
         distance = BOMB.radius + 26              # clear of the bomb, inside the blade
         self.assertLess(distance, BOMB.radius + BLADE_HALF_WIDTH)
@@ -262,7 +263,7 @@ class TestSlicing(unittest.TestCase):
 
         The same swipe that now takes a grape 50 px away must not set off a
         bomb the player steered around by the same margin, or the wider blade
-        costs as much clock as it wins score.
+        costs as many lives as it wins points.
         """
         item = self.place(kind=BOMB, x=640, y=400)
         near = BOMB.radius + 10
@@ -386,12 +387,98 @@ class TestTheIceCube(unittest.TestCase):
         self.session.start(now=10.0)
         self.assertEqual(self.session.slow_left, 0.0)
 
+    def test_the_page_is_told_how_many_lives_are_left(self):
+        """Both numbers, so the HUD draws the row without knowing the rule."""
+        self.session.lives = 2
+        snapshot = self.session.snapshot(now=0.033)
+        self.assertEqual(snapshot["lives"], 2)
+        self.assertEqual(snapshot["max_lives"], MAX_LIVES)
+
     def test_the_page_is_told_the_rate_time_is_running_at(self):
         """Without both, the page's extrapolation disagrees with the truth."""
         self.cut_the_ice()
         snapshot = self.session.snapshot(now=0.033)
         self.assertAlmostEqual(snapshot["slow"], SLOW_SECONDS, places=2)
         self.assertEqual(snapshot["slow_factor"], SLOW_FACTOR)
+
+
+class TestTheHeartFruit(unittest.TestCase):
+    """Slicing a heart gives a life back, up to the three a round starts with."""
+
+    def setUp(self):
+        self.session = Session()
+        self.session.start(now=0.0)
+        self.session.spawner.seed(7)
+
+    def cut_the_heart(self, at=0.033):
+        """Put a heart fruit in the middle of the screen and slash through it."""
+        item = Fruit(kind=HEART, x=640, y=400, vx=0, vy=0, spin=0, id=98)
+        self.session.fruit.append(item)
+        self.session.tick(now=at,
+                          hands=[screen_hand("right_wrist", 400, 400, 900, 400)])
+        self.assertTrue(item.sliced)
+        return item
+
+    def test_it_gives_a_life_back(self):
+        self.session.lives = 1
+        self.cut_the_heart()
+        self.assertEqual(self.session.lives, 2)
+        self.assertEqual(self.session.hearts_hit, 1)
+
+    def test_it_cannot_take_a_round_above_full_health(self):
+        """No stockpile. The three hearts in the corner are the whole readout."""
+        self.cut_the_heart()
+        self.assertEqual(self.session.lives, MAX_LIVES)
+
+    def test_a_heart_at_full_health_still_scores_and_says_why(self):
+        """Silence there reads as the game having missed the swing."""
+        self.cut_the_heart()
+        event = next(e for e in self.session.events if e["name"] == "heart")
+        self.assertFalse(event["healed"])
+        self.assertEqual(event["lives"], MAX_LIVES)
+        self.assertEqual(self.session.score, HEART.points)
+
+    def test_the_event_carries_the_count_the_page_draws(self):
+        self.session.lives = 1
+        self.cut_the_heart()
+        event = next(e for e in self.session.events if e["name"] == "heart")
+        self.assertTrue(event["healed"])
+        self.assertEqual(event["lives"], 2)
+        self.assertEqual(event["max_lives"], MAX_LIVES)
+
+    def test_it_scores_and_streaks_like_a_fruit(self):
+        """The ice cube's rule: a reward must not cost the other reward."""
+        self.session.lives = 1
+        self.cut_the_heart()
+        self.assertEqual(self.session.score, HEART.points)
+        self.assertEqual(self.session.streak, 1)
+        self.assertEqual(self.session.sliced_total, 1)
+
+    def test_a_bomb_and_a_heart_undo_each_other(self):
+        """The round trip, because each half is only interesting against it."""
+        self.session.fruit.append(
+            Fruit(kind=BOMB, x=640, y=400, vx=0, vy=0, spin=0))
+        self.session.tick(now=0.033,
+                          hands=[screen_hand("right_wrist", 400, 400, 900, 400)])
+        self.assertEqual(self.session.lives, MAX_LIVES - 1)
+        self.cut_the_heart(at=0.4)
+        self.assertEqual(self.session.lives, MAX_LIVES)
+
+    def test_a_dropped_heart_costs_a_life_no_more_than_any_other_fruit(self):
+        """It is a missed fruit, not a missed life. Nothing here is punished."""
+        self.session.lives = 1
+        item = Fruit(kind=HEART, x=640, y=fruit_mod.GONE_Y + 1,
+                     vx=0, vy=200, spin=0)
+        self.session.fruit.append(item)
+        self.session.tick(now=0.033, hands=[])
+        self.assertEqual(self.session.lives, 1)
+        self.assertEqual(self.session.missed_total, 1)
+
+    def test_a_new_round_starts_at_full_health(self):
+        self.session.lives = 0
+        self.session.start(now=10.0)
+        self.assertEqual(self.session.lives, MAX_LIVES)
+        self.assertEqual(self.session.hearts_hit, 0)
 
 
 class TestLivesAndGameOver(unittest.TestCase):
@@ -458,33 +545,95 @@ class TestLivesAndGameOver(unittest.TestCase):
         self.assertEqual(self.session.missed_total, 0)
         self.assertEqual(self.session.streak, 4)
 
-    def test_a_sliced_bomb_costs_seconds(self):
+    def test_a_sliced_bomb_costs_a_life_and_a_score(self):
+        self.session.score = 100
         before = self.session.time_left
         self.session.fruit.append(
             Fruit(kind=BOMB, x=640, y=400, vx=0, vy=0, spin=0))
         self.session.tick(now=0.033,
                           hands=[screen_hand("right_wrist", 400, 400, 900, 400)])
-        self.assertAlmostEqual(self.session.time_left,
-                               before - BOMB_PENALTY_S - 0.033, delta=0.01)
+        self.assertEqual(self.session.lives, MAX_LIVES - 1)
+        self.assertEqual(self.session.score, 100 - BOMB_PENALTY_POINTS)
         self.assertEqual(self.session.bombs_hit, 1)
+        # And the clock is untouched but for the frame that just elapsed. This
+        # is the assertion the old `test_a_sliced_bomb_costs_seconds` made,
+        # read the other way round.
+        self.assertAlmostEqual(self.session.time_left, before - 0.033,
+                               delta=0.01)
 
-    def test_a_sliced_bomb_does_not_subtract_score(self):
-        """A number that goes backwards reads as the game taking something."""
-        self.session.score = 50
+    def test_a_bomb_cannot_push_the_score_below_zero(self):
+        """A negative score is a different game. The penalty stops at nothing."""
+        self.session.score = 10
         self.session.fruit.append(
             Fruit(kind=BOMB, x=640, y=400, vx=0, vy=0, spin=0))
         self.session.tick(now=0.033,
                           hands=[screen_hand("right_wrist", 400, 400, 900, 400)])
-        self.assertEqual(self.session.score, 50)
+        self.assertEqual(self.session.score, 0)
 
-    def test_a_bomb_cannot_push_the_clock_below_zero(self):
-        self.session.time_left = 2.0
-        self.session.fruit.append(
-            Fruit(kind=BOMB, x=640, y=400, vx=0, vy=0, spin=0))
-        self.session.tick(now=0.033,
-                          hands=[screen_hand("right_wrist", 400, 400, 900, 400)])
-        self.assertEqual(self.session.time_left, 0.0)
+    def test_running_out_of_lives_ends_the_round(self):
+        """The new losing condition, played out one bomb at a time."""
+        now = 0.0
+        for expected in range(MAX_LIVES - 1, -1, -1):
+            self.session.fruit.append(
+                Fruit(kind=BOMB, x=640, y=400, vx=0, vy=0, spin=0))
+            now += 0.033
+            self.session.tick(now=now,
+                              hands=[screen_hand("right_wrist",
+                                                 400, 400, 900, 400)])
+            self.assertEqual(self.session.lives, expected)
         self.assertEqual(self.session.state, State.OVER)
+        self.assertGreater(self.session.time_left, 0.0,
+                           "the round ended on lives, not on the clock")
+
+    def test_two_bombs_on_one_swing_are_one_game_over(self):
+        """Why `finish` is called from `tick` and not from inside `_cut`.
+
+        A single slash through two bombs cuts both in the same frame, from
+        inside the loop that is iterating the fruit. Ending the game there
+        would end it twice — two `game-over` events, and the second `finish`
+        running over state the first one had already banked.
+        """
+        self.session.lives = 2
+        for x in (500, 800):
+            self.session.fruit.append(
+                Fruit(kind=BOMB, x=x, y=400, vx=0, vy=0, spin=0))
+        self.session.tick(now=0.033,
+                          hands=[screen_hand("right_wrist", 300, 400, 1000, 400)])
+        self.assertEqual(self.session.bombs_hit, 2)
+        self.assertEqual(self.session.lives, 0)
+        self.assertEqual(self.session.state, State.OVER)
+        overs = [e for e in self.session.events if e["name"] == "game-over"]
+        self.assertEqual(len(overs), 1)
+        self.assertEqual(overs[0]["reason"], "lives")
+
+    def test_running_out_of_time_says_so(self):
+        """The other ending, and the field the game-over screen reads."""
+        self.session.time_left = 0.2
+        self.run_for(0.5)
+        over = next(e for e in self.session.events if e["name"] == "game-over")
+        self.assertEqual(over["reason"], "time")
+
+    def test_a_bomb_event_carries_what_it_cost_and_what_is_left(self):
+        """The page animates exactly these numbers and keeps no copy of them."""
+        self.session.fruit.append(
+            Fruit(kind=BOMB, x=640, y=400, vx=0, vy=0, spin=0))
+        self.session.tick(now=0.033,
+                          hands=[screen_hand("right_wrist", 400, 400, 900, 400)])
+        bomb = next(e for e in self.session.events if e["name"] == "bomb")
+        self.assertEqual(bomb["points"], BOMB_PENALTY_POINTS)
+        self.assertEqual(bomb["lives"], MAX_LIVES - 1)
+        self.assertEqual(bomb["max_lives"], MAX_LIVES)
+        self.assertNotIn("seconds", bomb)
+
+    def test_nothing_is_thrown_after_the_last_life(self):
+        """A fruit launched into a finished round is a fruit nobody can reach."""
+        self.session.lives = 1
+        self.session.fruit.append(
+            Fruit(kind=BOMB, x=640, y=400, vx=0, vy=0, spin=0))
+        self.session.tick(now=0.033,
+                          hands=[screen_hand("right_wrist", 400, 400, 900, 400)])
+        live = [f for f in self.session.fruit if not f.sliced]
+        self.assertEqual(live, [])
 
     def test_a_miss_breaks_the_streak(self):
         self.session.streak = 5
@@ -510,11 +659,12 @@ class TestLivesAndGameOver(unittest.TestCase):
         self.run_for(0.9)
         self.assertEqual(len(self.session.fruit), before)
 
-    def test_elapsed_excludes_the_seconds_a_bomb_took(self):
-        """Difficulty follows time *used*, so a bomb is not also a harder game."""
+    def test_elapsed_follows_the_clock_and_not_the_wall(self):
+        """Difficulty ramps on seconds of play, so a pause is not a harder game."""
         self.run_for(10.0)
-        self.session.time_left -= BOMB_PENALTY_S
-        self.assertAlmostEqual(self.session.elapsed, 15.0, delta=0.3)
+        self.session.pause(now=self.session._last_tick)
+        self.session.resume(now=self.session._last_tick + 40.0)
+        self.assertAlmostEqual(self.session.elapsed, 10.0, delta=0.3)
 
     def test_a_finished_game_stops_simulating(self):
         self.session.finish(now=1.0)
@@ -776,6 +926,51 @@ class TestSpawner(unittest.TestCase):
                 bombs += item.is_bomb
         self.assertGreater(ice, 0)
         self.assertLess(ice, bombs)
+
+    def test_one_heart_for_every_three_bombs(self):
+        """The requirement, as the only thing that can check it: a long round.
+
+        Sampled over a long run of throws rather than asserted on
+        `heart_chance` directly, because the number this is really about is the
+        *count*, and the two differ — the heart is rolled only on the throws
+        the bomb declined, which is exactly the correction `heart_chance`
+        exists to make. A test against the constant would have passed for the
+        naive `bomb_chance / 3` that comes out at 0.29 hearts per bomb.
+
+        Twenty minutes rather than the ten it used to be. Halving `bomb_chance`
+        halved the sample too, and ten minutes came back with 196 bombs against
+        a guard that wanted 200 — the ratio was still right, there was simply
+        not enough of it to say so.
+        """
+        spawner = Spawner()
+        spawner.seed(4)
+        now, hearts, bombs = 0.0, 0, 0
+        while now < 1200.0:
+            now += 0.05
+            for item in spawner.due(now=now, elapsed=now):
+                hearts += item.is_heart
+                bombs += item.is_bomb
+        self.assertGreater(bombs, 200, "not enough bombs to measure a ratio")
+        self.assertAlmostEqual(hearts / bombs, 1 / 3, delta=0.04)
+
+    def test_no_hearts_before_the_first_bomb_could_have_been(self):
+        """A heart with nothing to heal is a ten-point fruit wearing a symbol."""
+        spawner = Spawner()
+        spawner.seed(4)
+        now, thrown = 0.0, []
+        while now < spawner.bomb_after:
+            now += 0.05
+            thrown.extend(spawner.due(now=now, elapsed=now))
+        self.assertTrue(thrown)
+        self.assertFalse(any(item.is_heart for item in thrown))
+
+    def test_the_heart_rate_follows_the_bomb_rate(self):
+        """A ratio, not two numbers. Change one and the other keeps up."""
+        spawner = Spawner(bomb_chance=0.3)
+        thrown = spawner.bomb_chance
+        # What the heart roll sees is only what the bomb roll passed on.
+        self.assertAlmostEqual(spawner.heart_chance * (1 - thrown),
+                               thrown / 3)
 
     def test_no_ice_in_the_opening_seconds(self):
         spawner = Spawner()

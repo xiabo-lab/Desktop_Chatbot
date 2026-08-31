@@ -342,35 +342,56 @@
     0%, 100% { transform: scale(1); }
     50% { transform: scale(1.09); }
   }
-  /* What a bomb costs, said where the cost lands. The explosion already floats
-     a "-5s" over the fruit, in the middle of the screen, and that turned out
-     not to be enough: the clock drops five seconds in one frame and a player
-     watching the fruit reads it afterwards as a countdown that skipped. So the
-     clock itself flinches, and the number it lost flies off it.
-
-     On the column rather than on `#game-clock`, because the clock already owns
-     an `animation` for the under-five-seconds pulse and an element has only one
-     of those — a second rule here would silently cancel the first. */
   #game-clock-col { position: relative; }
-  #game-clock-col.penalty { animation: clock-penalty 0.55s ease-out; }
-  @keyframes clock-penalty {
-    0%   { transform: translateX(0) scale(1); filter: none; }
-    12%  { transform: translateX(-7px) scale(1.06); filter: brightness(1.7) saturate(0.4); }
-    28%  { transform: translateX(6px) scale(1.04); }
-    46%  { transform: translateX(-3px) scale(1.02); }
-    100% { transform: translateX(0) scale(1); filter: none; }
+
+  /* ── the lives ───────────────────────────────────────────────
+     The round's hearts in the top right corner, above the clock, because a
+     bomb now costs one of them and the player has to be able to see how many
+     are left without reading anything. Five of them as it stands, but the row
+     is built from `max_lives` and never from a number written here.
+
+     Drawn as inline SVG rather than as the "❤" character the first version of
+     this game used. Two reasons, and the second is the real one: a text heart
+     is whatever glyph the device's font stack happens to have — on this Pi it
+     renders as a flat black-red symbol with no outline, which against warm
+     wood is a smudge — and a spent heart has to be visibly the *same shape*
+     as a full one with the life taken out of it, which is a thing a colour
+     change to a glyph does badly and an outline-plus-fill does for free.
+
+     The gold frame is what ties the corner to the heart fruit on the canvas:
+     the thing you slice and the thing it fills in are recognisably one object,
+     which is the whole of how a player learns what the pink-red fruit with the
+     gold edge is for without being told. */
+  #game-lives {
+    display: flex; gap: 9px; justify-content: flex-end;
+    margin-bottom: 12px; min-height: 34px;
   }
-  #game-clock-penalty {
-    position: absolute; right: 0; top: 0; pointer-events: none;
-    font-size: 34px; font-weight: 700; color: var(--danger);
-    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
-    opacity: 0; font-variant-numeric: tabular-nums;
+  .life { width: 36px; height: 33px; display: block; overflow: visible; }
+  .life .heart-fill { fill: #e0182f; transition: fill 0.25s ease; }
+  .life .heart-inner { fill: rgba(255, 255, 255, 0.28); }
+  .life .heart-frame {
+    fill: none; stroke: #e8bd63; stroke-width: 2.4; stroke-linejoin: round;
   }
-  #game-clock-penalty.on { animation: clock-penalty-float 1.1s ease-out; }
-  @keyframes clock-penalty-float {
-    0%   { opacity: 0; transform: translateY(6px) scale(0.8); }
-    18%  { opacity: 1; transform: translateY(-6px) scale(1.15); }
-    100% { opacity: 0; transform: translateY(-52px) scale(1); }
+  /* A spent heart stays in place rather than disappearing. A row that gets
+     shorter moves the two survivors sideways, and "how many hearts are there"
+     is then a question about position instead of about colour — which is the
+     harder question to answer out of the corner of an eye mid-swing. */
+  .life.spent .heart-fill { fill: rgba(20, 8, 6, 0.55); }
+  .life.spent .heart-inner { fill: rgba(255, 255, 255, 0.06); }
+  .life.spent .heart-frame { stroke: rgba(232, 189, 99, 0.42); }
+  .life.losing { animation: life-lost 0.75s ease-out; }
+  .life.gaining { animation: life-gained 0.65s ease-out; }
+  @keyframes life-lost {
+    0%   { transform: scale(1); filter: brightness(1); }
+    14%  { transform: scale(1.42) rotate(-8deg); filter: brightness(2.4); }
+    38%  { transform: scale(0.82) rotate(6deg); }
+    62%  { transform: scale(1.08) rotate(-3deg); }
+    100% { transform: scale(1) rotate(0); filter: brightness(1); }
+  }
+  @keyframes life-gained {
+    0%   { transform: scale(0.6); filter: brightness(2.2); }
+    45%  { transform: scale(1.34); filter: brightness(1.6); }
+    100% { transform: scale(1); filter: brightness(1); }
   }
   /* A thin bar under the clock, because a number has to be read and a bar can
      be seen. Width is set from the script. */
@@ -1449,6 +1470,107 @@
     #wx-week { flex: 0 0 auto; }
   }
 
+  /* ── file transfer ─────────────────────────────────────────────
+     This block was lost in 7d23d00, the weather-dashboard rewrite, which
+     replaced the stretch of stylesheet it sat in. Nothing referenced it from
+     the script, so nothing broke loudly: the page kept rendering, `.page`
+     kept its 800 px, and every rule below simply stopped applying. What that
+     looked like on the panel is the whole bug report — `#files-top` fell back
+     to a block, so the four sort buttons inherited `button { flex: 1;
+     height: 96px }` and became four full-width 96 px slabs stacked down the
+     page, and `#files-list` — no longer `flex: 1; overflow-y: auto` — began
+     below them and ran off the bottom of a screen that does not scroll. The
+     files were listed the whole time. They were just past 800 px. */
+
+  #files-top {
+    display: flex; align-items: center; gap: 16px; margin-top: 16px;
+    flex: 0 0 auto;
+  }
+  /* The one button on this page that is a button rather than a row. Sized for
+     a finger and labelled with what it does, not with an icon: this is the
+     control somebody presses while holding a phone in the other hand. */
+  #files-upload { flex: 0 0 320px; height: 88px; flex-direction: row; gap: 14px; }
+  #files-storage {
+    flex: 1; text-align: right; font-size: 20px; color: var(--ink-dim);
+    line-height: 1.4;
+  }
+  #files-storage b { color: var(--ink); font-weight: 500; }
+
+  #files-sort { display: flex; gap: 10px; flex: 0 0 auto; }
+  #files-sort button {
+    flex: 0 0 auto; height: 44px; padding: 0 18px; font-size: 18px;
+    flex-direction: row; border-radius: 10px;
+  }
+  #files-sort button.on { border-color: var(--accent); color: var(--accent); }
+
+  /* Progress. Present only while something is transferring — a bar sitting at
+     zero is a bar somebody wonders about. */
+  #files-progress { display: none; margin-top: 14px; flex: 0 0 auto; }
+  #files-progress.on { display: block; }
+  #files-progress .what {
+    display: flex; justify-content: space-between; font-size: 20px;
+    color: var(--ink-dim); margin-bottom: 8px;
+  }
+  #files-progress .what b { color: var(--ink); font-weight: 400; }
+  /* Scoped to this page, where it used to be a bare `.bar`. The weather page
+     arrived after this block was deleted and took the same class name for the
+     2 px rule under a weekday, so a bare `.bar` restored verbatim would hand
+     every one of those seven a 1 px border and a 7 px radius — a pill outline
+     where there should be a hairline. Same rules, one selector narrower. */
+  #files-progress .bar {
+    height: 14px; border-radius: 7px; background: var(--panel);
+    border: 1px solid var(--panel-edge); overflow: hidden;
+  }
+  #files-progress .bar span {
+    display: block; height: 100%; width: 0;
+    background: var(--accent); transition: width 0.2s linear;
+  }
+  #files-progress.failed .bar span { background: var(--danger); }
+  #files-progress.done .bar span { background: #4ec97a; }
+
+  #files-list {
+    flex: 1; margin-top: 16px; overflow-y: auto; padding-right: 10px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  #files-list::-webkit-scrollbar { width: 12px; }
+  #files-list::-webkit-scrollbar-thumb { background: var(--panel-edge); border-radius: 6px; }
+
+  .file-row {
+    background: var(--panel); border: 1px solid var(--panel-edge);
+    border-radius: 14px; padding: 14px 18px;
+    display: flex; align-items: center; gap: 18px;
+    /* Not in the original block, and the one line here that is new. `#files-list`
+       is a flex column, so a row's default `flex-shrink: 1` lets a long list
+       squeeze every row thinner instead of scrolling — which is what a folder
+       somebody has been sending holiday photos into looks like. Rows keep their
+       height; the list scrolls. */
+    flex: 0 0 auto;
+  }
+  .file-row .kind {
+    flex: 0 0 46px; font-size: 30px; text-align: center;
+    font-family: "Noto Color Emoji", "Noto Emoji", "Segoe UI Emoji", sans-serif;
+  }
+  .file-row .about { flex: 1; min-width: 0; }
+  .file-row .name {
+    font-size: 23px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .file-row .meta { font-size: 17px; color: var(--ink-faint); margin-top: 5px; }
+  .file-row .act {
+    flex: 0 0 auto; height: 56px; padding: 0 22px; font-size: 19px;
+    flex-direction: row; border-radius: 12px;
+  }
+  .file-row .act.danger { color: var(--danger); border-color: #3a2630; }
+  .file-row.confirming { border-color: var(--danger); }
+  .file-row .ask { flex: 0 0 auto; font-size: 19px; color: var(--danger); }
+
+  #files-empty {
+    margin: auto; text-align: center; color: var(--ink-faint); font-size: 22px;
+    line-height: 1.6;
+  }
+  #files-empty b { display: block; color: var(--ink-dim); font-size: 26px;
+                   margin-bottom: 10px; }
+
   /* ── the screensaver ─────────────────────────────────────────── */
 
   /* Full 1280x800, over everything, and now two screens inside one frame: the
@@ -1603,6 +1725,27 @@
   .set-label { flex: 0 0 240px; font-size: 20px; color: var(--ink-dim); }
   .set-value { flex: 1; font-size: 21px; color: var(--ink); }
   .set-value.off { color: var(--ink-faint); }
+  .volume-row { align-items: center; }
+  .volume-control {
+    flex: 1; display: flex; align-items: center; gap: 20px; min-width: 0;
+  }
+  #set-volume {
+    flex: 1; height: 52px; margin: 0; cursor: pointer;
+    accent-color: #35d47d; touch-action: pan-y; background: transparent;
+    -webkit-appearance: none; appearance: none;
+  }
+  #set-volume::-webkit-slider-runnable-track {
+    height: 12px; border-radius: 999px; background: rgba(255,255,255,0.18);
+  }
+  #set-volume::-webkit-slider-thumb {
+    width: 34px; height: 34px; margin-top: -11px; border-radius: 50%;
+    background: #35d47d; box-shadow: 0 2px 12px rgba(0,0,0,0.35);
+    -webkit-appearance: none;
+  }
+  #set-volume-value {
+    flex: 0 0 86px; text-align: right; font-size: 26px; font-weight: 650;
+    color: var(--ink); font-variant-numeric: tabular-nums;
+  }
   .set-note {
     margin-top: 12px; font-size: 17px; color: var(--ink-faint); line-height: 1.5;
   }
@@ -1928,14 +2071,15 @@
           <div id="game-streak"></div>
         </div>
         <div id="game-clock-col">
+          <!-- The lives, in the top right corner. Filled in from the snapshot
+               by `renderLives`, which draws whatever `max_lives` says rather
+               than assuming three. -->
+          <div id="game-lives" aria-live="polite"></div>
           <!-- `2:00` at the start of a round. The unit span the seconds-only
                clock had is gone: "2:00 s" is wrong and the colon already says
                what the number is. -->
           <div id="game-clock">2:00</div>
           <div id="game-clock-bar"><div></div></div>
-          <!-- The seconds a bomb just took, thrown off the clock. Empty and
-               invisible the rest of the round. -->
-          <div id="game-clock-penalty"></div>
         </div>
       </div>
     </div>
@@ -2345,13 +2489,8 @@
 </div>
 
 <!-- ── settings ────────────────────────────────────────────────── -->
-<!--
-  One section so far, and it is the screensaver — section 22. Everything else
-  this device can be configured with is in `config/aipi5.yaml`, which is the
-  right place for it: a wake word, a microphone gain and a Hailo model are not
-  things anybody edits with a finger. What is here is what has to be done from
-  the panel, because it needs a phone camera and a Google account.
--->
+<!-- Settings that belong on the touchscreen: the room's shared output level,
+     and controls whose interaction needs a panel or phone. -->
 <div id="page-settings" class="page">
   <header>
     <button class="back" data-back><span class="glyph">‹</span> Back</button>
@@ -2360,6 +2499,21 @@
   </header>
 
   <div id="settings-body">
+    <div class="set-section">
+      <div class="set-title">Volume</div>
+      <div class="set-row volume-row">
+        <label class="set-label" for="set-volume">All applications</label>
+        <div class="volume-control">
+          <input id="set-volume" type="range" min="0" max="100" step="1"
+                 value="100" aria-label="Master volume">
+          <output id="set-volume-value" for="set-volume">100%</output>
+        </div>
+      </div>
+      <div class="set-note" id="set-volume-note">
+        Controls Game, Call, Kodama-Lite, Browser, and Agent Talk together.
+      </div>
+    </div>
+
     <div class="set-section">
       <div class="set-title">Screensaver</div>
 
@@ -3137,16 +3291,18 @@ function armNext() {
 // the one thing here that changes on its own is a picking session finishing
 // on somebody's phone, and that is a few-second event, not a live one.
 //
-// **Nothing on this page writes to the configuration file.** The schedule, the
-// timeout and the interval are shown and not edited, because section 22 asks
-// for the schedule to live in one place so it can be changed without
-// rewriting the screensaver logic — and a second writer would be a second
-// place. What the buttons here do is authorise, pick, sync and disconnect,
-// none of which a YAML file can express.
+// The master volume is the sole scalar this page persists. It is both applied
+// live to PipeWire and written to the existing `audio.volume` key so an
+// assistant restart cannot undo what somebody chose here. The schedule,
+// timeout and interval remain read-only.
 
 let settingsTimer = null;
 let pickerTimer = null;
 let settingsBusy = false;
+let volumeTimer = null;
+let volumePending = null;
+let volumeSending = false;
+let volumeEditing = false;
 
 const SETTINGS_POLL_MS = 4000;
 // While a QR code is on the screen somebody is standing in front of it with a
@@ -3178,6 +3334,8 @@ async function drawSettings() {
   }
   const screen = info.screensaver || {};
   const photos = info.photos || {};
+
+  drawVolume(info.volume || {});
 
   el("set-enabled").textContent = screen.enabled ? "On" : "Off";
   el("set-enabled").classList.toggle("off", !screen.enabled);
@@ -3216,6 +3374,76 @@ async function drawSettings() {
   drawGameSettings();
   drawMotionSettings();
 }
+
+function showVolume(level) {
+  const value = Math.max(0, Math.min(100, Math.round(Number(level) || 0)));
+  el("set-volume").value = String(value);
+  el("set-volume").setAttribute("aria-valuetext", `${value} percent`);
+  el("set-volume-value").textContent = `${value}%`;
+}
+
+function drawVolume(info) {
+  if (!volumeEditing && !volumeSending && volumePending === null) {
+    showVolume(info.level ?? info.configured ?? 100);
+  }
+  const available = info.available !== false;
+  el("set-volume").disabled = !available;
+  const names = (info.controls || ["Game", "Call", "Kodama-Lite", "Browser",
+                                   "Agent Talk"]).join(", ");
+  let note = `Controls ${names} together.`;
+  if (!available) note = info.error || "The system audio output is unavailable.";
+  else if (info.persistent === false) note += " This change lasts until restart.";
+  el("set-volume-note").textContent = note;
+}
+
+async function flushVolume() {
+  if (volumeTimer) { clearTimeout(volumeTimer); volumeTimer = null; }
+  if (volumeSending || volumePending === null) return;
+  volumeSending = true;
+  while (volumePending !== null) {
+    const level = volumePending;
+    volumePending = null;
+    try {
+      const response = await fetch("/api/volume", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ level }),
+      });
+      const info = await response.json();
+      if (!response.ok || !info.ok) {
+        el("set-volume-note").textContent =
+          info.error || "The volume change was not accepted.";
+      } else if (volumePending === null && !volumeEditing) {
+        drawVolume(info);
+      }
+    } catch (err) {
+      el("set-volume-note").textContent = "The assistant is not answering.";
+    }
+  }
+  volumeSending = false;
+}
+
+function queueVolume(level, immediate) {
+  volumePending = Math.max(0, Math.min(100, Math.round(Number(level) || 0)));
+  showVolume(volumePending);
+  if (volumeTimer) clearTimeout(volumeTimer);
+  volumeTimer = immediate ? null : setTimeout(flushVolume, 90);
+  if (immediate) flushVolume();
+}
+
+el("set-volume").addEventListener("pointerdown", () => { volumeEditing = true; });
+el("set-volume").addEventListener("input", (event) => {
+  volumeEditing = true;
+  queueVolume(event.target.value, false);
+});
+el("set-volume").addEventListener("change", (event) => {
+  volumeEditing = false;
+  queueVolume(event.target.value, true);
+});
+el("set-volume").addEventListener("pointercancel", () => {
+  volumeEditing = false;
+  flushVolume();
+});
 
 function roundLabel(seconds) {
   const selected = Number(seconds || 120);
@@ -6434,6 +6662,7 @@ function applyGameState(state) {
     gameEl("game-best").textContent = "BEST " + (game.best || 0);
     gameEl("game-streak").textContent =
       game.streak >= 3 ? `${game.streak} in a row` : "";
+    renderLives(game);
     updateCombo(game.combo || 0);
     updateBanner(game);
     showSheet({ ready: "start", paused: "paused", over: "over",
@@ -6448,9 +6677,18 @@ function applyGameState(state) {
       const ult = s.ultimate_hits
         ? ` · ultimate ${s.ultimate_done ? "COMPLETE " : ""}${s.ultimate_hits} hits`
         : "";
+      // Two ways to lose now, and the summary leads with which one it was —
+      // "0 lives left" at the top of a list of numbers is the one line that
+      // explains why a round the player expected to last two minutes did not.
+      const hearts = s.hearts ? ` · ${s.hearts} hearts` : "";
+      // Boxing rewrites this heading for its own endings and never puts it
+      // back, so the fruit game sets it every time rather than assuming it is
+      // still what the markup says.
+      gameEl("sheet-over").querySelector("h2").textContent =
+        s.lives === 0 ? "OUT OF LIVES" : "GAME OVER";
       gameEl("over-detail").textContent =
         `${s.sliced || 0} sliced · ${s.missed || 0} missed · ` +
-        `${s.bombs || 0} bombs · best run ${s.best_streak || 0}` + ult;
+        `${s.bombs || 0} bombs${hearts} · best run ${s.best_streak || 0}` + ult;
     }
   }
 
@@ -6509,17 +6747,42 @@ function handleGameEvent(e) {
       splash(e.x, e.y, "#3a1206", 1.6, 70, Math.random() * Math.PI);
       sparks(e.x, e.y, "#ff9b3d", 34, 620);
       sparks(e.x, e.y, "#ffffff", 12, 380);
-      popup(e.x, e.y - 20, "-" + bombSeconds(e) + "s", "#ff7043", 38);
-      // And again on the clock, which is where the five seconds actually went.
-      // The popup over the bomb says what happened at the bomb; this says it
-      // where the player will next look for the number that changed.
-      flashClockPenalty(bombSeconds(e));
+      popup(e.x, e.y - 20, "-" + bombPoints(e), "#ff7043", 38);
+      // The heart the bomb took, said in the corner where the hearts are.
+      // `renderLives` will reach the same conclusion from the next snapshot a
+      // frame or two later, and does the animation; this is only the sound,
+      // which has to be on the event or it fires every frame the count is low.
+      //
+      // The last one gets a different sound, because "you have lost a life"
+      // and "the round is over" are not the same news and the player is
+      // looking at an explosion either way.
+      if (typeof e.lives === "number") {
+        playGameSound(e.lives > 0 ? "life-lost" : "last-life");
+      }
       shakeScreen();
       // And the whiteout over all of it. The splat and the sparks above are
       // still worth drawing: they are painted on the canvas underneath and the
       // flash fades off them rather than replacing them, so what the player
       // sees as the white recedes is the mess the bomb made.
       whiteoutScreen();
+      break;
+
+    case "heart":
+      // The slice itself has already fired — a heart fruit emits an ordinary
+      // `slice` event too, because it scores like a fruit — so this adds only
+      // what is different: the chime, a bloom of red and gold, and the one
+      // line that says whether it did anything.
+      //
+      // A heart taken at full health says so rather than saying nothing. The
+      // silent version was worse in play than it sounds on paper: the fruit
+      // vanishes, the corner does not change, and the honest reading is that
+      // the game missed it.
+      playGameSound(e.healed ? "heart" : "heart-full");
+      sparks(e.x, e.y, "#ff5c7a", 24, 620);
+      sparks(e.x, e.y, "#ffd77a", 16, 520);
+      popup(Math.min(GAME_W - 190, Math.max(190, e.x)), e.y - 74,
+            e.healed ? "+1 LIFE" : "FULL HEALTH",
+            e.healed ? "#ff8fa3" : "#ffd77a", 36);
       break;
 
     case "ice":
@@ -6746,8 +7009,9 @@ function resetBanner() {
   lastComboShown = 0;
   gameEl("game-banner").classList.remove("on");
   gameEl("game-combo").textContent = "";
-  // A bomb sliced in the last second of a round leaves this mid-animation.
-  clearClockPenalty();
+  // So the next round's three full hearts arrive as a state rather than as
+  // three hearts animating themselves back in.
+  resetLives();
 }
 
 function showSheet(which) {
@@ -7312,45 +7576,91 @@ function drawClockHud(game, ahead) {
 let lastClockSecond = -1;
 
 // What the bomb cost, taken from the event rather than written out again here.
-// `BOMB_PENALTY_S` lives in `aipi5/games/fruit_ninja/game.py`, and a page still
-// open across a restart that changed it would otherwise announce the old
-// number while the clock lost the new one.
-function bombSeconds(e) {
-  const seconds = Number(e && e.seconds);
-  return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds) : 5;
+// `BOMB_PENALTY_POINTS` lives in `aipi5/games/fruit_ninja/game.py`, and a page
+// still open across a restart that changed it would otherwise announce the old
+// number while the score lost the new one.
+function bombPoints(e) {
+  const points = Number(e && e.points);
+  return Number.isFinite(points) && points > 0 ? Math.round(points) : 25;
 }
 
-// The clock losing five seconds, made visible on the clock.
+// ── the lives ───────────────────────────────────────────────────────
 //
-// Worth the twenty lines: the countdown is the one number a player trusts, and
-// the drop is instantaneous and five times the size of a normal tick. Without
-// this the honest reading of what they saw is that the timer is broken — which
-// is exactly what the first person to slice a bomb near the Ultimate reported.
-function flashClockPenalty(seconds) {
-  const column = gameEl("game-clock-col");
-  const label = gameEl("game-clock-penalty");
-  if (!column || !label) return;
-  label.textContent = "-" + seconds + "s";
-  // Removed, reflowed, re-added: a CSS animation does not restart while its
-  // class is already on the element, and two bombs in a round is not unusual.
-  column.classList.remove("penalty");
-  label.classList.remove("on");
-  void column.offsetWidth;
-  column.classList.add("penalty");
-  label.classList.add("on");
-  clearTimeout(clockPenaltyTimer);
-  clockPenaltyTimer = setTimeout(clearClockPenalty, 1150);
+// One heart per life the round started with, always all of them, with the
+// spent ones drawn hollow. `max_lives` comes from the snapshot rather than
+// being written here, so the row is right on a device whose Pi was restarted
+// with a different number.
+//
+// The heart is the same drawing as `SHAPES.heart` on the canvas, in SVG: a red
+// heart in a gold frame with a smaller heart inside it. Deliberately the same,
+// because that is how a player works out — without being told, mid-round, at
+// a distance — that the red-and-gold fruit that just went past is the thing
+// that fills the corner back in.
+const HEART_PATH =
+  "M18 31 C18 31 3 21.5 3 12.4 C3 7.4 7 4 11.4 4 C14.6 4 17 5.8 18 8.2 " +
+  "C19 5.8 21.4 4 24.6 4 C29 4 33 7.4 33 12.4 C33 21.5 18 31 18 31 Z";
+
+function heartSvg() {
+  return '<svg class="life" viewBox="0 0 36 34" aria-hidden="true">' +
+         '<path class="heart-fill" d="' + HEART_PATH + '"/>' +
+         '<path class="heart-inner" d="' + HEART_PATH +
+         '" transform="translate(10.44 6.65) scale(0.42)"/>' +
+         '<path class="heart-frame" d="' + HEART_PATH + '"/>' +
+         "</svg>";
 }
 
-function clearClockPenalty() {
-  clearTimeout(clockPenaltyTimer);
-  clockPenaltyTimer = null;
-  gameEl("game-clock-col").classList.remove("penalty");
-  const label = gameEl("game-clock-penalty");
-  label.classList.remove("on");
-  label.textContent = "";
+// The row is rebuilt only when the *number of slots* changes, and the fill is
+// a class toggle after that. Rebuilding it on every change would restart the
+// CSS animation of every other heart in the row each time one was lost.
+let livesShown = -1;
+let livesSlots = -1;
+
+function renderLives(game) {
+  const row = gameEl("game-lives");
+  if (!row) return;
+  const max = Math.max(0, Math.round(game.max_lives || 0));
+  if (!max) { row.innerHTML = ""; livesSlots = livesShown = -1; return; }
+  const lives = Math.max(0, Math.min(max, Math.round(game.lives || 0)));
+
+  if (livesSlots !== max) {
+    row.innerHTML = heartSvg().repeat(max);
+    livesSlots = max;
+    livesShown = -1;
+  }
+  if (lives === livesShown) return;
+  const before = livesShown;
+  livesShown = lives;
+
+  const hearts = row.children;
+  for (let i = 0; i < hearts.length; i++) {
+    hearts[i].classList.toggle("spent", i >= lives);
+  }
+  // Nothing animates on the first frame of a round, or on a page that has just
+  // adopted a game already in progress: `before < 0` means this is the first
+  // reading and there is no transition to show, only a state to be in.
+  if (before < 0 || lives === before) return;
+  const from = Math.min(before, lives), to = Math.max(before, lives);
+  for (let i = from; i < to && i < hearts.length; i++) {
+    beatHeart(hearts[i], lives < before ? "losing" : "gaining");
+  }
 }
-let clockPenaltyTimer = null;
+
+function beatHeart(heart, cls) {
+  // Removed, reflowed, re-added: a CSS animation does not restart while its
+  // class is still on the element, and two bombs in one swing hit the same
+  // heart twice in a second.
+  heart.classList.remove("losing", "gaining");
+  void heart.offsetWidth;
+  heart.classList.add(cls);
+  clearTimeout(heart._beat);
+  heart._beat = setTimeout(() => heart.classList.remove(cls), 800);
+}
+
+function resetLives() {
+  livesShown = -1;
+  livesSlots = -1;
+  gameEl("game-lives").innerHTML = "";
+}
 
 // ── the fruit ───────────────────────────────────────────────────────
 //
@@ -7663,6 +7973,71 @@ const SHAPES = {
     ctx.restore();
   },
 
+  // The heart fruit. The one target on the screen that is *worth* something
+  // beyond points, and the only one that has to be recognised before it is
+  // sliced rather than after — a player who mistakes it for an apple has not
+  // lost anything, but a player who mistakes an apple for it has been counting
+  // on a life they never got.
+  //
+  // So it is built the way the reference picture was: a red heart inside a
+  // gold frame, with a smaller heart inside that. The gold is what does the
+  // work — nothing else in this game has a metal edge, and a bright warm
+  // outline is the one cue that survives both the wood background and the
+  // corner of an eye. The particular scrollwork of the reference is not copied
+  // and no pixels of it are in this repository; see `ASSET_LICENSES.md`.
+  //
+  // Drawn from one path traced three times at decreasing size, the same trick
+  // the banana uses for its taper, so the frame, the body and the inner heart
+  // cost three fills and no gradient objects.
+  heart(ctx, r, item) {
+    // A soft warm halo, additive like the bomb's and the ice cube's, because
+    // this is the third object on the screen that is not an ordinary fruit and
+    // the player has to know which of the three it is before swinging.
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const glow = ctx.createRadialGradient(0, 0, r * 0.8, 0, 0, r * 1.5);
+    glow.addColorStop(0, "rgba(255,90,120,0.2)");
+    glow.addColorStop(1, "rgba(255,90,120,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // The gold frame first, as a heart a little larger than the body, so the
+    // metal reads as a rim around the red rather than as a line drawn on it.
+    heartPath(ctx, r * 1.06);
+    ctx.fillStyle = "#8a6412";
+    ctx.fill();
+    heartPath(ctx, r * 0.99);
+    ctx.fillStyle = "#e8bd63";
+    ctx.fill();
+
+    heartPath(ctx, r * 0.82);
+    ctx.fillStyle = item.colour;
+    ctx.fill();
+
+    // The inner heart of the reference, in the lighter flesh colour. Set a
+    // little high, where the two lobes are, because a smaller heart centred on
+    // a bigger one leaves a wedge of red under it that reads as a shadow.
+    ctx.save();
+    ctx.translate(0, -r * 0.08);
+    heartPath(ctx, r * 0.42);
+    ctx.fillStyle = "rgba(255,255,255,0.3)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(232,189,99,0.85)";
+    ctx.lineWidth = Math.max(2, r * 0.05);
+    ctx.stroke();
+    ctx.restore();
+
+    // One highlight on the upper-left lobe, which is what stops the whole
+    // thing reading as a flat sticker.
+    ctx.fillStyle = "rgba(255,255,255,0.4)";
+    ctx.beginPath();
+    ctx.ellipse(-r * 0.34, -r * 0.3, r * 0.16, r * 0.1, -0.6, 0, Math.PI * 2);
+    ctx.fill();
+  },
+
   bomb(ctx, r, item) {
     const t = performance.now() / 1000;
     // The pulse is fast — about three a second — because it has to be caught
@@ -7755,6 +8130,26 @@ function ball(ctx, r, colour) {
   ctx.arc(r * 0.35, r * 0.42, r * 0.85, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
+}
+
+//: One heart, centred on the origin and `size` across at its widest, as a
+//: path ready to be filled or stroked. Shared by the frame, the body and the
+//: inner heart above, which is what keeps the three concentric — three
+//: hand-written heart paths would drift apart the first time one was tweaked.
+//:
+//: The control points are the classic two-lobe construction: start at the tip,
+//: sweep out and up to each shoulder, and meet at the notch. Written against a
+//: unit heart and scaled, so `size` is the only number a caller passes.
+function heartPath(ctx, size) {
+  const w = size, h = size;
+  ctx.beginPath();
+  ctx.moveTo(0, h * 0.92);
+  ctx.bezierCurveTo(-w * 1.02, h * 0.12, -w * 0.98, -h * 0.86,
+                    -w * 0.36, -h * 0.86);
+  ctx.bezierCurveTo(-w * 0.1, -h * 0.86, 0, -h * 0.62, 0, -h * 0.44);
+  ctx.bezierCurveTo(0, -h * 0.62, w * 0.1, -h * 0.86, w * 0.36, -h * 0.86);
+  ctx.bezierCurveTo(w * 0.98, -h * 0.86, w * 1.02, h * 0.12, 0, h * 0.92);
+  ctx.closePath();
 }
 
 //: The specular arc. Deliberately an arc rather than a blob: a curved
@@ -8460,6 +8855,12 @@ const SLICE_VOICES = {
   // event — so this one is now short and out of the way, and the chime is what
   // the player actually hears.
   ice:       { cut: [12000, 5000, 0.08], body: [900, 620, 0.07], type: "triangle", cg: 0.22, bg: 0.10 },
+  // The heart fruit. Soft and low-noise — the least *cutting* voice in the
+  // table — so the chime that follows it in `playGameSound("heart")` is what
+  // the moment sounds like. Same lesson the ice cube's voice was rewritten
+  // for: two sounds fire on the same frame here, and the one that carries the
+  // meaning must not be the one competing with a burst of filtered noise.
+  heart:     { cut: [2800, 900, 0.12], body: [440, 330, 0.09], type: "sine",     cg: 0.12, bg: 0.12 },
 };
 
 //: Section 36. A hard ceiling on how many slice voices may start in the same
@@ -8665,6 +9066,52 @@ function playGameSound(name, detail) {
       // The frost spreading: a long, high sweep downwards, which is the part
       // that carries over a busy screen.
       sweptNoise(ctx, now, 12000, 2200, 0.5, 0.26);
+      return;
+    }
+
+    if (name === "heart" || name === "heart-full") {
+      // A life coming back: a rising major third into a fifth, which is the
+      // most unambiguously *good* three notes available and the exact opposite
+      // gesture to the game-over phrase's three falling ones.
+      //
+      // At full health it is the same figure with the last note left off and
+      // the whole thing quieter — the player did something right and got
+      // nothing for it, and a sound that says "nice, but no" is more honest
+      // than either silence or a fanfare.
+      const full = name === "heart-full";
+      const start = now + 0.04;
+      const notes = full ? [523.25, 659.25] : [523.25, 659.25, 783.99];
+      notes.forEach((freq, i) => {
+        tone(ctx, start + i * 0.075,
+             { freq, to: freq, ms: full ? 150 : 260, type: "triangle",
+               gain: full ? 0.11 : 0.19 });
+      });
+      if (!full) {
+        // A warm octave under the last note, so a life restored has a body to
+        // it rather than being three thin beeps over a busy screen.
+        tone(ctx, start + 0.15,
+             { freq: 392.0, to: 392.0, ms: 420, type: "sine", gain: 0.14 });
+      }
+      return;
+    }
+
+    if (name === "life-lost" || name === "last-life") {
+      // A heart going out, under the explosion that took it. Deliberately late
+      // — the bomb's own noise is 0.28 s of it — so the two are heard as cause
+      // and consequence rather than as one louder bang.
+      //
+      // The last one falls further and rings longer, because it is not a life
+      // lost so much as the round ending, and it has to be distinguishable
+      // from the other two while the same explosion is playing over it.
+      const last = name === "last-life";
+      const at = now + 0.22;
+      tone(ctx, at, { freq: last ? 330 : 392, to: last ? 110 : 196,
+                      ms: last ? 620 : 300,
+                      type: "triangle", gain: last ? 0.22 : 0.16 });
+      if (last) {
+        tone(ctx, at + 0.1, { freq: 165, to: 82, ms: 700, type: "sine",
+                              gain: 0.16 });
+      }
       return;
     }
 

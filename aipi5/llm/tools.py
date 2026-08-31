@@ -9,7 +9,7 @@ interpolated into a command line. Section 14 requires that, and the way to make
 it true rather than intended is for the dispatch table to be a dictionary of
 literals that a reader can check in one screen.
 
-Three rules that are easy to lose sight of and expensive to lose:
+Four rules that are easy to lose sight of and expensive to lose:
 
 **No destructive command is reachable.** `shutdown`, `reboot` and `quit` all
 carry `confirm=True` in AIA's plugin declarations, and `_kodama_commands()`
@@ -23,6 +23,21 @@ how a deny list ages.
 milliseconds and the turn was over. The Kodama tool exists for the cases the
 phrase matcher legitimately cannot reach: "put on something quiet", "skip this,
 I don't like it".
+
+**The model cannot start the music player.** There is no `open_kodama` tool and
+this class holds no reference to `KodamaLauncher`, so there is no object here
+to call `open()` on — which is a stronger guarantee than a tool that was
+removed and could be added back without anybody noticing what it costs.
+
+The player is opened by the Music button, or by asking for it out loud
+(`aipi5/kodama/launcher.py` declares the phrases). Both are a person deciding.
+The model used to be a third way, and it was the only one that could fire
+without anybody asking for the player by name: `execute_kodama_command`
+answered "call open_kodama first" whenever the player was down, so any music
+request at all — including one the model inferred from a half-heard sentence —
+launched an app that resumes its previous queue on startup and begins playing
+into the room. Reported as the player "starting on its own", which is exactly
+what it was. It now says what it cannot do and who can.
 
 **Every tool answers, and none of them raises.** A tool that throws leaves the
 model with a dangling call and the turn with an exception; a tool that returns
@@ -70,14 +85,13 @@ class ToolBox:
     """
 
     def __init__(self, *, weather=None, news=None, clock=None, camera=None,
-                 vision=None, registry=None, launcher=None, settings=None):
+                 vision=None, registry=None, settings=None):
         self.weather = weather
         self.news = news
         self.clock = clock
         self.camera = camera
         self.vision = vision
         self.registry = registry
-        self.launcher = launcher
         self.settings = settings
 
         self._handlers: dict[str, Callable[[dict], str]] = {
@@ -85,7 +99,6 @@ class ToolBox:
             "get_local_news": self._get_local_news,
             "get_current_time": self._get_current_time,
             "describe_camera_image": self._describe_camera_image,
-            "open_kodama": self._open_kodama,
             "execute_kodama_command": self._execute_kodama_command,
         }
 
@@ -155,14 +168,6 @@ class ToolBox:
                                    "know about the scene, if they asked something "
                                    "narrower than 'what do you see'.",
                 }},
-            ))
-
-        if self.launcher is not None:
-            tools.append(_schema(
-                "open_kodama",
-                "Start the Kodama-Lite music player if it is not already running. "
-                "Call this before a music command when the player is not running.",
-                {},
             ))
 
         commands = self._kodama_commands()
@@ -263,10 +268,6 @@ class ToolBox:
             return _error("the picture was taken but could not be described")
         return _ok(description=description, taken_at=capture.taken_at)
 
-    def _open_kodama(self, args: dict) -> str:
-        result = self.launcher.open()
-        return _ok(started=result.ok, detail=result.say("en"))
-
     def _execute_kodama_command(self, args: dict) -> str:
         """Run one named Kodama command.
 
@@ -286,7 +287,9 @@ class ToolBox:
 
         plugin, command = found
         if not plugin.available():
-            return _error("the music player is not running; call open_kodama first")
+            return _error("the music player is not running, and you cannot start "
+                          "it; tell the person to press the Music button on the "
+                          "screen, or to say 'open the music player'")
 
         # At most one argument, and its name comes from the command's own
         # declaration rather than from the model. A command that takes no

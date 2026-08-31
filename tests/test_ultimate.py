@@ -19,7 +19,7 @@ import unittest
 from aipi5.games.fruit_ninja import fruit as fruit_mod
 from aipi5.games.fruit_ninja import ultimate
 from aipi5.games.fruit_ninja.fruit import BOMB, BY_NAME, KINDS, Fruit, Spawner
-from aipi5.games.fruit_ninja.game import (BOMB_PENALTY_S, ROUND_SECONDS,
+from aipi5.games.fruit_ninja.game import (MAX_LIVES, ROUND_SECONDS,
                                           ULTIMATE_START_AT,
                                           ULTIMATE_WARNING_AT, Phase, Session,
                                           State)
@@ -123,11 +123,12 @@ class TenFruit(unittest.TestCase):
         every time or fails every time; a flaky test about spawn rates is
         worse than none.
 
-        The bomb and the ice cube are checked here rather than in their own
-        tests because what would actually go wrong is the same thing for all
-        twelve: a rate written down and never rolled. `ice_chance` at 0.06 is
-        the smallest of them, which is exactly why it belongs in the set rather
-        than in a comment.
+        The three non-fruit are checked here rather than in their own tests
+        because what would actually go wrong is the same thing for all
+        thirteen: a rate written down and never rolled. The heart's effective
+        rate is the smallest of them — a third of the bomb's, on the throws the
+        bomb declined — which is exactly why it belongs in the set rather than
+        in a comment.
         """
         spawner = Spawner()
         spawner.seed(11)
@@ -138,7 +139,8 @@ class TenFruit(unittest.TestCase):
             for item in spawner.due(now=now, elapsed=now):
                 seen.add(item.kind.name)
         self.assertEqual(seen,
-                         {kind.name for kind in KINDS} | {"bomb", "ice"})
+                         {kind.name for kind in KINDS}
+                         | {"bomb", "ice", "heart"})
 
     def test_the_dragon_fruit_is_the_rarest(self):
         """Section 10: less common during normal gameplay."""
@@ -308,24 +310,23 @@ class Phases(unittest.TestCase):
 
 
 class AWarningNoBombCanSkip(unittest.TestCase):
-    """Section 17's warning, against a clock that can jump.
+    """Section 17's warning, and the clock it used to be defended against.
 
-    A bomb takes five seconds off, so the clock does not pass through the
-    warning window — it can land on the far side of it. Reading the phase off
-    the clock alone meant a bomb sliced just above the window went straight
-    from normal play to a dragon fruit on screen: no sound, no banner, and the
-    one transition the player is promised notice of, skipped by the one event
-    that leaves them least ready for it.
+    A bomb took five seconds off the clock for most of this game's life, which
+    meant the countdown did not pass *through* the warning window so much as
+    land somewhere in or beyond it. Two bugs came out of that, in opposite
+    directions: reading the phase off the clock alone let a bomb skip the
+    warning entirely, and the fix — owing the warning a fixed two seconds of
+    play — let five bombs outlive their own window and end a round that never
+    spawned the dragon fruit at all.
 
-    The first person to play the finished game reported this as the countdown
-    being broken, which is the honest reading of a clock that drops five
-    seconds while something new arrives unannounced.
-
-    **The fix used to be a duration and is now a wide window**, because the
-    duration had a failure of its own that was worse than the one it cured —
-    see `test_bombs_during_the_warning_cannot_swallow_the_ultimate`. The window
-    is `BOMB_PENALTY_S` wide, so a single bomb cannot clear it: a clock at
-    20 + e lands at 15 + e, which is still inside.
+    **The bomb costs a life and a score now, and does not touch the clock.**
+    That removes the cause rather than the symptom, and this class is kept for
+    exactly that reason: it is the regression suite for a class of bug that is
+    currently impossible, and it stays green only for as long as nothing moves
+    the clock sideways again. The bomb tests below therefore assert the *new*
+    invariant — that slicing bombs through the window changes nothing about the
+    Ultimate because it changes nothing about the countdown.
     """
 
     def setUp(self):
@@ -351,17 +352,36 @@ class AWarningNoBombCanSkip(unittest.TestCase):
     def names(self):
         return [event["name"] for event in self.session.events]
 
-    def test_the_window_is_as_wide_as_a_bomb_is_long(self):
-        """The whole mechanism, as the one line of arithmetic it rests on."""
-        self.assertAlmostEqual(ULTIMATE_WARNING_AT - ULTIMATE_START_AT,
-                               BOMB_PENALTY_S)
+    def test_slicing_a_bomb_does_not_move_the_clock(self):
+        """The premise the rest of this class now rests on.
+
+        Everything below used to be arithmetic about how far a bomb could push
+        the countdown. It cannot push it at all, and that is worth one direct
+        assertion rather than being implied by seven indirect ones.
+        """
+        before = self.session.time_left
+        self.slice_a_bomb()
+        self.assertEqual(self.session.bombs_hit, 1)
+        self.assertAlmostEqual(self.session.time_left, before - STEP,
+                               delta=0.01)
+        self.assertEqual(self.session.lives, MAX_LIVES - 1)
 
     def test_no_single_bomb_can_skip_the_warning(self):
         """Swept across the window rather than tested at one point in it.
 
         The old two-second window had exactly one bomb position that jumped it
         and the test used that position; a window is either wide enough for
-        every position or it is not, and only the sweep says which.
+        every position or it is not, and only the sweep says which. Kept, and
+        kept as a sweep, because the guarantee is about the phase machine and
+        not about the bomb: it must hold for a clock that arrives at the window
+        by any route at all.
+
+        The slash is made on the first frame only, rather than on every frame
+        as it used to be. Swinging through the whole window now cuts every bomb
+        the spawner throws as well as the injected one, and the round ends on
+        the third — which is a real rule and a different test
+        (`test_running_out_of_lives_in_the_warning_ends_the_round_early`),
+        not the thing this one is asking about.
         """
         for offset in (0.4, 1.0, 2.5, 4.0, 4.9, 5.4, 7.0):
             with self.subTest(bomb_at=ULTIMATE_START_AT + offset):
@@ -371,43 +391,69 @@ class AWarningNoBombCanSkip(unittest.TestCase):
                 session.time_left = ULTIMATE_START_AT + offset
                 session.fruit.append(
                     Fruit(kind=BOMB, x=640, y=400, vx=0, vy=0, spin=0))
-                seen, now = [], 0.0
+                seen, now, swung = [], 0.0, False
                 while session.state is State.PLAYING:
                     now += STEP
-                    session.tick(now=now, hands=[
-                        screen_hand("right_wrist", 400, 400, 900, 400)])
+                    hands = [] if swung else [
+                        screen_hand("right_wrist", 400, 400, 900, 400)]
+                    swung = True
+                    session.tick(now=now, hands=hands)
                     seen += [e["name"] for e in session.events]
                     session.events.clear()
+                self.assertIn("bomb", seen)
                 self.assertIn("ultimate-warning", seen)
                 self.assertIn("ultimate-spawn", seen)
                 self.assertLess(seen.index("ultimate-warning"),
                                 seen.index("ultimate-spawn"))
 
     def test_bombs_during_the_warning_cannot_swallow_the_ultimate(self):
-        """The bug this was rebuilt for, as the round that produced it.
+        """The bug this class was rebuilt for, as the round that produced it.
 
         The warning used to be owed a fixed two seconds *of play*, which meant
         the clock could run out from under it: five bombs sliced inside those
-        two seconds take twenty-five seconds off, the warning still has time
-        owed, and the round ends having never spawned the dragon fruit. Not
+        two seconds took twenty-five seconds off, the warning still had time
+        owed, and the round ended having never spawned the dragon fruit. Not
         hypothetical — it is what "the ultimate fruit does not show up
         sometimes" turned out to be.
+
+        The round is played the same way it was, with a bomb sliced on every
+        frame of the warning window. The lives are topped back up between them,
+        because a player who did this for real would be out of the round after
+        `MAX_LIVES` of them and the thing under test is the *clock*, not the
+        lives — see `test_running_out_of_lives_ends_the_round` for the other
+        half.
         """
         self.session.time_left = ULTIMATE_WARNING_AT + 2.4
         while self.session.state is State.PLAYING:
             if self.session.time_left <= ULTIMATE_WARNING_AT:
+                self.session.lives = MAX_LIVES
                 self.slice_a_bomb()          # appends its own bomb and cuts it
             else:
                 self.play_for(STEP)
-        # Five bombs is twenty-five seconds, which is more clock than the round
-        # had left when the first one went off.
         self.assertGreaterEqual(self.session.bombs_hit, 4)
         self.assertTrue(self.session.ultimate_spawned,
                         "bombs in the warning window ate the Ultimate")
         self.assertGreater(self.session.ultimate_hits + 1, 0)
 
-    def test_a_bomb_that_lands_inside_the_window_still_warns_first(self):
-        self.session.time_left = ULTIMATE_START_AT + BOMB_PENALTY_S + 0.4
+    def test_running_out_of_lives_in_the_warning_ends_the_round_early(self):
+        """The honest consequence, stated so nobody reads it as a regression.
+
+        A player who spends every life on bombs during the warning does not get
+        their dragon fruit, and should not: they are out of lives, which is the
+        one thing in this game that ends a round early. It is a different rule
+        from the one above, not a failure of it.
+        """
+        self.session.time_left = ULTIMATE_WARNING_AT + 0.5
+        while self.session.state is State.PLAYING:
+            self.slice_a_bomb()
+        self.assertEqual(self.session.lives, 0)
+        self.assertEqual(self.session.bombs_hit, MAX_LIVES)
+        self.assertFalse(self.session.ultimate_spawned)
+        self.assertGreater(self.session.time_left, ULTIMATE_START_AT)
+
+    def test_a_bomb_sliced_inside_the_window_still_warns_first(self):
+        """The clock walks into the window and the bomb is beside the point."""
+        self.session.time_left = ULTIMATE_WARNING_AT + STEP / 2
         self.session.events.clear()
         self.slice_a_bomb()
         self.assertLess(self.session.time_left, ULTIMATE_WARNING_AT)
@@ -443,11 +489,12 @@ class AWarningNoBombCanSkip(unittest.TestCase):
         self.assertIsNone(self.session.dragon)
 
     def test_the_bomb_event_says_what_it_cost(self):
-        """The page animates the clock losing exactly this many seconds."""
+        """The page animates exactly the heart this says was taken."""
         self.session.events.clear()
         self.slice_a_bomb()
         bomb = next(e for e in self.session.events if e["name"] == "bomb")
-        self.assertAlmostEqual(bomb["seconds"], BOMB_PENALTY_S)
+        self.assertEqual(bomb["lives"], MAX_LIVES - 1)
+        self.assertEqual(bomb["max_lives"], MAX_LIVES)
 
 
 class NoSpawningDuringTheUltimate(unittest.TestCase):
@@ -474,9 +521,10 @@ class NoSpawningDuringTheUltimate(unittest.TestCase):
     def test_no_bombs_during_the_ultimate(self):
         """Section 30, stated separately because it is the one that hurts.
 
-        A bomb costs five seconds. Slicing one during the Ultimate would mean
-        a swing aimed at the dragon fruit taking a twelfth of the round away,
-        which is the least fair thing the game could do.
+        A bomb costs a life, and three of them end the round. Slicing one
+        during the Ultimate would mean a swing aimed at the dragon fruit
+        costing a third of the player's health — or the round itself — which is
+        the least fair thing the game could do.
         """
         self.play_to(ULTIMATE_START_AT - 0.5)
         during = []

@@ -29,6 +29,7 @@ No browser hand model runs and camera frames are not sent to any service.
 |---|---|---|
 | Wood / dojo background | Offscreen canvas with gradients, grain strokes, panels, lattice, and vignette | `buildWood()` in `aipi5/ui/web/index.html` |
 | Ten distinct fruit and sliced halves | Canvas paths parameterized by the authoritative Python fruit state | `SHAPES`, `drawFruit()`, `spawnHalves()` |
+| Heart fruit, and the three lives in the HUD corner | One bezier heart construction, filled three times for the gold frame, the body and the inner heart; the same path again as inline SVG for the HUD | `heartPath()`, `SHAPES.heart`, `HEART_PATH`, `renderLives()` |
 | Juice, particles, Ultimate aura, cracks | Canvas particle and compositing systems | `splash()`, `drawDrops()`, `drawDragon()` |
 | Ninja body animation | Curved torso, tapered sleeves and trousers, wrapped hands, red sash, all fitted to live pose joints | `drawPlayerShadow()` |
 | Slice, bomb, combo, warning, and completion sounds | Web Audio oscillators and filtered noise; no recordings | `playGameSound()`, `playSliceSound()` |
@@ -43,6 +44,7 @@ No browser hand model runs and camera frames are not sent to any service.
 | Third-person boxing composition: rear player, centered front-facing opponent, ring depth and audience hierarchy | Four boxing screenshots supplied by the user | Reference provenance only; not redistributed | Composition reference only. The screenshots are not copied into the repository. The shipped arena is newly generated and the characters, HUD and effects are independently drawn in code. |
 | Red rear-view player and blue front-view opponent character design | Character reference sheet supplied by the user as `box game player opponent.png` | Reference provenance only; not redistributed | Character-design reference. The sheet is not bundled. Two new modular torso layers were generated from it; no labels, panels or original pixels are copied. |
 | Fruit-slicing gameplay shape and the original launch-speed range | [`hailo-ai/hailo-rpi5-examples`](https://github.com/hailo-ai/hailo-rpi5-examples) | MIT | Design reference only. Physics and swept collision were independently implemented. |
+| Heart fruit appearance: a red heart inside a gold frame, with a smaller heart inside it | A heart-container image supplied by the user, recognisably from a commercial adventure game | Reference provenance only; not redistributed | Concept reference only. The file is not copied into the repository and no pixels of it are embedded. The shipped heart is drawn at runtime from one bezier path (`heartPath()`), filled three times; the reference's ornamental scrollwork is not reproduced. What is taken is the generic idea of a framed heart standing for a life. |
 | Constants for decoding YOLOv8-pose output tensors | `/usr/include/hailo/tappas/pose_estimation/yolov8pose_postprocess.cpp` | LGPL | Consulted for anchor strides and channel layout; the NumPy decoder is independent. |
 | `yolov8s_pose_h10.hef` | Debian package `hailo-models` on the device | Vendor licence, as installed | Loaded from `/usr/share/hailo-models/`; not vendored here. |
 

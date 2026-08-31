@@ -215,6 +215,40 @@ class TestTheLauncherItself(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertIn("already", result.say("en"))
 
+    def test_every_launch_says_who_asked_for_it(self):
+        """The log line that makes "it started on its own" answerable.
+
+        Without this every caller produced the same sentence, so a button
+        press, a spoken command and — while it existed — the model deciding by
+        itself were indistinguishable afterwards. On a device whose journal is
+        volatile, an unattributed launch is one nobody can ever settle.
+        """
+        launcher = KodamaLauncher(KodamaLaunchConfig(), StubPlayer())
+        with self.assertLogs("aipi5.kodama.launcher", level="INFO") as caught:
+            launcher.open("the Music button")
+        self.assertTrue(any("the Music button" in line for line in caught.output),
+                        caught.output)
+
+    def test_the_spoken_command_names_itself(self):
+        # The router calls the handler with no arguments, so the name has to be
+        # bound at declaration. If that binding is ever lost the launch goes
+        # back to being anonymous, which is the bug this pins.
+        launcher = KodamaLauncher(KodamaLaunchConfig(), StubPlayer())
+        command: CommandSpec = launcher.commands()[0]
+        with self.assertLogs("aipi5.kodama.launcher", level="INFO") as caught:
+            command.handler()
+        self.assertTrue(any("a spoken command" in line for line in caught.output),
+                        caught.output)
+
+    def test_an_unattributed_launch_is_visible_as_one(self):
+        # The default names nothing rather than guessing, so a caller that
+        # forgets to identify itself shows up in the log as exactly that.
+        launcher = KodamaLauncher(KodamaLaunchConfig(), StubPlayer())
+        with self.assertLogs("aipi5.kodama.launcher", level="INFO") as caught:
+            launcher.open()
+        self.assertTrue(any("something unnamed" in line for line in caught.output),
+                        caught.output)
+
     def test_the_command_speaks(self):
         launcher = KodamaLauncher(KodamaLaunchConfig(), StubPlayer())
         command: CommandSpec = launcher.commands()[0]

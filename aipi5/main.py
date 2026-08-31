@@ -250,7 +250,10 @@ class Assistant:
             camera=self.camera if settings.camera.enabled else None,
             vision=self.vision,
             registry=self.registry,
-            launcher=self.launcher if settings.kodama.enabled else None,
+            # No launcher. The model may drive the player and may not start it
+            # — see the rule in `aipi5/llm/tools.py`. `self.launcher` is reached
+            # by the Music button (`action == "kodama"` below) and by the spoken
+            # command the launcher itself declares, both of which are a person.
             settings=settings,
         )
 
@@ -268,7 +271,9 @@ class Assistant:
         # The output level, before anything can speak. Never fatal:
         # a device that will not set its volume is slightly too
         # loud, and that must not be a device that will not start.
-        volume_control.apply(settings.audio.volume)
+        self.volume = volume_control.VolumeControl(
+            settings.audio.volume, settings.source)
+        self.volume.apply_configured()
         self.files = FileStore(settings.files)
         self.files.start()
         self.birthdays = BirthdayStore()
@@ -369,6 +374,7 @@ class Assistant:
                          call=self.call, on_call_change=self.on_call_change,
                          countdown=self.countdown, files=self.files,
                          photos=self.photos, screen=self.screen,
+                         volume=self.volume,
                          agent=self.agent,
                          hands=self.hands,
                          games=self.games,
@@ -810,6 +816,10 @@ class Assistant:
             "llm": self.llm.describe() if self.llm else {"available": False},
             "credentials": config_mod.describe_credentials(),
             "audio_priority": self.audio.describe(),
+            # One PipeWire sink sits after every playback stream, so this is
+            # the level for games, calls, Kodama-Lite, browser media and both
+            # assistant voices—not a separate TTS preference.
+            "volume": self.volume.describe(),
             "camera": self.camera.describe(),
             "presence": self.watcher.describe() if self.watcher
             else {"backend": "not running", "state": self.tracker.state.value},
@@ -1492,7 +1502,7 @@ def handle_button(assistant, action: str, language: str, turn=None) -> None:
         # Launches it, or raises the window it already has. No page of our own
         # — Kodama-Lite is a separate application and this project deliberately
         # does not grow a second music player.
-        reply = assistant.launcher.open().say(language)
+        reply = assistant.launcher.open("the Music button").say(language)
         role = "aia:music"
     else:
         return

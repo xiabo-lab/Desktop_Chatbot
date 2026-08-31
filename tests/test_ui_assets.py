@@ -557,20 +557,54 @@ class TestBundledGameAssets(unittest.TestCase):
             self.assertIn(f'data-game-seconds="{seconds}"', page)
         self.assertIn('fetch("/api/game/settings"', page)
 
-    def test_the_clock_reacts_to_a_bomb(self):
-        """A five-second drop with no reaction reads as a broken countdown.
+    def test_settings_has_one_master_volume_for_every_application(self):
+        page = (ASSET_ROOT.parent / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="set-volume" type="range" min="0" max="100"', page)
+        self.assertIn('fetch("/api/volume"', page)
+        for application in ("Game", "Call", "Kodama-Lite", "Browser",
+                            "Agent Talk"):
+            self.assertIn(application, page)
 
-        The popup over the bomb is in the middle of the screen; the seconds go
-        from the top-right corner. Reported from real play as "the timer went
-        from 24 to 20", which is exactly what one bomb does.
+    def test_the_bomb_no_longer_touches_the_clock(self):
+        """The countdown is monotone again, and nothing on the page fakes it.
+
+        A bomb used to take five seconds, and the page flinched the clock and
+        threw the lost seconds off it — because a five-second drop with no
+        reaction reads as a broken countdown, which is how the first person to
+        play it reported the bug. The bomb costs a life and a score now, so all
+        of that machinery is gone rather than left inert: a clock animation
+        that can never fire is a clock animation somebody will one day wire
+        back up to the wrong event.
         """
         page = (ASSET_ROOT.parent / "index.html").read_text(encoding="utf-8")
-        self.assertIn('<div id="game-clock-penalty"></div>', page)
-        self.assertIn("#game-clock-col.penalty", page)
-        self.assertIn("@keyframes clock-penalty", page)
-        self.assertIn("flashClockPenalty(bombSeconds(e))", page)
-        # From the event, so the page and `BOMB_PENALTY_S` cannot disagree.
-        self.assertIn('Number(e && e.seconds)', page)
+        for dead in ("game-clock-penalty", "flashClockPenalty",
+                     "clearClockPenalty", "@keyframes clock-penalty"):
+            self.assertNotIn(dead, page)
+
+    def test_the_hud_draws_the_lives_it_is_told_about(self):
+        """Three hearts in the top-right corner, and none of it hard-coded.
+
+        `max_lives` comes off the snapshot, so a Pi restarted with a different
+        number gets a row of that length rather than a row of three with the
+        rest of the rule invisible.
+        """
+        page = (ASSET_ROOT.parent / "index.html").read_text(encoding="utf-8")
+        self.assertIn('<div id="game-lives" aria-live="polite"></div>', page)
+        self.assertIn("function renderLives(game)", page)
+        self.assertIn("row.innerHTML = heartSvg().repeat(max)", page)
+        self.assertIn('hearts[i].classList.toggle("spent", i >= lives)', page)
+        # The heart the corner draws and the heart the canvas draws are the
+        # same object, which is how a player learns what the fruit is for.
+        self.assertIn("const HEART_PATH =", page)
+        self.assertIn("function heartPath(ctx, size)", page)
+        self.assertIn("heart(ctx, r, item) {", page)
+
+    def test_the_bomb_says_what_it_cost_from_the_event(self):
+        """So the page and `BOMB_PENALTY_POINTS` cannot disagree after a
+        restart that changed one of them."""
+        page = (ASSET_ROOT.parent / "index.html").read_text(encoding="utf-8")
+        self.assertIn('popup(e.x, e.y - 20, "-" + bombPoints(e)', page)
+        self.assertIn("Number(e && e.points)", page)
 
     def test_main_header_uses_the_requested_chinese_name(self):
         page = (ASSET_ROOT.parent / "index.html").read_text(encoding="utf-8")

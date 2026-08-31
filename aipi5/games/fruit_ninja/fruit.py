@@ -192,6 +192,36 @@ DRAGON = BY_NAME["dragon"]
 BOMB = FruitKind("bomb", "#22262b", "#ff7043", 42 * SIZE, 0, "💣",
                  shape="bomb", juice="#ff7043", wetness=1.0, sound="bomb")
 
+#: The heart fruit: slicing it gives a life back. See `game.MAX_LIVES` and
+#: `game.Session._cut`, which own the effect — this file only says what the
+#: thing looks like and how it flies.
+#:
+#: **Drawn from paths like everything else, and deliberately not a copy of the
+#: picture it was asked for.** The reference handed over was a heart container
+#: from a well-known adventure game: a red heart inside an ornate gold frame.
+#: The gold-framed red heart is the part that carries the meaning — it is what
+#: says "this is a life" from across the room — and that is what the page draws
+#: (`SHAPES.heart`). The particular scrollwork is not, and no pixels of it are
+#: in this repository. See `ASSET_LICENSES.md`.
+#:
+#: Its own kind rather than an eleventh fruit, for the reason the ice cube is
+#: one: how often it turns up has to be a rate the round can reason about — it
+#: is pinned to the bomb rate, at a third of it — rather than a weight
+#: competing with the fruit.
+#:
+#: It scores like a fruit as well as healing, for the same reason the ice does:
+#: a reward that broke a streak would ask the player to choose between two
+#: rewards.
+#:
+#: It barely spins. Every other object here tumbles, and a heart that tumbles
+#: is a heart that spends half its arc upside down, which is the one
+#: orientation this shape does not survive — it stops reading as a heart and
+#: starts reading as an unfamiliar red blob. `spin=0.22` is a slow wobble that
+#: still says the object is in flight.
+HEART = FruitKind("heart", "#d81b2f", "#ff7b8c", 42 * SIZE, 10, "❤️",
+                  shape="heart", juice="#ff2d55", wetness=1.1, sound="heart",
+                  launch=1.0, spin=0.22)
+
 #: The ice cube: slicing it halves every fruit's speed for five seconds. See
 #: `game.SLOW_FACTOR` and `game.SLOW_SECONDS`, which own the effect — this file
 #: only says what the thing looks like and how it flies.
@@ -254,6 +284,10 @@ class Fruit:
     @property
     def is_ice(self) -> bool:
         return self.kind is ICE
+
+    @property
+    def is_heart(self) -> bool:
+        return self.kind is HEART
 
     def advance(self, dt: float) -> None:
         """Integrate one step. `dt` in seconds — never a frame count.
@@ -378,12 +412,25 @@ class Spawner:
     ramp_over: float = 85.0
     #: Chance a given throw is a bomb, once bombs start appearing.
     #:
-    #: Unchanged by the halved throw rate, and deliberately so: this is a
-    #: proportion of what is on screen, not a rate, and a round with half the
-    #: fruit and the same *fraction* of bombs is the same round played at a
-    #: calmer pace. Holding the count instead would have doubled the share of
-    #: the screen that is a hazard.
-    bomb_chance: float = 0.14
+    #: **Halved, from 0.14, when the bomb stopped costing seconds and started
+    #: costing lives.** The two changes belong together. At one bomb in seven
+    #: the hazard was priced as an interruption — five seconds, annoying,
+    #: survivable, and a thing that could reasonably happen a dozen times in a
+    #: round. It is now the only way to lose, and a losing condition that
+    #: arrives that often stops being a mistake the player made and starts
+    #: being weather.
+    #:
+    #: A proportion rather than a rate, still: this is a share of what is on
+    #: screen, so it holds its meaning through the difficulty ramp instead of
+    #: making the busy closing stretch disproportionately lethal.
+    #:
+    #: It does not touch the ice cube, whose 6% is rolled separately and so
+    #: throws exactly as many cubes per round as before. The two are now within
+    #: a hair of each other in frequency, which is a change in how the round
+    #: reads — the ice used to be the rare one of the pair and now they are
+    #: about as common as each other — but not a change in how much ice there
+    #: is. See `ice_chance`.
+    bomb_chance: float = 0.07
     #: No bombs for the opening seconds, so the round teaches the game before
     #: it starts punishing. Section 26: bombs must not hold up the basic thing
     #: working. Unstretched — ten seconds is how long it takes to find your
@@ -397,16 +444,39 @@ class Spawner:
     double_chance: float = 0.34
     triple_after: float = 62.0
     triple_chance: float = 0.22
+    #: What share of the bombs thrown are heart fruit, and when the first one
+    #: may appear.
+    #:
+    #: A share rather than a rate of its own, because the requirement is a
+    #: ratio: one heart for every three bombs. Written as a rate it would be
+    #: two numbers that have to be edited together, and the first change to
+    #: `bomb_chance` would silently make the game easier or harder in a way
+    #: nobody asked for. Written as a share it stays true by construction — see
+    #: `heart_chance`, which does the one piece of arithmetic that turns it
+    #: into a probability the sequential roll in `_make` actually honours.
+    #:
+    #: The bomb's gate rather than the ice cube's, because a heart thrown
+    #: before any bomb could have been is a heart nobody needs: there is
+    #: nothing to heal, so it is an ordinary ten-point fruit wearing the one
+    #: symbol on the screen that is supposed to mean something.
+    heart_share: float = 1.0 / 3.0
+    heart_after: float = 10.0
     #: Chance a given throw is an ice cube, and how long the round waits before
     #: any are thrown.
     #:
-    #: 6%, against the bomb's 14%: the two are the round's only non-fruit and
-    #: the ice is the rarer of them on purpose — five seconds of half speed is
+    #: 6%, and left alone when the bomb's 14% was halved to 7%. The rate is
+    #: about the *effect*, not about the bomb: five seconds of half speed is
     #: the strongest thing a player can be handed, and one arriving every few
     #: seconds would make the slow the normal state and full speed the
     #: surprise. At this rate and the halved throw rate above, a two-minute
     #: round throws roughly a dozen, which is a handful of moments rather than
-    #: a mode.
+    #: a mode — and that is as true now as it was when bombs were twice as
+    #: common.
+    #:
+    #: It is still the rarer of the two once the roll order is accounted for
+    #: (the ice is only offered the throws the bomb and the heart declined), but
+    #: only just, where it used to be less than half as likely. That is a
+    #: consequence of the bomb moving, not a decision about the ice.
     #:
     #: Eight seconds rather than the bomb's ten, so the first one lands while
     #: the round is still quiet enough to see what it did.
@@ -419,6 +489,24 @@ class Spawner:
     _next_at: float = 0.0
     _counter: int = field(default=0, repr=False)
     _random: random.Random = field(default_factory=random.Random, repr=False)
+
+    @property
+    def heart_chance(self) -> float:
+        """The probability the *heart* roll needs to hit the share above.
+
+        Not `bomb_chance * heart_share`, and the difference is the whole reason
+        this is a property. `_make` rolls in sequence — bomb first, and the
+        heart is only offered the throws the bomb declined — so a heart rolled
+        at one third of the bomb's rate would land on one third of *86%* of the
+        throws and come out at 0.29 hearts per bomb rather than 0.33. Dividing
+        by what is left restores it exactly, which is what makes
+        `test_one_heart_for_every_three_bombs` a statement about the game
+        rather than about the order two `if`s happen to be written in.
+        """
+        remaining = 1.0 - self.bomb_chance
+        if remaining <= 0:
+            return 0.0
+        return self.bomb_chance * self.heart_share / remaining
 
     def seed(self, value: int) -> None:
         """Make a session reproducible. Used by the tests, never in play."""
@@ -469,12 +557,19 @@ class Spawner:
         self._counter += 1
         rng = self._random
 
-        # Bomb first, then ice, then a fruit. Rolled in sequence rather than
-        # from one number so each rate means what it says on its own: adding
-        # the ice cube did not change how often a bomb is thrown, and neither
-        # will the next thing that is not a fruit.
+        # Bomb first, then the heart, then ice, then a fruit. Rolled in
+        # sequence rather than from one number so each rate means what it says
+        # on its own: adding the ice cube did not change how often a bomb is
+        # thrown, and neither will the next thing that is not a fruit.
+        #
+        # The heart goes directly after the bomb because it is the only one of
+        # the three whose rate is *defined against* another — see
+        # `heart_chance`, which is written for exactly this position in the
+        # chain. Moving it below the ice would change what it means.
         if elapsed >= self.bomb_after and rng.random() < self.bomb_chance:
             kind = BOMB
+        elif elapsed >= self.heart_after and rng.random() < self.heart_chance:
+            kind = HEART
         elif elapsed >= self.ice_after and rng.random() < self.ice_chance:
             kind = ICE
         else:

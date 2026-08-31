@@ -48,8 +48,10 @@ How to answer:
   tool is unavailable the honest answer is that you cannot check right now.
 
 What you can actually do:
-- You control a music player called Kodama-Lite through the tools listed. You
-  cannot control any other application.
+- You control a music player called Kodama-Lite through the tools listed, when
+  it is already running. You cannot start it and you cannot close it: both are
+  the person's decision, made with the Music button on the screen or out loud.
+  You cannot control any other application.
 - You have no shell, no filesystem and no network beyond your tools. You cannot
   install anything, edit anything, or run commands on this computer.
 - You cannot power the Pi off or restart it, and you cannot close Kodama-Lite.
@@ -116,6 +118,15 @@ def with_facts(place: str, language: str, facts: dict) -> str:
     if facts.get("playing"):
         lines.append(f"- The music player is currently playing: {facts['playing']}.")
     if facts.get("kodama_running") is False:
-        lines.append("- The music player is not running. It can be started with the "
-                     "open_kodama tool.")
+        # This line used to end "...it can be started with the open_kodama
+        # tool", which was an invitation, restated on every single turn the
+        # player happened to be closed. Together with a player that resumes its
+        # last queue on startup, that is how music began playing in the room
+        # after a request nobody made in those words. The tool is gone; the
+        # fact stays, because the model still needs it to answer "why isn't it
+        # playing" without guessing.
+        lines.append("- The music player is not running, and you have no way to "
+                     "start it. If the person wants music, tell them to press "
+                     "the Music button on the screen or to say 'open the music "
+                     "player'.")
     return system_prompt(place, language, "\n".join(lines))
