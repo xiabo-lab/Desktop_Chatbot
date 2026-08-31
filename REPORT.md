@@ -338,10 +338,29 @@ device like this becomes tiresome. The news page shows the stories and the
 assistant summarises the important ones in two sentences.
 
 Page-spoken lines are recorded under their own role (`aia:weather`,
-`aia:news`, `aia:camera`, `aia:music`) and `/api/feed?roles=user,aia` filters
-them out of the Talk page. They stay in the 24-hour transcript because they
-were audible in the room and that record should not lie; they are kept out of
-the conversation because a conversation is a conversation.
+`aia:news`, `aia:music`) and `/api/feed?roles=user,aia` filters them out of the
+Talk page. They stay in the 24-hour transcript because they were audible in the
+room and that record should not lie; they are kept out of the conversation
+because a conversation is a conversation.
+
+**The camera is the exception, because it stopped being a page.** There is no
+Camera button on the home screen any more: "What do you see?" sits on the Talk
+page beside Listen, and the answer arrives there as conversation — a bubble
+holding the photograph, and the spoken reply underneath it. So the camera's
+line is recorded as `aia` like any other answer, and passes the filter above
+rather than being caught by it.
+
+The picture itself is not in the transcript. `UiState.describe_camera` publishes
+`camera_image` — `Capture.taken_at`, a cache-busting token — alongside the
+description and its id, and the page draws the bubble live from
+`/api/camera/capture`, which serves whatever the camera's `last_capture` is and
+takes no name from the browser. A page opened later sees the sentence without
+the picture, which is the honest rendering of a still that `Camera._prune` has
+since deleted from tmpfs. `camera_image` is absent when the model answered
+without taking a picture, and that case draws no bubble: the previous
+photograph under the current answer would be a picture of a different moment.
+`#camera` still opens the live preview for anybody reaching the device over
+`ssh -L`; nothing navigates there.
 
 **Music raises rather than relaunches.** `KodamaLauncher.raise_window` runs the
 binary — the one place that is allowed — because Kodama-Lite is built with

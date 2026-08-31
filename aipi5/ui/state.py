@@ -110,11 +110,17 @@ class UiState:
             "weather": None,
             "now_playing": None,
             "camera_description": None,
-            # Bumped every time a new description lands, so the camera page can
+            # Bumped every time a new description lands, so the Talk page can
             # tell "the assistant answered again" from "the same answer is
             # still on screen". Comparing the text would treat two identical
             # descriptions of an unchanged room as one event.
             "camera_description_id": 0,
+            # When the description was made from a picture, the moment that
+            # picture was taken — the cache-busting token the page hangs off
+            # `/api/camera/capture`. None when the model answered without
+            # looking, which is the case that must not draw a stale photograph
+            # beside a new sentence.
+            "camera_image": None,
             "kodama_running": False,
             "degraded": [],
             "updated": time.time(),
@@ -129,16 +135,23 @@ class UiState:
             self._state.update(fields)
             self._state["updated"] = time.time()
 
-    def describe_camera(self, text: str | None) -> None:
+    def describe_camera(self, text: str | None, image: float | None = None) -> None:
         """Publish a new camera description, with a new id.
 
         Separate from `update` because the id must move with the text and
         nothing else may set it — a caller that updated one without the other
-        would give the camera page an answer it never displays, or make it
-        re-run its fade on an answer it is already showing.
+        would give the Talk page an answer it never displays, or make it re-run
+        its fade on an answer it is already showing.
+
+        `image` is `Capture.taken_at` when the answer came from a picture, and
+        None when the model answered without taking one. It moves with the id
+        for the same reason the text does: the picture and the sentence are one
+        event, and a page that received them separately would show the previous
+        photograph under the current answer for one poll interval.
         """
         with self._lock:
             self._state["camera_description"] = text
+            self._state["camera_image"] = image if text else None
             if text:
                 self._state["camera_description_id"] += 1
             self._state["updated"] = time.time()

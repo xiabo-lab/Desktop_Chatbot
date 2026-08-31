@@ -1,0 +1,731 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Yoga Coach 3D</title>
+<style>
+  html,body{margin:0;background:#0d1014;overflow:hidden;color:#e6eaed;
+    font:13px/1.5 ui-monospace,SFMono-Regular,monospace}
+  canvas{display:block;width:100vw;height:auto;max-height:100vh}
+  #hud{position:fixed;top:0;left:0;right:0;padding:7px 13px;
+    background:rgba(8,10,13,.76);display:flex;gap:18px;flex-wrap:wrap;
+    font-variant-numeric:tabular-nums}
+  #hud b{color:#4fbfb8}
+  #say{position:fixed;left:0;right:0;bottom:0;padding:14px 22px 18px;
+    background:linear-gradient(transparent,rgba(6,9,12,.82) 38%);
+    font:400 19px/1.45 ui-sans-serif,system-ui,sans-serif;text-align:center}
+  #say i{display:block;font-style:normal;font-size:15px;color:#9fb0ab;
+    margin-top:4px}
+  body.talky #say{display:none}
+  #log{position:fixed;left:0;right:0;bottom:0;max-height:34vh;overflow:auto;
+    padding:7px 13px;background:rgba(8,10,13,.9);white-space:pre-wrap;font-size:12px;
+    display:none}
+  body.talky #log{display:block}
+  .gd{color:#e3a63f}
+  #review{display:none;position:fixed;right:18px;top:54px;width:330px;
+    padding:16px;border-radius:15px;background:rgba(8,10,13,.92);
+    border:1px solid rgba(79,191,184,.45);font:15px/1.35 system-ui,sans-serif}
+  body.review #review{display:block}
+  body.review #say{right:380px;text-align:left}
+  body.review.review-min #say{right:0}
+  #review .review-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  #review h2{font-size:20px;margin:0}
+  #review-toggle{width:42px;min-height:36px!important;font-size:24px;padding:0}
+  #review.minimized{width:150px;padding:9px 10px}
+  #review.minimized .review-body{display:none}
+  #review.minimized h2{font-size:14px;white-space:nowrap}
+  #review .progress{color:#9fb0ab;margin-bottom:10px}
+  #review select,#review textarea{box-sizing:border-box;width:100%;color:#eef5f3;
+    background:#171d21;border:1px solid #46545a;border-radius:8px;padding:8px}
+  #review textarea{height:88px;margin-top:9px;resize:none;font:14px/1.35 system-ui,sans-serif}
+  #review .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}
+  #review button,#review a{box-sizing:border-box;min-height:42px;border-radius:8px;
+    border:1px solid #58666c;background:#212b30;color:#eef5f3;font-weight:700;
+    display:flex;align-items:center;justify-content:center;text-decoration:none;cursor:pointer}
+  #review .approve{background:#207b62;border-color:#44b993}
+  #review .fix{background:#80542c;border-color:#d18c48}
+  #review-status{margin:9px 0 0;color:#b8c8c3;min-height:20px}
+  #review-camera{margin-top:9px;padding:8px;border-radius:8px;background:#151c20;
+    color:#aee2d5;font-size:13px}
+  #review.editing{width:470px;max-height:calc(100vh - 82px);overflow:auto}
+  #review.editing.minimized{width:150px;overflow:visible}
+  #pose-editor{display:none;margin-top:10px;padding-top:10px;border-top:1px solid #425158}
+  #review.editing #pose-editor{display:block}
+  #pose-editor .editor-help{font-size:12px;color:#b7c6c2;margin:0 0 9px}
+  #pose-editor details{margin:7px 0;border:1px solid #3e4b50;border-radius:8px;
+    padding:7px;background:#11181c}
+  #pose-editor summary{cursor:pointer;font-weight:700;color:#9ee0d1}
+  .pose-control{display:grid;grid-template-columns:142px 1fr 66px;gap:6px;
+    align-items:center;margin:7px 0;font-size:12px}
+  .pose-control input[type=range]{width:100%;accent-color:#4fbfb8}
+  .pose-control input[type=number]{box-sizing:border-box;width:66px;color:#eef5f3;
+    background:#171d21;border:1px solid #46545a;border-radius:6px;padding:5px}
+  #pose-editor .quick{grid-template-columns:1fr 1fr 1fr}
+  #pose-editor .quick button{min-height:36px;font-size:12px}
+  #transition-review{display:none;position:fixed;right:18px;top:54px;width:310px;
+    padding:14px;border-radius:14px;background:rgba(8,10,13,.9);
+    border:1px solid rgba(79,191,184,.45);font:14px/1.35 system-ui,sans-serif}
+  body.transition-review #transition-review{display:block}
+  #transition-review h2{margin:0 0 8px;font-size:18px}
+  #transition-review select{box-sizing:border-box;width:100%;padding:8px;color:#eef5f3;
+    background:#171d21;border:1px solid #46545a;border-radius:8px}
+  #transition-review .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+  #transition-review button{min-height:38px;border-radius:8px;border:1px solid #58666c;
+    background:#212b30;color:#eef5f3;font-weight:700;cursor:pointer}
+  #transition-progress{margin-top:9px;color:#aee2d5;font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<div id="hud">loading…</div>
+<div id="say"></div>
+<div id="log"></div>
+<section id="review">
+  <div class="review-head">
+    <h2>91-POSE HEAD REVIEW</h2>
+    <button id="review-toggle" aria-label="Minimize review form" aria-expanded="true">−</button>
+  </div>
+  <div class="review-body">
+    <div class="progress" id="review-progress"></div>
+    <select id="review-pose" aria-label="Pose"></select>
+    <div id="review-camera">Drag the coach to orbit 360° · drag up/down · wheel to zoom</div>
+    <div class="row">
+      <button id="review-reset-view">Reset View</button>
+      <button id="review-top-view">Top View</button>
+    </div>
+    <div class="row">
+      <button id="review-edit">Edit Pose</button>
+      <button id="review-reset-pose">Reset Pose</button>
+    </div>
+    <div id="pose-editor"></div>
+    <textarea id="review-note" placeholder="Describe what is anatomically wrong…"></textarea>
+    <div class="row">
+      <button id="review-prev">← Previous</button>
+      <button id="review-next">Next →</button>
+      <button class="approve" id="review-approve">✓ Approve</button>
+      <button class="fix" id="review-fix">Needs Fix</button>
+    </div>
+    <div id="review-status"></div>
+    <div class="row">
+      <button id="review-export">Export Review</button>
+      <a href="/">Game Menu</a>
+    </div>
+  </div>
+</section>
+<section id="transition-review">
+  <h2>COURSE TRANSITION REVIEW</h2>
+  <select id="transition-course" aria-label="Course"></select>
+  <div class="row">
+    <button id="transition-prev-course">← Course</button>
+    <button id="transition-next-course">Course →</button>
+  </div>
+  <div class="row">
+    <button id="transition-prev">← Move</button>
+    <button id="transition-next">Move →</button>
+  </div>
+  <div class="row">
+    <button id="transition-pause">Pause</button>
+    <button id="transition-restart">Restart</button>
+  </div>
+  <div id="transition-progress"></div>
+</section>
+<script type="importmap">
+{ "imports": { "three": "./lib/three.module.js" } }
+</script>
+<script type="module">
+/* The runtime 3D Yoga Coach.
+ *
+ * Modes, chosen by query string:
+ *   ?pose=warrior_two_left   one pose, held, breathing
+ *   ?sheet=beginner_01       every pose of a course, briefly, for screenshots
+ *   ?sheet=all               one of every pose in the catalog
+ *   ?course=beginner_01      the lesson played through
+ *   ?course=...&real=1       played at the timings the curriculum asks for
+ *   ?bench=1                 timed, for the performance report
+ *   ?review=1                manual approval, one pose at a time
+ *   ?transitions=1           every move in one course, in under two minutes
+ */
+import * as THREE from "three";
+import { GLTFLoader } from "./lib/GLTFLoader.js";
+import { Coach, humanoidBones, blendTransition, breathing, resolveView,
+         placeCamera, blendView } from "./coach3d.js?v=20260824-ankles5";
+
+const hud = document.getElementById("hud");
+const logEl = document.getElementById("log");
+const sayEl = document.getElementById("say");
+const report = (l) => fetch("/__v3/" + encodeURIComponent(l)).catch(() => {});
+const log = (l) => { logEl.textContent += l + "\n";
+                     logEl.scrollTop = logEl.scrollHeight; report(l); };
+addEventListener("error", (e) => report("ERROR " + (e.message || e) +
+                 " @" + (e.filename || "") + ":" + (e.lineno || 0)));
+addEventListener("unhandledrejection", (e) => report("REJECT " + e.reason));
+
+const P = new URLSearchParams(location.search);
+const reviewing = P.get("review") === "1";
+const transitionReview = P.get("transitions") === "1";
+if (reviewing) document.body.classList.add("review");
+if (transitionReview) document.body.classList.add("transition-review");
+// The running log covers a third of the screen, which is right when something
+// is being diagnosed and wrong the rest of the time. It always reaches the
+// server either way.
+if (P.get("log") === "1") document.body.classList.add("talky");
+const W = 1280, H = 800;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(1);
+renderer.setSize(W, H, false);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.insertBefore(renderer.domElement, hud);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(30, W / H, 0.1, 60);
+
+// A neutral black review space keeps attention on silhouette and makes limb
+// overlap easier to see. Ground contact is solved from the skinned body bounds;
+// it does not require visible floor geometry or a yoga mat.
+scene.background = new THREE.Color(0x000000);
+scene.fog = null;
+scene.add(new THREE.HemisphereLight(0xdff0ff, 0x6d8a4a, 2.0));
+const sun = new THREE.DirectionalLight(0xfff4dc, 1.5);
+sun.position.set(3, 6, 4);
+scene.add(sun);
+
+const data = await fetch("./rigdata.json", { cache: "no-store" }).then((r) => r.json());
+
+/** One pose, whatever kind it is. A scored pose comes from the very table the
+ *  player is judged against; a guided pose from the authored 3D library. No
+ *  caller has to know which, and the scorer and the coach cannot disagree. */
+function basePoseOf(id) {
+  const authored = data.poses3d[id];
+  if (authored) return authored;
+  const rig = data.poses[id];
+  if (rig) return { bones: rig.table, view: "standing",
+                    camera: rig.camera, terminals: rig.terminals,
+                    terminal3d: rig.terminal3d };
+  return null;
+}
+// This correction pass has new base geometry. Do not let edits from the
+// earlier 31–91 review shadow the corrected poses after deployment.
+const POSE_EDIT_KEY = "aipi5-yoga-pose-edits-v5";
+let poseEdits = {};
+if (reviewing) {
+  try { poseEdits = JSON.parse(localStorage.getItem(POSE_EDIT_KEY) || "{}"); }
+  catch (_) { poseEdits = {}; }
+}
+function poseOf(id) { return poseEdits[id] || basePoseOf(id); }
+const catalogOf = (id) => data.catalog[id] || {};
+
+/* The camera is a pure function of how far the move has got, not a spring
+ * chasing a target. That is the difference between "it usually catches up" and
+ * "it is always settled before the hold begins": at the instant the move ends
+ * the blend is 1, so the camera is exactly where the pose asked for it, every
+ * time, however far it had to travel. */
+function aimCamera(from, to, ease, azimuthOffset = 0) {
+  const view = blendView(resolveView(from, data.views),
+                         resolveView(to, data.views), ease);
+  view.azimuth += azimuthOffset;
+  placeCamera(camera, view);
+}
+
+const gltf = await new GLTFLoader().loadAsync("./models/coach.vrm");
+scene.add(gltf.scene);
+const boneNames = humanoidBones(gltf);
+const coach = new Coach(gltf.scene, boneNames);
+
+let tris = 0, meshes = 0, skinned = 0;
+gltf.scene.traverse((o) => {
+  if (!o.isMesh) return;
+  meshes++; if (o.isSkinnedMesh) skinned++;
+  const g = o.geometry;
+  tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+});
+log(`coach.vrm  ${Math.round(tris)} triangles, ${meshes} meshes (${skinned} skinned)`);
+log(`humanoid bones ${Object.keys(boneNames).length}, rig chains ${coach.rest.size}/10, ` +
+    `height ${coach.height.toFixed(2)}m`);
+const unsolved = ["spine","neck","left_upper_arm","left_forearm","right_upper_arm",
+  "right_forearm","left_thigh","left_shin","right_thigh","right_shin"]
+  .filter((n) => !coach.rest.has(n));
+if (unsolved.length) log("UNSOLVED CHAINS: " + unsolved.join(", "));
+
+const sheet = P.get("sheet");
+let courseId = P.get("course");
+const levelOrder = { beginner: 0, intermediate: 1, advanced: 2 };
+const courseIds = Object.keys(data.courses).sort((a, b) =>
+  levelOrder[data.courses[a].level] - levelOrder[data.courses[b].level]
+  || a.localeCompare(b));
+if (transitionReview && !data.courses[courseId]) courseId = courseIds[0];
+const benching = P.get("bench") === "1";
+let list;
+const allPoseIds = Object.keys(data.catalog).sort();
+const poseNumber = (id) => allPoseIds.indexOf(id) + 1;
+if (reviewing) list = allPoseIds;
+else if (sheet === "all") list = Object.keys(data.catalog).sort();
+else if (sheet) list = (data.courses[sheet]?.steps || []).map((s) => s.pose);
+else if (courseId) list = (data.courses[courseId]?.steps || []).map((s) => s.pose);
+else list = [P.get("pose") || "warrior_two_left"];
+if (!list.length) list = ["mountain"];
+
+/* The lesson at its real length, which is the only way to find out whether it
+ * holds up: an 18-minute course is 65 000 posed frames, and the faults worth
+ * catching -- a slow leak, a thermal throttle, a hold that reads as a freeze
+ * rather than as stillness -- are all invisible at two seconds a pose. */
+const real = P.get("real") === "1";
+const steps = courseId ? (data.courses[courseId]?.steps || []) : [];
+const DWELL = benching ? 0.8 : sheet ? (parseFloat(P.get("dwell")) || 1.7) : 6.0;
+const MOVE = real ? 3.0 : benching ? 0.5 : sheet ? 0.3 : 2.2;
+
+/** Where each step starts, in seconds, once every hold is its own length. */
+const starts = [];
+let clock = 0;
+for (const step of steps) { starts.push(clock); clock += step.hold + MOVE; }
+const lessonSeconds = clock;
+function stepAt(seconds) {
+  let i = 0;
+  while (i + 1 < starts.length && starts[i + 1] <= seconds) i++;
+  return i;
+}
+
+let index = 0, frames = 0, reported = -1;
+const t0 = performance.now(); let last = t0;
+const gaps = [];
+const current = () => list[index % list.length];
+const nextId = () => reviewing ? current() : list[(index + 1) % list.length];
+
+const transitionEdges = transitionReview ? steps.map((step, position) => ({
+  from: position ? steps[position - 1].pose : "mountain",
+  to: step.pose,
+})).filter(edge => edge.from !== edge.to) : [];
+const TRANSITION_MOVE = 2.6;
+const TRANSITION_HOLD = 0.4;
+const TRANSITION_SPAN = TRANSITION_MOVE + TRANSITION_HOLD;
+const transitionReviewSeconds = transitionEdges.length * TRANSITION_SPAN;
+const transitionAzimuth = Number(P.get("azimuth") || 0);
+const requestedMove = Math.max(1, Number.parseInt(P.get("move") || "1", 10));
+const requestedProgress = Math.max(0, Math.min(1, Number(P.get("at") || 0)));
+let transitionClock = Math.min(Math.max(0, transitionEdges.length - 1),
+  requestedMove - 1) * TRANSITION_SPAN + requestedProgress * TRANSITION_MOVE;
+let transitionLast = t0;
+let transitionPaused = P.get("paused") === "1";
+
+function transitionUrl(id) {
+  return `?transitions=1&course=${encodeURIComponent(id)}`;
+}
+
+if (transitionReview) {
+  const select = document.getElementById("transition-course");
+  for (const id of courseIds) {
+    const option = document.createElement("option");
+    option.value = id;
+    option.textContent = `${data.courses[id].level} · ${data.courses[id].name}`;
+    option.selected = id === courseId;
+    select.appendChild(option);
+  }
+  select.onchange = () => { location.search = transitionUrl(select.value); };
+  const coursePosition = courseIds.indexOf(courseId);
+  document.getElementById("transition-prev-course").onclick = () => {
+    location.search = transitionUrl(courseIds[(coursePosition - 1 + courseIds.length) % courseIds.length]);
+  };
+  document.getElementById("transition-next-course").onclick = () => {
+    location.search = transitionUrl(courseIds[(coursePosition + 1) % courseIds.length]);
+  };
+  const jump = delta => {
+    const edge = Math.floor(transitionClock / TRANSITION_SPAN);
+    const next = (edge + delta + transitionEdges.length) % transitionEdges.length;
+    transitionClock = next * TRANSITION_SPAN;
+  };
+  document.getElementById("transition-prev").onclick = () => jump(-1);
+  document.getElementById("transition-next").onclick = () => jump(1);
+  document.getElementById("transition-restart").onclick = () => { transitionClock = 0; };
+  const pauseButton = document.getElementById("transition-pause");
+  pauseButton.textContent = transitionPaused ? "Resume" : "Pause";
+  pauseButton.onclick = event => {
+    transitionPaused = !transitionPaused;
+    event.currentTarget.textContent = transitionPaused ? "Resume" : "Pause";
+  };
+}
+
+const REVIEW_KEY = "aipi5-yoga-pose-review-v4";
+let reviews = {};
+if (reviewing) {
+  try { reviews = JSON.parse(localStorage.getItem(REVIEW_KEY) || "{}"); }
+  catch (_) { reviews = {}; }
+}
+const orbit = { azimuth: 0, elevation: 0.2, radius: 4, target: 0.9 };
+function updateCameraLabel() {
+  if (!reviewing) return;
+  const turn = ((orbit.azimuth * 180 / Math.PI) % 360 + 360) % 360;
+  document.getElementById("review-camera").textContent =
+    `View ${Math.round(turn)}° around · ${Math.round(orbit.elevation * 180 / Math.PI)}° up · ` +
+    `${orbit.radius.toFixed(1)}m · drag to orbit, wheel to zoom`;
+}
+function resetReviewCamera() {
+  if (!reviewing) return;
+  const pose = poseOf(current()) || { bones: data.stand, view: "standing" };
+  const view = resolveView(pose, data.views);
+  const vertical = view.height - view.target;
+  orbit.azimuth = (view.azimuth || 0) * Math.PI / 180;
+  orbit.elevation = Math.atan2(vertical, view.distance);
+  orbit.radius = Math.hypot(view.distance, vertical);
+  orbit.target = view.target;
+  updateCameraLabel();
+}
+function placeReviewCamera() {
+  const horizontal = orbit.radius * Math.cos(orbit.elevation);
+  camera.position.set(Math.sin(orbit.azimuth) * horizontal,
+                      orbit.target + Math.sin(orbit.elevation) * orbit.radius,
+                      Math.cos(orbit.azimuth) * horizontal);
+  camera.lookAt(0, orbit.target, 0);
+}
+function reviewCounts() {
+  const values = Object.values(reviews);
+  return { approved: values.filter((v) => v.status === "approved").length,
+           fix: values.filter((v) => v.status === "needs-fix").length };
+}
+function showReviewPose() {
+  if (!reviewing) return;
+  const id = current(), entry = reviews[id] || {};
+  document.getElementById("review-pose").value = id;
+  document.getElementById("review-note").value = entry.note || "";
+  const counts = reviewCounts();
+  document.getElementById("review-progress").textContent =
+    `Pose ${index + 1} of ${list.length} · original #${poseNumber(id)} · ${id} · ` +
+    `${counts.approved} approved · ${counts.fix} need fixes`;
+  document.getElementById("review-status").textContent = entry.status === "approved"
+    ? "✓ Approved" : entry.status === "needs-fix" ? "Marked: needs fix" : "Not reviewed";
+  renderPoseEditor();
+}
+
+const clonePose = (pose) => JSON.parse(JSON.stringify(pose));
+const controlGroups = [
+  ["Bone directions", "bones", [
+    ["Spine", "spine"], ["Neck", "neck"],
+    ["Left upper arm", "left_upper_arm"], ["Left forearm", "left_forearm"],
+    ["Right upper arm", "right_upper_arm"], ["Right forearm", "right_forearm"],
+    ["Left thigh", "left_thigh"], ["Left shin", "left_shin"],
+    ["Right thigh", "right_thigh"], ["Right shin", "right_shin"]]],
+  ["3D limb depth", "depth3d", [
+    ["Left upper arm", "left_upper_arm"], ["Left forearm", "left_forearm"],
+    ["Right upper arm", "right_upper_arm"], ["Right forearm", "right_forearm"],
+    ["Left thigh", "left_thigh"], ["Left shin", "left_shin"],
+    ["Right thigh", "right_thigh"], ["Right shin", "right_shin"]]],
+  ["Whole-body orientation", "root", [
+    ["Pitch", "pitch"], ["Yaw", "yaw"], ["Roll", "roll"]]],
+];
+const terminalNames = [["Left hand", "left_hand"], ["Right hand", "right_hand"],
+                       ["Left foot", "left_foot"], ["Right foot", "right_foot"]];
+function editedPose() {
+  const id = current();
+  if (!poseEdits[id]) poseEdits[id] = clonePose(basePoseOf(id));
+  return poseEdits[id];
+}
+function savePoseEdits() {
+  localStorage.setItem(POSE_EDIT_KEY, JSON.stringify(poseEdits));
+}
+function pathValue(pose, path, fallback = 0) {
+  let value = pose;
+  for (const part of path) value = value?.[part];
+  return Number.isFinite(value) ? value : fallback;
+}
+function setEdit(path, value) {
+  const pose = editedPose();
+  if (path[0] === "terminal3d" || path[0] === "bones3d") {
+    pose[path[0]] ||= {};
+    pose[path[0]][path[1]] ||= [0, 0, 0];
+    pose[path[0]][path[1]][path[2]] = value;
+  } else {
+    pose[path[0]] ||= {};
+    pose[path[0]][path[1]] = value;
+  }
+  savePoseEdits();
+}
+function angleControl(label, path, min = -180, max = 180) {
+  const row = document.createElement("label"); row.className = "pose-control";
+  const name = document.createElement("span"); name.textContent = label;
+  const range = document.createElement("input"); range.type = "range";
+  range.min = min; range.max = max; range.step = 1;
+  const number = document.createElement("input"); number.type = "number";
+  number.min = min; number.max = max; number.step = 1;
+  range.setAttribute("aria-label", label); number.setAttribute("aria-label", `${label} degrees`);
+  const value = pathValue(poseOf(current()), path); range.value = value; number.value = value;
+  const update = (raw) => {
+    const next = Math.max(min, Math.min(max, Number(raw) || 0));
+    range.value = next; number.value = next; setEdit(path, next);
+  };
+  range.addEventListener("input", () => update(range.value));
+  number.addEventListener("input", () => update(number.value));
+  row.append(name, range, number); return row;
+}
+function renderPoseEditor() {
+  if (!reviewing) return;
+  const host = document.getElementById("pose-editor"); host.replaceChildren();
+  const help = document.createElement("p"); help.className = "editor-help";
+  help.textContent = "Live preview. Edits stay in this browser and export as exact values for anatomy validation.";
+  host.appendChild(help);
+  const quick = document.createElement("div"); quick.className = "row quick";
+  for (let axis = 0; axis < 3; axis++) {
+    const button = document.createElement("button");
+    button.textContent = `Flip both feet ${"XYZ"[axis]}`;
+    button.addEventListener("click", () => {
+      const pose = editedPose(); pose.terminal3d ||= {};
+      for (const side of ["left_foot", "right_foot"]) {
+        const turns = [...(pose.terminal3d[side] || [0, 0, 0])];
+        turns[axis] = (turns[axis] || 0) === 180 ? 0 : 180;
+        pose.terminal3d[side] = turns;
+      }
+      savePoseEdits(); renderPoseEditor();
+    });
+    quick.appendChild(button);
+  }
+  host.appendChild(quick);
+  const head = document.createElement("details"); head.open = true;
+  const headTitle = document.createElement("summary");
+  headTitle.textContent = "Head direction";
+  head.appendChild(headTitle);
+  head.appendChild(angleControl("Look up / down", ["bones3d", "neck", 0], -60, 60));
+  head.appendChild(angleControl("Look left / right", ["bones3d", "neck", 1], -80, 80));
+  head.appendChild(angleControl("Ear tilt left / right", ["bones3d", "neck", 2], -45, 45));
+  host.appendChild(head);
+  for (const [title, group, controls] of controlGroups) {
+    const details = document.createElement("details");
+    const summary = document.createElement("summary"); summary.textContent = title;
+    details.appendChild(summary);
+    for (const [label, key] of controls)
+      details.appendChild(angleControl(label, [group, key], group === "depth3d" ? -90 : -180,
+                                        group === "depth3d" ? 90 : 180));
+    host.appendChild(details);
+  }
+  const terminal = document.createElement("details"); terminal.open = true;
+  const terminalTitle = document.createElement("summary"); terminalTitle.textContent = "Hands and feet";
+  terminal.appendChild(terminalTitle);
+  for (const [label, key] of terminalNames)
+    for (let axis = 0; axis < 3; axis++)
+      terminal.appendChild(angleControl(`${label} ${"XYZ"[axis]}`,
+        ["terminal3d", key, axis]));
+  host.appendChild(terminal);
+}
+function goReview(offset) {
+  index = Math.max(0, Math.min(list.length - 1, index + offset));
+  resetReviewCamera();
+  showReviewPose();
+}
+function saveReview(status) {
+  const id = current();
+  reviews[id] = { status,
+    note: document.getElementById("review-note").value.trim(),
+    reviewed_at: new Date().toISOString() };
+  localStorage.setItem(REVIEW_KEY, JSON.stringify(reviews));
+  showReviewPose();
+}
+if (reviewing) {
+  const select = document.getElementById("review-pose");
+  for (const id of list) {
+    const option = document.createElement("option");
+    option.value = id;
+    const c = catalogOf(id);
+    option.textContent = `#${poseNumber(id)} · ${c.name || id}` +
+      `${c.side ? ` · ${c.side.toUpperCase()}` : ""} [${id}]`;
+    select.appendChild(option);
+  }
+  select.addEventListener("change", () => {
+    index = list.indexOf(select.value); resetReviewCamera(); showReviewPose();
+  });
+  document.getElementById("review-prev").addEventListener("click", () => goReview(-1));
+  document.getElementById("review-next").addEventListener("click", () => goReview(1));
+  document.getElementById("review-approve").addEventListener("click", () => {
+    saveReview("approved"); goReview(1);
+  });
+  document.getElementById("review-fix").addEventListener("click", () => {
+    saveReview("needs-fix"); goReview(1);
+  });
+  document.getElementById("review-reset-view").addEventListener("click", resetReviewCamera);
+  document.getElementById("review-top-view").addEventListener("click", () => {
+    orbit.elevation = 82 * Math.PI / 180;
+    updateCameraLabel();
+  });
+  document.getElementById("review-edit").addEventListener("click", () => {
+    const panel = document.getElementById("review");
+    const editing = panel.classList.toggle("editing");
+    document.getElementById("review-edit").textContent = editing ? "Close Editor" : "Edit Pose";
+    renderPoseEditor();
+  });
+  document.getElementById("review-reset-pose").addEventListener("click", () => {
+    delete poseEdits[current()]; savePoseEdits(); renderPoseEditor();
+  });
+  document.getElementById("review-toggle").addEventListener("click", () => {
+    const panel = document.getElementById("review");
+    const minimized = panel.classList.toggle("minimized");
+    document.body.classList.toggle("review-min", minimized);
+    const button = document.getElementById("review-toggle");
+    button.textContent = minimized ? "+" : "−";
+    button.setAttribute("aria-expanded", String(!minimized));
+    button.setAttribute("aria-label", minimized ? "Expand review form" : "Minimize review form");
+  });
+  document.getElementById("review-export").addEventListener("click", () => {
+    const exported = { poses: clonePose(reviews), pose_edits: clonePose(poseEdits) };
+    for (const [id, edit] of Object.entries(poseEdits))
+      if (exported.poses[id]) exported.poses[id].edited_pose = edit;
+    const blob = new Blob([JSON.stringify(exported, null, 2)],
+                          { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "yoga-pose-review.json";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  });
+  let drag = null;
+  renderer.domElement.style.touchAction = "none";
+  renderer.domElement.addEventListener("pointerdown", (event) => {
+    drag = { x: event.clientX, y: event.clientY };
+    renderer.domElement.setPointerCapture(event.pointerId);
+  });
+  renderer.domElement.addEventListener("pointermove", (event) => {
+    if (!drag) return;
+    orbit.azimuth -= (event.clientX - drag.x) * 0.008;
+    orbit.elevation = Math.max(-0.18, Math.min(1.48,
+      orbit.elevation - (event.clientY - drag.y) * 0.006));
+    drag = { x: event.clientX, y: event.clientY };
+    updateCameraLabel();
+  });
+  const endDrag = () => { drag = null; };
+  renderer.domElement.addEventListener("pointerup", endDrag);
+  renderer.domElement.addEventListener("pointercancel", endDrag);
+  renderer.domElement.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    orbit.radius = Math.max(1.2, Math.min(12,
+      orbit.radius * Math.exp(event.deltaY * 0.001)));
+    updateCameraLabel();
+  }, { passive: false });
+  renderer.domElement.addEventListener("dblclick", resetReviewCamera);
+  resetReviewCamera();
+  showReviewPose();
+}
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (transitionReview && transitionEdges.length) {
+    const delta = Math.min(0.1, (now - transitionLast) / 1000);
+    transitionLast = now;
+    if (!transitionPaused) transitionClock += delta;
+    const rawCycle = transitionClock % transitionReviewSeconds;
+    const cycle = Number.isFinite(rawCycle) ? Math.max(0, rawCycle) : 0;
+    index = Math.min(transitionEdges.length - 1,
+                     Math.floor(cycle / TRANSITION_SPAN));
+    const phase = cycle - index * TRANSITION_SPAN;
+    const edge = transitionEdges[index] || transitionEdges[0];
+    const key = `${edge.from}>${edge.to}`;
+    const pathIds = data.transition_paths?.[key] || [];
+    const from = poseOf(edge.from) || { bones: data.stand, view: "standing" };
+    const to = poseOf(edge.to) || from;
+    const moving = phase < TRANSITION_MOVE;
+    const progress = Math.min(1, phase / TRANSITION_MOVE);
+    const shown = moving
+      ? blendTransition(from, to, pathIds.map(poseOf), progress) : to;
+    coach.apply(shown, null);
+    aimCamera(from, to, progress, transitionAzimuth);
+    renderer.render(scene, camera);
+
+    const actions = [...(data.transition_actions?.[key] || []),
+      `Move into ${catalogOf(edge.to).name || edge.to}`];
+    const actionIndex = moving
+      ? Math.min(actions.length - 1, Math.floor(progress * actions.length))
+      : actions.length - 1;
+    const route = [edge.from, ...pathIds, edge.to]
+      .map(id => catalogOf(id).name || id).join(" → ");
+    const elapsed = Math.min(transitionReviewSeconds, cycle);
+    const mmss = value => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
+    hud.innerHTML = `<b>${data.courses[courseId].name}</b>` +
+      ` &middot; move ${index + 1}/${transitionEdges.length}` +
+      ` &middot; ${mmss(elapsed)} / ${mmss(transitionReviewSeconds)}` +
+      ` &middot; ${transitionPaused ? "PAUSED" : "playing"}`;
+    sayEl.innerHTML = `${actions[actionIndex]}<i>${route}</i>`;
+    document.getElementById("transition-progress").textContent =
+      `${index + 1}/${transitionEdges.length} · ${mmss(transitionReviewSeconds)} total`;
+    return;
+  }
+  const seconds = (now - t0) / 1000;
+  let span = DWELL + MOVE, phase;
+  if (reviewing) {
+    phase = 0;
+  } else if (real && steps.length) {
+    index = stepAt(seconds % lessonSeconds);
+    span = steps[index].hold + MOVE;
+    phase = (seconds % lessonSeconds) - starts[index];
+  } else {
+    if (list.length > 1) index = Math.floor(seconds / span);
+    phase = seconds % span;
+  }
+  const holding = phase <= span - MOVE;
+
+  const a = poseOf(current()) || { bones: data.stand, view: "standing" };
+  const b = poseOf(nextId()) || a;
+  const moving = !reviewing && list.length > 1 && !holding;
+  const fromId = current(), toId = nextId();
+  const path = data.transition_paths?.[`${fromId}>${toId}`] || [];
+  const shown = moving
+    ? blendTransition(a, b, path.map(poseOf), (phase - (span - MOVE)) / MOVE)
+    : a;
+
+  // Breathing only while she holds. A coach who breathes mid-movement reads as
+  // unsteady rather than as alive.
+  coach.apply(shown, moving ? null : breathing(seconds, 1));
+  if (reviewing) placeReviewCamera();
+  else aimCamera(a, b, moving ? (phase - (span - MOVE)) / MOVE : 0);
+  renderer.render(scene, camera);
+
+  const gap = now - last; last = now;
+  if (frames > 12) gaps.push(gap);
+  frames++;
+  if (frames % 20 === 0) {
+    const s = [...gaps].sort((x, y) => x - y);
+    const med = s[Math.floor(s.length / 2)] || 0;
+    const id = current(), c = catalogOf(id);
+    // What the player is meant to do, in the words the curriculum uses. A
+    // pose the coach demonstrates perfectly and never names is still a pose
+    // nobody knows how to copy.
+    sayEl.innerHTML = (c.instruction || "") +
+      (c.cue ? `<i>${c.cue}</i>` : "");
+    hud.innerHTML = `<b>${c.name || id}</b> ` +
+      `<span class="${c.scored ? "" : "gd"}">${c.scored ? "scored" : "guided"}</span>` +
+      ` &middot; ${(index % list.length) + 1}/${list.length}` +
+      ` &middot; ${Math.round(tris)} tris` +
+      ` &middot; median <b>${med.toFixed(1)}ms</b> (${(1000 / med).toFixed(0)} fps)`;
+  }
+  // A long run reports as it goes, so a lesson that dies at minute twelve
+  // says so instead of leaving one silent screenshot at the end.
+  // `gaps` must not be empty and second zero must not count: a report at the
+  // very first frame has nothing to take a median of, and the `undefined`
+  // that follows throws inside requestAnimationFrame -- which does not stop
+  // the page, it stops the *animation*, silently, on frame one.
+  if (real && gaps.length > 30 && Math.floor(seconds) !== reported
+      && Math.floor(seconds) > 0 && Math.floor(seconds) % 60 === 0) {
+    reported = Math.floor(seconds);
+    const s2 = [...gaps].sort((x, y) => x - y);
+    log(`minute ${reported / 60}  step ${index + 1}/${list.length} ` +
+        `${current()}  median ${s2[Math.floor(s2.length / 2)].toFixed(1)}ms  ` +
+        `worst ${s2[s2.length - 1].toFixed(0)}ms  ` +
+        `heap ${(performance.memory?.usedJSHeapSize / 1048576 || 0).toFixed(0)}MB`);
+    gaps.length = 0;
+  }
+  if (benching && frames === 900) {
+    const s = [...gaps].sort((x, y) => x - y);
+    const med = s[Math.floor(s.length / 2)];
+    const info = renderer.info.render;
+    log("");
+    log(`benched ${frames} posed frames at ${W}x${H} across ${list.length} poses`);
+    log(`median ${med.toFixed(1)}ms (${(1000 / med).toFixed(0)} fps)  ` +
+        `p95 ${s[Math.floor(s.length * 0.95)].toFixed(1)}ms  ` +
+        `worst ${s[s.length - 1].toFixed(0)}ms  ` +
+        `calls ${info.calls}  tris ${info.triangles}`);
+    log(med < 17 ? "VERDICT: 60 fps" : med < 34 ? "VERDICT: 30+ fps"
+        : med < 100 ? "VERDICT: 10-30 fps" : "VERDICT: under 10 fps");
+    report("BENCH_DONE");
+  }
+}
+log(`mode ${reviewing ? "review" : transitionReview ? "transitions:" + courseId : sheet ? "sheet:" + sheet : courseId ? "course:" + courseId : "pose"}` +
+    ` - ${list.length} pose(s)` +
+    (real ? `, ${(lessonSeconds / 60).toFixed(1)} minutes as written` : ""));
+requestAnimationFrame(frame);
+window.COACH = { coach, data, poseOf, list };
+</script>
+</body>
+</html>

@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Hold loop viewer</title>
+<style>
+  html,body{margin:0;background:#000;overflow:hidden;
+    font:15px/1.5 system-ui,-apple-system,sans-serif;color:#e8ebed}
+  #stage{display:block;width:100vw;height:auto;max-height:100vh}
+  #bar{position:fixed;left:0;right:0;bottom:0;padding:10px 16px;
+    background:rgba(8,10,13,.78);display:flex;gap:22px;align-items:baseline;
+    font-variant-numeric:tabular-nums}
+  #name{font-weight:600;color:#4fbfb8;font-size:17px}
+  .k{color:#8d99a1;font-size:13px}
+  #hint{margin-left:auto;color:#8d99a1;font-size:13px}
+</style>
+</head>
+<body>
+<canvas id="stage" width="1280" height="800"></canvas>
+<div id="bar">
+  <span id="name">—</span>
+  <span class="k">10 fps &middot; ping-pong &middot; <span id="cycle">—</span>s per cycle</span>
+  <span class="k" id="count">—</span>
+  <span id="hint">SPACE = next loop &middot; this is the real playback</span>
+</div>
+<script>
+/* One hold loop, played the way the game will play it.
+ *
+ * The loop ships as N frames and is played forwards then backwards, so a
+ * 22-frame file covers a 4.2-second cycle with no seam to hide -- the last
+ * frame and the first are never adjacent. Nothing here is sped up or
+ * exaggerated: if the breathing does not read at this size and this rate, it
+ * does not read.
+ */
+const ctx = document.getElementById("stage").getContext("2d", { alpha: false });
+const nameEl = document.getElementById("name");
+const cycleEl = document.getElementById("cycle");
+const countEl = document.getElementById("count");
+const W = 1280, H = 800;
+
+const field = new Image();
+let fieldReady = false;
+field.onload = () => { fieldReady = true; };
+field.src = "/assets/yoga/field-forest.webp";
+
+const load = (base, n) => Promise.all(Array.from({ length: n }, (_, i) =>
+  new Promise((ok) => {
+    const im = new Image();
+    im.onload = () => ok(im);
+    im.src = `${base}/${String(i).padStart(3, "0")}.webp`;
+  })));
+
+(async function () {
+  const manifest = await fetch("/assets/yoga/v2/manifest.json").then(r => r.json());
+  const fps = manifest.fps || 10;
+  const names = Object.keys(manifest.loops);
+  const params = new URLSearchParams(location.search);
+  let which = Math.max(0, names.indexOf(params.get("pose") || "warrior_two_left"));
+
+  let frames = [], entry = null, started = 0;
+  async function pick(index) {
+    which = (index + names.length) % names.length;
+    const name = names[which];
+    entry = manifest.loops[name];
+    frames = await load(`/assets/yoga/v2/loops/${name}`, entry.frames);
+    // Forwards then backwards: 2n-2 steps, because the two end frames are not
+    // repeated when the direction turns.
+    const period = (2 * entry.frames - 2) / fps;
+    nameEl.textContent = name;
+    cycleEl.textContent = period.toFixed(1);
+    countEl.textContent = `${entry.frames} frames`;
+    started = performance.now();
+  }
+  await pick(which);
+
+  addEventListener("keydown", (e) => {
+    if (e.code === "Space") { e.preventDefault(); pick(which + 1); }
+  });
+
+  function tick(now) {
+    requestAnimationFrame(tick);
+    if (!entry || !frames.length) return;
+    const span = 2 * entry.frames - 2;
+    const step = Math.floor(Math.max(0, now - started) / (1000 / fps)) % span;
+    // Walk up to the last frame, then back down to the first.
+    const index = step < entry.frames ? step : span - step;
+    const at = entry.at[index];
+    if (!at) return;
+    if (fieldReady) ctx.drawImage(field, 0, 0, W, H);
+    else { ctx.fillStyle = "#2b3a30"; ctx.fillRect(0, 0, W, H); }
+    ctx.drawImage(frames[index], at.x, at.y, at.w, at.h);
+  }
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

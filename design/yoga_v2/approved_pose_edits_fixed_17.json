@@ -1,0 +1,17 @@
+{
+  "source_file": "/home/fuwenxu/Downloads/yoga-pose-review (6).json",
+  "approved": [
+    "low_lunge_right",
+    "mountain_breath",
+    "seated_side_stretch_left",
+    "seated_side_stretch_right",
+    "seated_twist_left",
+    "seated_twist_right",
+    "shoulder_opener",
+    "tree_heart_left",
+    "tree_heart_right",
+    "tree_overhead_left",
+    "tree_overhead_right"
+  ],
+  "pose_edits": {}
+}

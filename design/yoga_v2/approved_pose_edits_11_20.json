@@ -1,0 +1,89 @@
+{
+  "approved_at": "2026-08-23T04:19:29.100Z",
+  "source_file": "yoga-pose-review (1).json",
+  "approved": [
+    "cow", "crescent_moon_left", "crescent_moon_right", "downward_dog",
+    "easy_seat", "easy_seat_breath", "figure_four_left",
+    "figure_four_right", "forward_fold", "gentle_back_reach"
+  ],
+  "pose_edits": {
+    "cow": {
+      "bones": {"left_forearm": 92, "left_shin": 178, "left_thigh": 92, "left_upper_arm": 92, "neck": -48, "right_forearm": 88, "right_shin": 182, "right_thigh": 88, "right_upper_arm": 88, "spine": 0},
+      "bones3d": {"chest": [-18, 0, 0], "hips": [72, 0, 0]},
+      "camera": {"azimuth": 16},
+      "root": {"yaw": 90},
+      "terminals": {"left_foot": "top_down", "left_hand": "floor", "right_foot": "top_down", "right_hand": "floor"},
+      "view": "low"
+    },
+    "crescent_moon_left": {
+      "bones": {"left_forearm": -110, "left_shin": 90, "left_thigh": 90, "left_upper_arm": -110, "neck": -125, "right_forearm": -130, "right_shin": 90, "right_thigh": 90, "right_upper_arm": -130, "spine": -120},
+      "view": "standing",
+      "terminals": {"left_foot": "floor", "right_foot": "floor"},
+      "terminal3d": {"left_hand": [-180, -180, -180], "left_foot": [30, 0, 0], "right_foot": [30, 0, 0]},
+      "depth3d": {"left_upper_arm": 15, "left_forearm": 15, "right_upper_arm": 15, "right_forearm": 15}
+    },
+    "crescent_moon_right": {
+      "bones": {"left_forearm": -50, "left_shin": 90, "left_thigh": 90, "left_upper_arm": -50, "neck": -65, "right_forearm": -70, "right_shin": 90, "right_thigh": 90, "right_upper_arm": -70, "spine": -65},
+      "view": "standing",
+      "terminals": {"left_foot": "floor", "right_foot": "floor"},
+      "terminal3d": {"left_foot": [30, 0, 0], "right_foot": [30, 0, 0]},
+      "depth3d": {"left_upper_arm": 15, "left_forearm": 15, "right_upper_arm": 15, "right_forearm": 15}
+    },
+    "downward_dog": {
+      "bones": {"left_forearm": 62, "left_shin": 140, "left_thigh": 134, "left_upper_arm": 60, "neck": 63, "right_forearm": 62, "right_shin": 140, "right_thigh": 134, "right_upper_arm": 60, "spine": 58},
+      "bones3d": {"hips": [46, 0, 0]},
+      "camera": {"azimuth": 12},
+      "root": {"yaw": 90},
+      "terminals": {"left_foot": "floor", "left_hand": "floor", "right_foot": "floor", "right_hand": "floor"},
+      "view": "kneel",
+      "terminal3d": {"left_foot": [30, 0, 0], "right_foot": [30, 0, 0]}
+    },
+    "easy_seat": {
+      "bones": {"left_forearm": 106, "left_shin": -20, "left_thigh": 130, "left_upper_arm": 105, "neck": -90, "right_forearm": 69, "right_shin": -169, "right_thigh": 29, "right_upper_arm": 75, "spine": -90},
+      "terminals": {"left_foot": "relax", "left_hand": "palm_down", "right_foot": "relax", "right_hand": "palm_down"},
+      "view": "seated",
+      "depth3d": {"left_thigh": 60, "left_shin": -9, "right_thigh": 48, "right_shin": -3, "right_forearm": 14, "left_upper_arm": 15, "left_forearm": 14, "right_upper_arm": 15},
+      "terminal3d": {"left_hand": [0, 0, 35], "right_hand": [0, 0, -35]}
+    },
+    "easy_seat_breath": {
+      "bones": {"left_forearm": 130, "left_shin": -22, "left_thigh": 160, "left_upper_arm": 130, "neck": -90, "right_forearm": 50, "right_shin": -163, "right_thigh": 12, "right_upper_arm": 50, "spine": -90},
+      "terminals": {"left_foot": "relax", "left_hand": "palm_up", "right_foot": "relax", "right_hand": "palm_up"},
+      "view": "seated",
+      "depth3d": {"left_thigh": 58, "right_thigh": 58, "left_shin": -15, "right_shin": -18, "left_upper_arm": 40, "left_forearm": 40, "right_upper_arm": 40, "right_forearm": 40}
+    },
+    "figure_four_left": {
+      "bones": {"left_forearm": -16, "left_shin": 8, "left_thigh": -78, "left_upper_arm": -24, "neck": 180, "right_forearm": -26, "right_shin": -44, "right_thigh": -121, "right_upper_arm": -19, "spine": 180},
+      "camera": {"azimuth": 24},
+      "root": {"pitch": -90, "roll": 90},
+      "terminals": {"left_foot": "flex", "right_foot": "relax"},
+      "view": "low",
+      "depth3d": {"left_thigh": -1, "right_thigh": -44, "right_shin": 66, "left_upper_arm": 13, "left_forearm": 1, "right_upper_arm": -1, "right_forearm": 24},
+      "terminal3d": {"left_hand": [-12, 0, 0]}
+    },
+    "figure_four_right": {
+      "bones": {"left_forearm": -30, "left_shin": -58, "left_thigh": -124, "left_upper_arm": -30, "neck": 180, "right_forearm": -30, "right_shin": 4, "right_thigh": -90, "right_upper_arm": -30, "spine": 180},
+      "camera": {"azimuth": -24},
+      "root": {"pitch": -90, "roll": 90},
+      "terminals": {"left_foot": "relax", "right_foot": "flex"},
+      "view": "low",
+      "terminal3d": {"left_foot": [0, 0, 0]},
+      "depth3d": {"left_thigh": 49, "left_shin": -68, "right_shin": -5, "right_thigh": 4, "left_upper_arm": 6, "left_forearm": -25, "right_upper_arm": -16, "right_forearm": 9}
+    },
+    "forward_fold": {
+      "bones": {"hip_line": 180, "left_forearm": 90, "left_shin": 90, "left_thigh": 90, "left_upper_arm": 90, "neck": 95, "right_forearm": 90, "right_shin": 90, "right_thigh": 90, "right_upper_arm": 90, "shoulder_line": 180, "spine": 99},
+      "view": "standing",
+      "camera": {"azimuth": 15, "distance": 3.4, "height": 0.72, "target": 0.62},
+      "terminals": {"left_foot": "floor", "right_foot": "floor"},
+      "terminal3d": {"left_foot": [30, 0, 0], "right_foot": [30, 0, 0]},
+      "root": {"pitch": 45, "yaw": -90, "roll": 0}
+    },
+    "gentle_back_reach": {
+      "bones": {"left_forearm": 88, "left_shin": 180, "left_thigh": 165, "left_upper_arm": 79, "neck": -104, "right_forearm": 79, "right_shin": 180, "right_thigh": 165, "right_upper_arm": 93, "spine": -50},
+      "camera": {"azimuth": 18},
+      "root": {"yaw": 90, "pitch": 10, "roll": 0},
+      "terminals": {"left_foot": "floor", "left_hand": "palm_to_back", "right_foot": "floor", "right_hand": "palm_to_back"},
+      "view": "standing",
+      "terminal3d": {"left_foot": [180, 0, 0], "right_foot": [180, 0, 0], "left_hand": [150, 0, -80], "right_hand": [150, 0, 80]}
+    }
+  }
+}

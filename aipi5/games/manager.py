@@ -35,6 +35,7 @@ import time
 from aipi5.games.boxing.game import BoxingSession
 from aipi5.games.fruit_ninja.game import HighScores, Session as FruitSession, State
 from aipi5.games.yoga.game import YogaSession
+from aipi5.games.yoga.lesson import COURSES as YOGA_COURSES
 from aipi5.games.yoga.lesson import DIFFICULTIES as YOGA_DIFFICULTIES
 from aipi5.motion.gestures import CrossedArmsGesture
 from aipi5.motion.service import MotionUnavailable, PoseService
@@ -50,7 +51,7 @@ CATALOGUE: tuple[dict, ...] = (
      "blurb": "Slice the fruit with your hands. Mind the bombs.",
      "playable": True},
     {"id": "yoga", "name": "Yoga Coach", "glyph": "🧘",
-     "blurb": "Follow the coach through a twenty-minute class.",
+     "blurb": "Choose from 21 guided classes, 15–20 minutes each.",
      "playable": True},
     {"id": "boxing", "name": "Boxing", "glyph": "🥊",
      "blurb": "Train your reactions or fight an adaptive opponent.",
@@ -105,12 +106,18 @@ class GameManager:
     """
 
     def __init__(self, cfg, *, motion_cfg, camera, audio=None, screen=None,
-                 on_change=lambda: None):
+                 speak=None, on_change=lambda: None):
         self.cfg = cfg
         self.motion_cfg = motion_cfg
         self._camera = camera
         self._audio = audio
         self._screen = screen
+        #: How a game says something out loud. Handed in like the camera and
+        #: the ducker rather than reached for, and optional: every game here
+        #: has to be playable with the sound off, so the one caller (the Yoga
+        #: Coach reading each pose's instruction) treats a missing voice as a
+        #: class that is read rather than heard.
+        self._speak = speak
         self._on_change = on_change
 
         self._lock = threading.RLock()
@@ -199,6 +206,8 @@ class GameManager:
             # Three lessons that share nothing but a name. A beginner's 87 and
             # an advanced 87 are not the same achievement and must not compete
             # for the same line on the tile.
+            if session.course_id:
+                return f"yoga:{session.course_id}"
             return f"yoga:{session.difficulty}" if session.difficulty else "yoga"
         seconds = getattr(session, "duration", None)
         return self._score_key(game_id, seconds)
@@ -305,8 +314,12 @@ class GameManager:
                              for difficulty in ("easy", "normal", "hard")))
             elif game_id == "yoga":
                 self.session = YogaSession(
-                    best=max(self.scores.best(f"yoga:{difficulty}")
-                             for difficulty in YOGA_DIFFICULTIES))
+                    best=max(
+                        *(self.scores.best(f"yoga:{course_id}")
+                          for course_id in YOGA_COURSES),
+                        *(self.scores.best(f"yoga:{difficulty}")
+                          for difficulty in YOGA_DIFFICULTIES)),
+                    speak=self._speak)
             else:
                 duration = float(self.round_seconds)
                 self.session = FruitSession(
@@ -415,6 +428,15 @@ class GameManager:
                     raise GameError(str(exc)) from exc
                 self._start_gesture.reset()
                 log.info("Game: Boxing mode set to %s", session.mode)
+            elif action.startswith("course-"):
+                if not isinstance(session, YogaSession):
+                    raise GameError("course selection is only available in Yoga")
+                try:
+                    session.select_course(action.removeprefix("course-"))
+                except ValueError as exc:
+                    raise GameError(str(exc)) from exc
+                self._start_gesture.reset()
+                log.info("Game: Yoga course set to %s", session.course_id)
             elif action.startswith("difficulty-"):
                 if not isinstance(session, (BoxingSession, YogaSession)):
                     raise GameError("this game has no difficulty setting")

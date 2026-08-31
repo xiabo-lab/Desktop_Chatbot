@@ -1,0 +1,2482 @@
+{
+  "families": {
+    "inverted": {
+      "height": 2.5
+    },
+    "kneeling": {
+      "height": 1.5
+    },
+    "prone": {
+      "height": 0.5
+    },
+    "quadruped": {
+      "height": 1.5
+    },
+    "seated": {
+      "height": 1.0
+    },
+    "standing-fold": {
+      "height": 3.5
+    },
+    "standing-lunge": {
+      "height": 3.5
+    },
+    "standing-neutral": {
+      "height": 4.0
+    },
+    "standing-wide": {
+      "height": 4.0
+    },
+    "supine": {
+      "height": 0.0
+    }
+  },
+  "model": "base 3.0s plus 1.6s per unit of height difference, clamped to 2.5-8.0s",
+  "pair_count": 258,
+  "pairs": {
+    "bird_dog_left->bird_dog_right": {
+      "from": "bird_dog_left",
+      "from_family": "quadruped",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "bird_dog_right",
+      "to_family": "quadruped",
+      "used_in": 2
+    },
+    "bird_dog_right->child_pose": {
+      "from": "bird_dog_right",
+      "from_family": "quadruped",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "bird_dog_right->sphinx": {
+      "from": "bird_dog_right",
+      "from_family": "quadruped",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "sphinx",
+      "to_family": "prone",
+      "used_in": 1
+    },
+    "boat->bridge": {
+      "from": "boat",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "bridge",
+      "to_family": "supine",
+      "used_in": 2
+    },
+    "bridge->knees_to_chest": {
+      "from": "bridge",
+      "from_family": "supine",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "knees_to_chest",
+      "to_family": "supine",
+      "used_in": 2
+    },
+    "bridge->pigeon_prep_left": {
+      "from": "bridge",
+      "from_family": "supine",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "pigeon_prep_left",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "bridge->seated_twist_left": {
+      "from": "bridge",
+      "from_family": "supine",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "seated_twist_left",
+      "to_family": "seated",
+      "used_in": 1
+    },
+    "butterfly->easy_seat_breath": {
+      "from": "butterfly",
+      "from_family": "seated",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "easy_seat_breath",
+      "to_family": "seated",
+      "used_in": 1
+    },
+    "butterfly->figure_four_left": {
+      "from": "butterfly",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "figure_four_left",
+      "to_family": "supine",
+      "used_in": 2
+    },
+    "butterfly->knees_to_chest": {
+      "from": "butterfly",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "knees_to_chest",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "butterfly->savasana": {
+      "from": "butterfly",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "savasana",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "butterfly->seated_forward_fold": {
+      "from": "butterfly",
+      "from_family": "seated",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "seated_forward_fold",
+      "to_family": "seated",
+      "used_in": 3
+    },
+    "butterfly->seated_hamstring_left": {
+      "from": "butterfly",
+      "from_family": "seated",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "seated_hamstring_left",
+      "to_family": "seated",
+      "used_in": 3
+    },
+    "cactus_arms->shoulder_opener": {
+      "from": "cactus_arms",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "shoulder_opener",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "cat->bird_dog_left": {
+      "from": "cat",
+      "from_family": "quadruped",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "bird_dog_left",
+      "to_family": "quadruped",
+      "used_in": 1
+    },
+    "cat->child_pose": {
+      "from": "cat",
+      "from_family": "quadruped",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 2
+    },
+    "cat->cow": {
+      "from": "cat",
+      "from_family": "quadruped",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "cow",
+      "to_family": "quadruped",
+      "used_in": 7
+    },
+    "cat->crescent_moon_left": {
+      "from": "cat",
+      "from_family": "quadruped",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "crescent_moon_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "cat->downward_dog": {
+      "from": "cat",
+      "from_family": "quadruped",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "downward_dog",
+      "to_family": "inverted",
+      "used_in": 2
+    },
+    "cat->thread_needle_left": {
+      "from": "cat",
+      "from_family": "quadruped",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "thread_needle_left",
+      "to_family": "quadruped",
+      "used_in": 1
+    },
+    "chair->downward_dog": {
+      "from": "chair",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "downward_dog",
+      "to_family": "inverted",
+      "used_in": 1
+    },
+    "chair->forward_fold": {
+      "from": "chair",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "forward_fold",
+      "to_family": "standing-fold",
+      "used_in": 7
+    },
+    "chair->mountain": {
+      "from": "chair",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "mountain",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "chair->plank": {
+      "from": "chair",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 8.0,
+      "to": "plank",
+      "to_family": "prone",
+      "used_in": 1
+    },
+    "chair->standing_knee_left": {
+      "from": "chair",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "standing_knee_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "child_pose->bridge": {
+      "from": "child_pose",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "bridge",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "child_pose->butterfly": {
+      "from": "child_pose",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "butterfly",
+      "to_family": "seated",
+      "used_in": 5
+    },
+    "child_pose->downward_dog": {
+      "from": "child_pose",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "downward_dog",
+      "to_family": "inverted",
+      "used_in": 2
+    },
+    "child_pose->easy_seat": {
+      "from": "child_pose",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "easy_seat",
+      "to_family": "seated",
+      "used_in": 3
+    },
+    "child_pose->low_lunge_left": {
+      "from": "child_pose",
+      "from_family": "kneeling",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "low_lunge_left",
+      "to_family": "kneeling",
+      "used_in": 2
+    },
+    "child_pose->plank": {
+      "from": "child_pose",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "plank",
+      "to_family": "prone",
+      "used_in": 1
+    },
+    "child_pose->savasana": {
+      "from": "child_pose",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "savasana",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "child_pose->seated_forward_fold": {
+      "from": "child_pose",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "seated_forward_fold",
+      "to_family": "seated",
+      "used_in": 3
+    },
+    "child_pose->seated_twist_left": {
+      "from": "child_pose",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "seated_twist_left",
+      "to_family": "seated",
+      "used_in": 1
+    },
+    "child_pose->supine_twist_left": {
+      "from": "child_pose",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "supine_twist_left",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "child_pose->tree_heart_left": {
+      "from": "child_pose",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "tree_heart_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "cobra->child_pose": {
+      "from": "cobra",
+      "from_family": "prone",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "cow->cat": {
+      "from": "cow",
+      "from_family": "quadruped",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "cat",
+      "to_family": "quadruped",
+      "used_in": 14
+    },
+    "crescent_moon_left->crescent_moon_right": {
+      "from": "crescent_moon_left",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "crescent_moon_right",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "crescent_moon_right->bird_dog_left": {
+      "from": "crescent_moon_right",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "bird_dog_left",
+      "to_family": "quadruped",
+      "used_in": 1
+    },
+    "downward_dog->chair": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "chair",
+      "to_family": "standing-neutral",
+      "used_in": 2
+    },
+    "downward_dog->child_pose": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 4
+    },
+    "downward_dog->goddess": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "goddess",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "downward_dog->high_lunge_left": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "high_lunge_left",
+      "to_family": "standing-lunge",
+      "used_in": 4
+    },
+    "downward_dog->high_lunge_right": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "high_lunge_right",
+      "to_family": "standing-lunge",
+      "used_in": 2
+    },
+    "downward_dog->low_lunge_left": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "low_lunge_left",
+      "to_family": "kneeling",
+      "used_in": 3
+    },
+    "downward_dog->low_lunge_reach_left": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "low_lunge_reach_left",
+      "to_family": "kneeling",
+      "used_in": 2
+    },
+    "downward_dog->low_lunge_right": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "low_lunge_right",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "downward_dog->pigeon_prep_left": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "pigeon_prep_left",
+      "to_family": "kneeling",
+      "used_in": 2
+    },
+    "downward_dog->plank": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 6.2,
+      "to": "plank",
+      "to_family": "prone",
+      "used_in": 1
+    },
+    "downward_dog->side_angle_left": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "side_angle_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "downward_dog->table": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "table",
+      "to_family": "quadruped",
+      "used_in": 1
+    },
+    "downward_dog->tree_overhead_left": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "tree_overhead_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "downward_dog->warrior_one_left": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "warrior_one_left",
+      "to_family": "standing-lunge",
+      "used_in": 2
+    },
+    "downward_dog->warrior_one_right": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "warrior_one_right",
+      "to_family": "standing-lunge",
+      "used_in": 1
+    },
+    "downward_dog->warrior_three_left": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "warrior_three_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "downward_dog->warrior_two_left": {
+      "from": "downward_dog",
+      "from_family": "inverted",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "warrior_two_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "easy_seat->butterfly": {
+      "from": "easy_seat",
+      "from_family": "seated",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "butterfly",
+      "to_family": "seated",
+      "used_in": 2
+    },
+    "easy_seat->easy_seat_breath": {
+      "from": "easy_seat",
+      "from_family": "seated",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "easy_seat_breath",
+      "to_family": "seated",
+      "used_in": 4
+    },
+    "easy_seat->seated_side_stretch_left": {
+      "from": "easy_seat",
+      "from_family": "seated",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "seated_side_stretch_left",
+      "to_family": "seated",
+      "used_in": 2
+    },
+    "easy_seat_breath->figure_four_left": {
+      "from": "easy_seat_breath",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "figure_four_left",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "easy_seat_breath->neck_tilt_left": {
+      "from": "easy_seat_breath",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 7.800000000000001,
+      "to": "neck_tilt_left",
+      "to_family": "standing-neutral",
+      "used_in": 2
+    },
+    "easy_seat_breath->table": {
+      "from": "easy_seat_breath",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "table",
+      "to_family": "quadruped",
+      "used_in": 2
+    },
+    "figure_four_left->figure_four_right": {
+      "from": "figure_four_left",
+      "from_family": "supine",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "figure_four_right",
+      "to_family": "supine",
+      "used_in": 10
+    },
+    "figure_four_right->child_pose": {
+      "from": "figure_four_right",
+      "from_family": "supine",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "figure_four_right->knees_to_chest": {
+      "from": "figure_four_right",
+      "from_family": "supine",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "knees_to_chest",
+      "to_family": "supine",
+      "used_in": 4
+    },
+    "figure_four_right->savasana": {
+      "from": "figure_four_right",
+      "from_family": "supine",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "savasana",
+      "to_family": "supine",
+      "used_in": 4
+    },
+    "figure_four_right->seated_twist_left": {
+      "from": "figure_four_right",
+      "from_family": "supine",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "seated_twist_left",
+      "to_family": "seated",
+      "used_in": 1
+    },
+    "forward_fold->child_pose": {
+      "from": "forward_fold",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 6.2,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "forward_fold->half_lift": {
+      "from": "forward_fold",
+      "from_family": "standing-fold",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "half_lift",
+      "to_family": "standing-fold",
+      "used_in": 17
+    },
+    "forward_fold->half_moon_left": {
+      "from": "forward_fold",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "half_moon_left",
+      "to_family": "standing-wide",
+      "used_in": 2
+    },
+    "forward_fold->high_lunge_left": {
+      "from": "forward_fold",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "high_lunge_left",
+      "to_family": "standing-lunge",
+      "used_in": 1
+    },
+    "forward_fold->mountain": {
+      "from": "forward_fold",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "mountain",
+      "to_family": "standing-neutral",
+      "used_in": 3
+    },
+    "forward_fold->plank": {
+      "from": "forward_fold",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 7.800000000000001,
+      "to": "plank",
+      "to_family": "prone",
+      "used_in": 3
+    },
+    "forward_fold->tree_overhead_left": {
+      "from": "forward_fold",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "tree_overhead_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "forward_fold->triangle_left": {
+      "from": "forward_fold",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "triangle_left",
+      "to_family": "standing-wide",
+      "used_in": 2
+    },
+    "forward_fold->upward_salute": {
+      "from": "forward_fold",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "upward_salute",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "forward_fold->warrior_one_left": {
+      "from": "forward_fold",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "warrior_one_left",
+      "to_family": "standing-lunge",
+      "used_in": 2
+    },
+    "forward_fold->warrior_two_left": {
+      "from": "forward_fold",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "warrior_two_left",
+      "to_family": "standing-wide",
+      "used_in": 5
+    },
+    "gentle_back_reach->side_bend_left": {
+      "from": "gentle_back_reach",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_bend_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "goddess->tree_heart_left": {
+      "from": "goddess",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "tree_heart_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "goddess->wide_leg_fold": {
+      "from": "goddess",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "wide_leg_fold",
+      "to_family": "standing-fold",
+      "used_in": 1
+    },
+    "half_lift->chair": {
+      "from": "half_lift",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "chair",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "half_lift->downward_dog": {
+      "from": "half_lift",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "downward_dog",
+      "to_family": "inverted",
+      "used_in": 1
+    },
+    "half_lift->forward_fold": {
+      "from": "half_lift",
+      "from_family": "standing-fold",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "forward_fold",
+      "to_family": "standing-fold",
+      "used_in": 4
+    },
+    "half_lift->mountain": {
+      "from": "half_lift",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "mountain",
+      "to_family": "standing-neutral",
+      "used_in": 7
+    },
+    "half_lift->plank": {
+      "from": "half_lift",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 7.800000000000001,
+      "to": "plank",
+      "to_family": "prone",
+      "used_in": 3
+    },
+    "half_lift->table": {
+      "from": "half_lift",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 6.2,
+      "to": "table",
+      "to_family": "quadruped",
+      "used_in": 1
+    },
+    "half_moon_left->half_moon_right": {
+      "from": "half_moon_left",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "half_moon_right",
+      "to_family": "standing-wide",
+      "used_in": 3
+    },
+    "half_moon_right->child_pose": {
+      "from": "half_moon_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "half_moon_right->forward_fold": {
+      "from": "half_moon_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "forward_fold",
+      "to_family": "standing-fold",
+      "used_in": 1
+    },
+    "half_moon_right->mountain": {
+      "from": "half_moon_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "mountain",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "half_split_left->pyramid_left": {
+      "from": "half_split_left",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 6.2,
+      "to": "pyramid_left",
+      "to_family": "standing-lunge",
+      "used_in": 1
+    },
+    "half_split_right->pyramid_right": {
+      "from": "half_split_right",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 6.2,
+      "to": "pyramid_right",
+      "to_family": "standing-lunge",
+      "used_in": 1
+    },
+    "hand_to_toe_left->hand_to_toe_right": {
+      "from": "hand_to_toe_left",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "hand_to_toe_right",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "hand_to_toe_right->forward_fold": {
+      "from": "hand_to_toe_right",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "forward_fold",
+      "to_family": "standing-fold",
+      "used_in": 1
+    },
+    "high_lunge_left->high_lunge_right": {
+      "from": "high_lunge_left",
+      "from_family": "standing-lunge",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "high_lunge_right",
+      "to_family": "standing-lunge",
+      "used_in": 3
+    },
+    "high_lunge_left->warrior_one_left": {
+      "from": "high_lunge_left",
+      "from_family": "standing-lunge",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "warrior_one_left",
+      "to_family": "standing-lunge",
+      "used_in": 1
+    },
+    "high_lunge_left->warrior_two_left": {
+      "from": "high_lunge_left",
+      "from_family": "standing-lunge",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "warrior_two_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "high_lunge_right->downward_dog": {
+      "from": "high_lunge_right",
+      "from_family": "standing-lunge",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "downward_dog",
+      "to_family": "inverted",
+      "used_in": 1
+    },
+    "high_lunge_right->warrior_one_left": {
+      "from": "high_lunge_right",
+      "from_family": "standing-lunge",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "warrior_one_left",
+      "to_family": "standing-lunge",
+      "used_in": 2
+    },
+    "high_lunge_right->warrior_one_right": {
+      "from": "high_lunge_right",
+      "from_family": "standing-lunge",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "warrior_one_right",
+      "to_family": "standing-lunge",
+      "used_in": 1
+    },
+    "high_lunge_right->warrior_two_right": {
+      "from": "high_lunge_right",
+      "from_family": "standing-lunge",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "warrior_two_right",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "knees_to_chest->child_pose": {
+      "from": "knees_to_chest",
+      "from_family": "supine",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "knees_to_chest->figure_four_left": {
+      "from": "knees_to_chest",
+      "from_family": "supine",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "figure_four_left",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "knees_to_chest->savasana": {
+      "from": "knees_to_chest",
+      "from_family": "supine",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "savasana",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "knees_to_chest->supine_twist_left": {
+      "from": "knees_to_chest",
+      "from_family": "supine",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "supine_twist_left",
+      "to_family": "supine",
+      "used_in": 6
+    },
+    "lizard_left->half_split_left": {
+      "from": "lizard_left",
+      "from_family": "kneeling",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "half_split_left",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "lizard_left->warrior_two_left": {
+      "from": "lizard_left",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "warrior_two_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "lizard_right->half_split_right": {
+      "from": "lizard_right",
+      "from_family": "kneeling",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "half_split_right",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "lizard_right->warrior_two_right": {
+      "from": "lizard_right",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "warrior_two_right",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "low_lunge_left->lizard_left": {
+      "from": "low_lunge_left",
+      "from_family": "kneeling",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "lizard_left",
+      "to_family": "kneeling",
+      "used_in": 2
+    },
+    "low_lunge_left->low_lunge_right": {
+      "from": "low_lunge_left",
+      "from_family": "kneeling",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "low_lunge_right",
+      "to_family": "kneeling",
+      "used_in": 6
+    },
+    "low_lunge_left->warrior_one_left": {
+      "from": "low_lunge_left",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 6.2,
+      "to": "warrior_one_left",
+      "to_family": "standing-lunge",
+      "used_in": 1
+    },
+    "low_lunge_reach_left->low_lunge_reach_right": {
+      "from": "low_lunge_reach_left",
+      "from_family": "kneeling",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "low_lunge_reach_right",
+      "to_family": "kneeling",
+      "used_in": 2
+    },
+    "low_lunge_reach_right->sphinx": {
+      "from": "low_lunge_reach_right",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "sphinx",
+      "to_family": "prone",
+      "used_in": 1
+    },
+    "low_lunge_reach_right->warrior_one_left": {
+      "from": "low_lunge_reach_right",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 6.2,
+      "to": "warrior_one_left",
+      "to_family": "standing-lunge",
+      "used_in": 1
+    },
+    "low_lunge_right->butterfly": {
+      "from": "low_lunge_right",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "butterfly",
+      "to_family": "seated",
+      "used_in": 1
+    },
+    "low_lunge_right->downward_dog": {
+      "from": "low_lunge_right",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "downward_dog",
+      "to_family": "inverted",
+      "used_in": 3
+    },
+    "low_lunge_right->lizard_right": {
+      "from": "low_lunge_right",
+      "from_family": "kneeling",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "lizard_right",
+      "to_family": "kneeling",
+      "used_in": 2
+    },
+    "low_lunge_right->warrior_one_left": {
+      "from": "low_lunge_right",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 6.2,
+      "to": "warrior_one_left",
+      "to_family": "standing-lunge",
+      "used_in": 1
+    },
+    "low_lunge_right->warrior_one_right": {
+      "from": "low_lunge_right",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 6.2,
+      "to": "warrior_one_right",
+      "to_family": "standing-lunge",
+      "used_in": 1
+    },
+    "low_lunge_right->warrior_two_left": {
+      "from": "low_lunge_right",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "warrior_two_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "mountain->chair": {
+      "from": "mountain",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "chair",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "mountain->half_moon_left": {
+      "from": "mountain",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "half_moon_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "mountain->hand_to_toe_left": {
+      "from": "mountain",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "hand_to_toe_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "mountain->low_lunge_left": {
+      "from": "mountain",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "low_lunge_left",
+      "to_family": "kneeling",
+      "used_in": 2
+    },
+    "mountain->mountain_breath": {
+      "from": "mountain",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "mountain_breath",
+      "to_family": "standing-neutral",
+      "used_in": 17
+    },
+    "mountain->side_bend_left": {
+      "from": "mountain",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_bend_left",
+      "to_family": "standing-neutral",
+      "used_in": 5
+    },
+    "mountain->standing_knee_left": {
+      "from": "mountain",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "standing_knee_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "mountain->table": {
+      "from": "mountain",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "table",
+      "to_family": "quadruped",
+      "used_in": 1
+    },
+    "mountain->tree_heart_left": {
+      "from": "mountain",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "tree_heart_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "mountain->tree_overhead_left": {
+      "from": "mountain",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "tree_overhead_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "mountain->upward_salute": {
+      "from": "mountain",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "upward_salute",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "mountain->warrior_three_left": {
+      "from": "mountain",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "warrior_three_left",
+      "to_family": "standing-neutral",
+      "used_in": 2
+    },
+    "mountain->weight_shift": {
+      "from": "mountain",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "weight_shift",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "mountain_breath->cactus_arms": {
+      "from": "mountain_breath",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "cactus_arms",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "mountain_breath->side_bend_left": {
+      "from": "mountain_breath",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_bend_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "mountain_breath->upward_salute": {
+      "from": "mountain_breath",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "upward_salute",
+      "to_family": "standing-neutral",
+      "used_in": 15
+    },
+    "mountain_breath->warrior_two_left": {
+      "from": "mountain_breath",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "warrior_two_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "neck_tilt_left->neck_tilt_right": {
+      "from": "neck_tilt_left",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "neck_tilt_right",
+      "to_family": "standing-neutral",
+      "used_in": 3
+    },
+    "neck_tilt_right->seated_side_stretch_left": {
+      "from": "neck_tilt_right",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 7.800000000000001,
+      "to": "seated_side_stretch_left",
+      "to_family": "seated",
+      "used_in": 1
+    },
+    "neck_tilt_right->shoulder_opener": {
+      "from": "neck_tilt_right",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "shoulder_opener",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "neck_tilt_right->side_bend_left": {
+      "from": "neck_tilt_right",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_bend_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "pigeon_prep_left->pigeon_prep_right": {
+      "from": "pigeon_prep_left",
+      "from_family": "kneeling",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "pigeon_prep_right",
+      "to_family": "kneeling",
+      "used_in": 4
+    },
+    "pigeon_prep_right->child_pose": {
+      "from": "pigeon_prep_right",
+      "from_family": "kneeling",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 3
+    },
+    "pigeon_prep_right->seated_forward_fold": {
+      "from": "pigeon_prep_right",
+      "from_family": "kneeling",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "seated_forward_fold",
+      "to_family": "seated",
+      "used_in": 1
+    },
+    "plank->boat": {
+      "from": "plank",
+      "from_family": "prone",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "boat",
+      "to_family": "seated",
+      "used_in": 1
+    },
+    "plank->downward_dog": {
+      "from": "plank",
+      "from_family": "prone",
+      "same_family": false,
+      "seconds": 6.2,
+      "to": "downward_dog",
+      "to_family": "inverted",
+      "used_in": 6
+    },
+    "plank->side_plank_left": {
+      "from": "plank",
+      "from_family": "prone",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_plank_left",
+      "to_family": "prone",
+      "used_in": 2
+    },
+    "pyramid_left->triangle_left": {
+      "from": "pyramid_left",
+      "from_family": "standing-lunge",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "triangle_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "pyramid_right->triangle_right": {
+      "from": "pyramid_right",
+      "from_family": "standing-lunge",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "triangle_right",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "reverse_warrior_left->reverse_warrior_right": {
+      "from": "reverse_warrior_left",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "reverse_warrior_right",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "reverse_warrior_left->side_angle_left": {
+      "from": "reverse_warrior_left",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_angle_left",
+      "to_family": "standing-wide",
+      "used_in": 4
+    },
+    "reverse_warrior_right->forward_fold": {
+      "from": "reverse_warrior_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "forward_fold",
+      "to_family": "standing-fold",
+      "used_in": 1
+    },
+    "reverse_warrior_right->side_angle_right": {
+      "from": "reverse_warrior_right",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_angle_right",
+      "to_family": "standing-wide",
+      "used_in": 4
+    },
+    "seated_forward_fold->savasana": {
+      "from": "seated_forward_fold",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "savasana",
+      "to_family": "supine",
+      "used_in": 4
+    },
+    "seated_forward_fold->seated_hamstring_left": {
+      "from": "seated_forward_fold",
+      "from_family": "seated",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "seated_hamstring_left",
+      "to_family": "seated",
+      "used_in": 1
+    },
+    "seated_forward_fold->seated_twist_left": {
+      "from": "seated_forward_fold",
+      "from_family": "seated",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "seated_twist_left",
+      "to_family": "seated",
+      "used_in": 1
+    },
+    "seated_forward_fold->supine_twist_left": {
+      "from": "seated_forward_fold",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "supine_twist_left",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "seated_hamstring_left->seated_hamstring_right": {
+      "from": "seated_hamstring_left",
+      "from_family": "seated",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "seated_hamstring_right",
+      "to_family": "seated",
+      "used_in": 4
+    },
+    "seated_hamstring_right->figure_four_left": {
+      "from": "seated_hamstring_right",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "figure_four_left",
+      "to_family": "supine",
+      "used_in": 4
+    },
+    "seated_side_stretch_left->seated_side_stretch_right": {
+      "from": "seated_side_stretch_left",
+      "from_family": "seated",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "seated_side_stretch_right",
+      "to_family": "seated",
+      "used_in": 3
+    },
+    "seated_side_stretch_right->figure_four_left": {
+      "from": "seated_side_stretch_right",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "figure_four_left",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "seated_side_stretch_right->knees_to_chest": {
+      "from": "seated_side_stretch_right",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "knees_to_chest",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "seated_side_stretch_right->table": {
+      "from": "seated_side_stretch_right",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "table",
+      "to_family": "quadruped",
+      "used_in": 1
+    },
+    "seated_twist_left->seated_twist_right": {
+      "from": "seated_twist_left",
+      "from_family": "seated",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "seated_twist_right",
+      "to_family": "seated",
+      "used_in": 4
+    },
+    "seated_twist_right->figure_four_left": {
+      "from": "seated_twist_right",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "figure_four_left",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "seated_twist_right->knees_to_chest": {
+      "from": "seated_twist_right",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "knees_to_chest",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "seated_twist_right->savasana": {
+      "from": "seated_twist_right",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "savasana",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "seated_twist_right->supine_twist_left": {
+      "from": "seated_twist_right",
+      "from_family": "seated",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "supine_twist_left",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "shoulder_opener->neck_tilt_left": {
+      "from": "shoulder_opener",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "neck_tilt_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "shoulder_opener->table": {
+      "from": "shoulder_opener",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "table",
+      "to_family": "quadruped",
+      "used_in": 1
+    },
+    "side_angle_left->side_angle_right": {
+      "from": "side_angle_left",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_angle_right",
+      "to_family": "standing-wide",
+      "used_in": 3
+    },
+    "side_angle_left->triangle_left": {
+      "from": "side_angle_left",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "triangle_left",
+      "to_family": "standing-wide",
+      "used_in": 4
+    },
+    "side_angle_left->wide_leg_fold": {
+      "from": "side_angle_left",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "wide_leg_fold",
+      "to_family": "standing-fold",
+      "used_in": 2
+    },
+    "side_angle_right->downward_dog": {
+      "from": "side_angle_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "downward_dog",
+      "to_family": "inverted",
+      "used_in": 2
+    },
+    "side_angle_right->triangle_left": {
+      "from": "side_angle_right",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "triangle_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "side_angle_right->triangle_right": {
+      "from": "side_angle_right",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "triangle_right",
+      "to_family": "standing-wide",
+      "used_in": 4
+    },
+    "side_angle_right->wide_leg_fold": {
+      "from": "side_angle_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "wide_leg_fold",
+      "to_family": "standing-fold",
+      "used_in": 2
+    },
+    "side_bend_left->side_bend_right": {
+      "from": "side_bend_left",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_bend_right",
+      "to_family": "standing-neutral",
+      "used_in": 9
+    },
+    "side_bend_right->chair": {
+      "from": "side_bend_right",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "chair",
+      "to_family": "standing-neutral",
+      "used_in": 2
+    },
+    "side_bend_right->downward_dog": {
+      "from": "side_bend_right",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "downward_dog",
+      "to_family": "inverted",
+      "used_in": 1
+    },
+    "side_bend_right->low_lunge_left": {
+      "from": "side_bend_right",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "low_lunge_left",
+      "to_family": "kneeling",
+      "used_in": 2
+    },
+    "side_bend_right->standing_knee_left": {
+      "from": "side_bend_right",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "standing_knee_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "side_bend_right->standing_twist_left": {
+      "from": "side_bend_right",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "standing_twist_left",
+      "to_family": "standing-neutral",
+      "used_in": 2
+    },
+    "side_bend_right->upward_salute": {
+      "from": "side_bend_right",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "upward_salute",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "side_plank_left->side_plank_right": {
+      "from": "side_plank_left",
+      "from_family": "prone",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_plank_right",
+      "to_family": "prone",
+      "used_in": 2
+    },
+    "side_plank_right->boat": {
+      "from": "side_plank_right",
+      "from_family": "prone",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "boat",
+      "to_family": "seated",
+      "used_in": 1
+    },
+    "side_plank_right->child_pose": {
+      "from": "side_plank_right",
+      "from_family": "prone",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "sphinx->child_pose": {
+      "from": "sphinx",
+      "from_family": "prone",
+      "same_family": false,
+      "seconds": 4.6,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "sphinx->cobra": {
+      "from": "sphinx",
+      "from_family": "prone",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "cobra",
+      "to_family": "prone",
+      "used_in": 1
+    },
+    "standing_knee_left->standing_knee_right": {
+      "from": "standing_knee_left",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "standing_knee_right",
+      "to_family": "standing-neutral",
+      "used_in": 3
+    },
+    "standing_knee_right->mountain": {
+      "from": "standing_knee_right",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "mountain",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "standing_knee_right->tree_heart_left": {
+      "from": "standing_knee_right",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "tree_heart_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "standing_knee_right->tree_overhead_left": {
+      "from": "standing_knee_right",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "tree_overhead_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "standing_twist_left->standing_twist_right": {
+      "from": "standing_twist_left",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "standing_twist_right",
+      "to_family": "standing-neutral",
+      "used_in": 2
+    },
+    "standing_twist_right->forward_fold": {
+      "from": "standing_twist_right",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "forward_fold",
+      "to_family": "standing-fold",
+      "used_in": 2
+    },
+    "star->goddess": {
+      "from": "star",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "goddess",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "supine_twist_left->supine_twist_right": {
+      "from": "supine_twist_left",
+      "from_family": "supine",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "supine_twist_right",
+      "to_family": "supine",
+      "used_in": 9
+    },
+    "supine_twist_right->savasana": {
+      "from": "supine_twist_right",
+      "from_family": "supine",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "savasana",
+      "to_family": "supine",
+      "used_in": 9
+    },
+    "table->cow": {
+      "from": "table",
+      "from_family": "quadruped",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "cow",
+      "to_family": "quadruped",
+      "used_in": 7
+    },
+    "thread_needle_left->thread_needle_right": {
+      "from": "thread_needle_left",
+      "from_family": "quadruped",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "thread_needle_right",
+      "to_family": "quadruped",
+      "used_in": 1
+    },
+    "thread_needle_right->child_pose": {
+      "from": "thread_needle_right",
+      "from_family": "quadruped",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "tree_heart_left->tree_heart_right": {
+      "from": "tree_heart_left",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "tree_heart_right",
+      "to_family": "standing-neutral",
+      "used_in": 4
+    },
+    "tree_heart_right->butterfly": {
+      "from": "tree_heart_right",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 7.800000000000001,
+      "to": "butterfly",
+      "to_family": "seated",
+      "used_in": 1
+    },
+    "tree_heart_right->chair": {
+      "from": "tree_heart_right",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "chair",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "tree_heart_right->child_pose": {
+      "from": "tree_heart_right",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "tree_heart_right->mountain": {
+      "from": "tree_heart_right",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "mountain",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "tree_overhead_left->tree_overhead_right": {
+      "from": "tree_overhead_left",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "tree_overhead_right",
+      "to_family": "standing-neutral",
+      "used_in": 4
+    },
+    "tree_overhead_right->forward_fold": {
+      "from": "tree_overhead_right",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "forward_fold",
+      "to_family": "standing-fold",
+      "used_in": 1
+    },
+    "tree_overhead_right->mountain": {
+      "from": "tree_overhead_right",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "mountain",
+      "to_family": "standing-neutral",
+      "used_in": 2
+    },
+    "tree_overhead_right->warrior_three_left": {
+      "from": "tree_overhead_right",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "warrior_three_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "triangle_left->downward_dog": {
+      "from": "triangle_left",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "downward_dog",
+      "to_family": "inverted",
+      "used_in": 3
+    },
+    "triangle_left->side_angle_left": {
+      "from": "triangle_left",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_angle_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "triangle_left->triangle_right": {
+      "from": "triangle_left",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "triangle_right",
+      "to_family": "standing-wide",
+      "used_in": 7
+    },
+    "triangle_left->warrior_three_left": {
+      "from": "triangle_left",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "warrior_three_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "triangle_right->chair": {
+      "from": "triangle_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "chair",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "triangle_right->child_pose": {
+      "from": "triangle_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "triangle_right->downward_dog": {
+      "from": "triangle_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "downward_dog",
+      "to_family": "inverted",
+      "used_in": 4
+    },
+    "triangle_right->forward_fold": {
+      "from": "triangle_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "forward_fold",
+      "to_family": "standing-fold",
+      "used_in": 1
+    },
+    "triangle_right->mountain": {
+      "from": "triangle_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "mountain",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "triangle_right->side_angle_left": {
+      "from": "triangle_right",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_angle_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "triangle_right->side_angle_right": {
+      "from": "triangle_right",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_angle_right",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "triangle_right->star": {
+      "from": "triangle_right",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "star",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "triangle_right->warrior_three_right": {
+      "from": "triangle_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "warrior_three_right",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "upward_salute->chair": {
+      "from": "upward_salute",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "chair",
+      "to_family": "standing-neutral",
+      "used_in": 3
+    },
+    "upward_salute->forward_fold": {
+      "from": "upward_salute",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "forward_fold",
+      "to_family": "standing-fold",
+      "used_in": 13
+    },
+    "upward_salute->gentle_back_reach": {
+      "from": "upward_salute",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "gentle_back_reach",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "upward_salute->mountain": {
+      "from": "upward_salute",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "mountain",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "warrior_one_left->warrior_one_right": {
+      "from": "warrior_one_left",
+      "from_family": "standing-lunge",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "warrior_one_right",
+      "to_family": "standing-lunge",
+      "used_in": 7
+    },
+    "warrior_one_left->warrior_two_left": {
+      "from": "warrior_one_left",
+      "from_family": "standing-lunge",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "warrior_two_left",
+      "to_family": "standing-wide",
+      "used_in": 3
+    },
+    "warrior_one_right->bridge": {
+      "from": "warrior_one_right",
+      "from_family": "standing-lunge",
+      "same_family": false,
+      "seconds": 8.0,
+      "to": "bridge",
+      "to_family": "supine",
+      "used_in": 1
+    },
+    "warrior_one_right->forward_fold": {
+      "from": "warrior_one_right",
+      "from_family": "standing-lunge",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "forward_fold",
+      "to_family": "standing-fold",
+      "used_in": 4
+    },
+    "warrior_one_right->mountain_breath": {
+      "from": "warrior_one_right",
+      "from_family": "standing-lunge",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "mountain_breath",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "warrior_one_right->warrior_two_left": {
+      "from": "warrior_one_right",
+      "from_family": "standing-lunge",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "warrior_two_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "warrior_one_right->warrior_two_right": {
+      "from": "warrior_one_right",
+      "from_family": "standing-lunge",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "warrior_two_right",
+      "to_family": "standing-wide",
+      "used_in": 3
+    },
+    "warrior_three_left->downward_dog": {
+      "from": "warrior_three_left",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "downward_dog",
+      "to_family": "inverted",
+      "used_in": 1
+    },
+    "warrior_three_left->warrior_three_right": {
+      "from": "warrior_three_left",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "warrior_three_right",
+      "to_family": "standing-neutral",
+      "used_in": 5
+    },
+    "warrior_three_right->child_pose": {
+      "from": "warrior_three_right",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "child_pose",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "warrior_three_right->downward_dog": {
+      "from": "warrior_three_right",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "downward_dog",
+      "to_family": "inverted",
+      "used_in": 2
+    },
+    "warrior_three_right->forward_fold": {
+      "from": "warrior_three_right",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "forward_fold",
+      "to_family": "standing-fold",
+      "used_in": 2
+    },
+    "warrior_three_right->pigeon_prep_left": {
+      "from": "warrior_three_right",
+      "from_family": "standing-neutral",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "pigeon_prep_left",
+      "to_family": "kneeling",
+      "used_in": 1
+    },
+    "warrior_two_left->reverse_warrior_left": {
+      "from": "warrior_two_left",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "reverse_warrior_left",
+      "to_family": "standing-wide",
+      "used_in": 4
+    },
+    "warrior_two_left->side_angle_left": {
+      "from": "warrior_two_left",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_angle_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "warrior_two_left->warrior_two_right": {
+      "from": "warrior_two_left",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "warrior_two_right",
+      "to_family": "standing-wide",
+      "used_in": 9
+    },
+    "warrior_two_right->downward_dog": {
+      "from": "warrior_two_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 5.4,
+      "to": "downward_dog",
+      "to_family": "inverted",
+      "used_in": 1
+    },
+    "warrior_two_right->forward_fold": {
+      "from": "warrior_two_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 3.8,
+      "to": "forward_fold",
+      "to_family": "standing-fold",
+      "used_in": 1
+    },
+    "warrior_two_right->reverse_warrior_left": {
+      "from": "warrior_two_right",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "reverse_warrior_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "warrior_two_right->reverse_warrior_right": {
+      "from": "warrior_two_right",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "reverse_warrior_right",
+      "to_family": "standing-wide",
+      "used_in": 4
+    },
+    "warrior_two_right->side_angle_left": {
+      "from": "warrior_two_right",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_angle_left",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "warrior_two_right->side_angle_right": {
+      "from": "warrior_two_right",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_angle_right",
+      "to_family": "standing-wide",
+      "used_in": 1
+    },
+    "warrior_two_right->triangle_left": {
+      "from": "warrior_two_right",
+      "from_family": "standing-wide",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "triangle_left",
+      "to_family": "standing-wide",
+      "used_in": 4
+    },
+    "warrior_two_right->warrior_three_left": {
+      "from": "warrior_two_right",
+      "from_family": "standing-wide",
+      "same_family": false,
+      "seconds": 3.0,
+      "to": "warrior_three_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "weight_shift->side_bend_left": {
+      "from": "weight_shift",
+      "from_family": "standing-neutral",
+      "same_family": true,
+      "seconds": 3.0,
+      "to": "side_bend_left",
+      "to_family": "standing-neutral",
+      "used_in": 1
+    },
+    "wide_leg_fold->butterfly": {
+      "from": "wide_leg_fold",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "butterfly",
+      "to_family": "seated",
+      "used_in": 2
+    },
+    "wide_leg_fold->easy_seat": {
+      "from": "wide_leg_fold",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 7.0,
+      "to": "easy_seat",
+      "to_family": "seated",
+      "used_in": 1
+    },
+    "wide_leg_fold->low_lunge_right": {
+      "from": "wide_leg_fold",
+      "from_family": "standing-fold",
+      "same_family": false,
+      "seconds": 6.2,
+      "to": "low_lunge_right",
+      "to_family": "kneeling",
+      "used_in": 2
+    }
+  },
+  "seconds_between_families": {
+    "inverted": {
+      "inverted": 3.0,
+      "kneeling": 4.6,
+      "prone": 6.2,
+      "quadruped": 4.6,
+      "seated": 5.4,
+      "standing-fold": 4.6,
+      "standing-lunge": 4.6,
+      "standing-neutral": 5.4,
+      "standing-wide": 5.4,
+      "supine": 7.0
+    },
+    "kneeling": {
+      "inverted": 4.6,
+      "kneeling": 3.0,
+      "prone": 4.6,
+      "quadruped": 3.0,
+      "seated": 3.8,
+      "standing-fold": 6.2,
+      "standing-lunge": 6.2,
+      "standing-neutral": 7.0,
+      "standing-wide": 7.0,
+      "supine": 5.4
+    },
+    "prone": {
+      "inverted": 6.2,
+      "kneeling": 4.6,
+      "prone": 3.0,
+      "quadruped": 4.6,
+      "seated": 3.8,
+      "standing-fold": 7.800000000000001,
+      "standing-lunge": 7.800000000000001,
+      "standing-neutral": 8.0,
+      "standing-wide": 8.0,
+      "supine": 3.8
+    },
+    "quadruped": {
+      "inverted": 4.6,
+      "kneeling": 3.0,
+      "prone": 4.6,
+      "quadruped": 3.0,
+      "seated": 3.8,
+      "standing-fold": 6.2,
+      "standing-lunge": 6.2,
+      "standing-neutral": 7.0,
+      "standing-wide": 7.0,
+      "supine": 5.4
+    },
+    "seated": {
+      "inverted": 5.4,
+      "kneeling": 3.8,
+      "prone": 3.8,
+      "quadruped": 3.8,
+      "seated": 3.0,
+      "standing-fold": 7.0,
+      "standing-lunge": 7.0,
+      "standing-neutral": 7.800000000000001,
+      "standing-wide": 7.800000000000001,
+      "supine": 4.6
+    },
+    "standing-fold": {
+      "inverted": 4.6,
+      "kneeling": 6.2,
+      "prone": 7.800000000000001,
+      "quadruped": 6.2,
+      "seated": 7.0,
+      "standing-fold": 3.0,
+      "standing-lunge": 3.0,
+      "standing-neutral": 3.8,
+      "standing-wide": 3.8,
+      "supine": 8.0
+    },
+    "standing-lunge": {
+      "inverted": 4.6,
+      "kneeling": 6.2,
+      "prone": 7.800000000000001,
+      "quadruped": 6.2,
+      "seated": 7.0,
+      "standing-fold": 3.0,
+      "standing-lunge": 3.0,
+      "standing-neutral": 3.8,
+      "standing-wide": 3.8,
+      "supine": 8.0
+    },
+    "standing-neutral": {
+      "inverted": 5.4,
+      "kneeling": 7.0,
+      "prone": 8.0,
+      "quadruped": 7.0,
+      "seated": 7.800000000000001,
+      "standing-fold": 3.8,
+      "standing-lunge": 3.8,
+      "standing-neutral": 3.0,
+      "standing-wide": 3.0,
+      "supine": 8.0
+    },
+    "standing-wide": {
+      "inverted": 5.4,
+      "kneeling": 7.0,
+      "prone": 8.0,
+      "quadruped": 7.0,
+      "seated": 7.800000000000001,
+      "standing-fold": 3.8,
+      "standing-lunge": 3.8,
+      "standing-neutral": 3.0,
+      "standing-wide": 3.0,
+      "supine": 8.0
+    },
+    "supine": {
+      "inverted": 7.0,
+      "kneeling": 5.4,
+      "prone": 3.8,
+      "quadruped": 5.4,
+      "seated": 4.6,
+      "standing-fold": 8.0,
+      "standing-lunge": 8.0,
+      "standing-neutral": 8.0,
+      "standing-wide": 8.0,
+      "supine": 3.0
+    }
+  }
+}

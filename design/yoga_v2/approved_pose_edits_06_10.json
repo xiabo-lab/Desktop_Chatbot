@@ -1,0 +1,37 @@
+{
+  "approved_at": "2026-08-22T05:44:29.628Z",
+  "source_file": "yoga-pose-review.json",
+  "approved": ["cactus_arms", "cat", "chair", "child_pose", "cobra"],
+  "pose_edits": {
+    "cactus_arms": {
+      "bones": {"left_forearm": -88, "left_shin": 90, "left_thigh": 90, "left_upper_arm": 175, "neck": -90, "right_forearm": -92, "right_shin": 90, "right_thigh": 90, "right_upper_arm": 5, "spine": -90},
+      "terminals": {"left_foot": "floor", "left_hand": "palm_forward", "right_foot": "floor", "right_hand": "palm_forward"},
+      "view": "standing",
+      "terminal3d": {"left_foot": [35, 0, 0], "right_foot": [35, 0, 0]}
+    },
+    "chair": {
+      "bones": {"left_forearm": -58, "left_shin": 95, "left_thigh": 25, "left_upper_arm": -58, "neck": -66, "right_forearm": -62, "right_shin": 91, "right_thigh": 21, "right_upper_arm": -62, "spine": -52},
+      "bones3d": {"hips": [26, 0, 0]},
+      "camera": {"azimuth": 28, "distance": 3.9, "height": 1.05, "target": 0.85},
+      "root": {"yaw": 90},
+      "terminals": {"left_foot": "floor", "right_foot": "floor"},
+      "view": "standing",
+      "terminal3d": {"left_foot": [34, 0, 0], "right_foot": [34, 0, 0]}
+    },
+    "child_pose": {
+      "bones": {"left_forearm": 10, "left_shin": 172, "left_thigh": 26, "left_upper_arm": 36, "neck": 28, "right_forearm": 10, "right_shin": 172, "right_thigh": 26, "right_upper_arm": 36, "spine": 18},
+      "bones3d": {"hips": [46, 0, 0]},
+      "camera": {"azimuth": 40, "distance": 2.9, "height": 1.15, "target": 0.24},
+      "root": {"yaw": 90},
+      "terminals": {"left_foot": "top_down", "left_hand": "floor", "right_foot": "top_down", "right_hand": "floor"},
+      "view": "low"
+    },
+    "cobra": {
+      "bones": {"left_forearm": 50, "left_shin": 180, "left_thigh": 174, "left_upper_arm": 130, "neck": -38, "right_forearm": 50, "right_shin": 180, "right_thigh": 174, "right_upper_arm": 130, "spine": -62},
+      "bones3d": {"hips": [88, 0, 0]},
+      "root": {"yaw": 90},
+      "terminals": {"left_foot": "top_down", "left_hand": "floor", "right_foot": "top_down", "right_hand": "floor"},
+      "view": "low"
+    }
+  }
+}

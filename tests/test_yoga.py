@@ -21,7 +21,7 @@ from aipi5.games.yoga import lesson as syllabus
 from aipi5.games.yoga.game import Phase, YogaSession
 from aipi5.games.yoga.lesson import (
     COUNTDOWN_SECONDS, DIFFICULTIES, LESSONS, LESSON_SECONDS)
-from aipi5.games.yoga.poses import POSES
+from aipi5.games.yoga.poses import POSES, SCORED
 from aipi5.games.yoga.rig import (
     ANGLE_METRICS, RIG, angular_distance, forward_kinematics, measure,
     mirrored, player_joints)
@@ -98,6 +98,25 @@ def ready(difficulty: str = "beginner") -> tuple[YogaSession, float]:
     return session, now
 
 
+class TestArtwork(unittest.TestCase):
+    """The drawings, checked the two ways a drawing can be checked mechanically.
+
+    Both of these were faults before they were tests. A guide's floor bar came
+    back painted under Tree Pose's standing foot, and the first Standing
+    Forward Fold came back with no legs below the knee — which shows up here
+    as a shape whose width-to-height is nothing like the pose's.
+    """
+
+    def test_no_drawing_came_back_with_a_floor_bar_or_the_wrong_shape(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from scripts.build_yoga_coach import ARTWORK, review
+
+        problems = {pose: lines for pose, lines in review(ARTWORK / "poses").items()
+                    if lines != ["not drawn"]}
+        self.assertEqual(problems, {})
+
+
 class TestRig(unittest.TestCase):
 
     def test_every_sided_pose_is_the_exact_mirror_of_its_partner(self):
@@ -108,10 +127,10 @@ class TestRig(unittest.TestCase):
         than the other for reasons no player could ever discover.
         """
         checked = 0
-        for pose in POSES.values():
+        for pose in SCORED.values():
             if not pose.side:
                 continue
-            partner = POSES[pose.mirror_id]
+            partner = SCORED[pose.mirror_id]
             flipped = mirrored(pose.targets)
             self.assertEqual(set(flipped), set(partner.targets), pose.id)
             for name, value in flipped.items():
@@ -131,7 +150,7 @@ class TestRig(unittest.TestCase):
         `hip_line` had its hips swapped, because the default derives both from
         the spine and this pose's spine points downwards.
         """
-        for pose in POSES.values():
+        for pose in SCORED.values():
             joints = forward_kinematics(pose.table, pose.scales)
             self.assertLess(joints["left_shoulder"][0],
                             joints["right_shoulder"][0], pose.id)
@@ -191,13 +210,13 @@ class TestPoses(unittest.TestCase):
         """
         still = POSES["mountain"].targets
         floor = syllabus.HOLD_THRESHOLD["beginner"]
-        for pose in POSES.values():
+        for pose in SCORED.values():
             if pose.family in ("balance", "standing") and pose.level >= 2:
                 accuracy = assess(pose, still, tolerance_scale=1.35).accuracy
                 self.assertLess(accuracy, floor, pose.id)
 
     def test_each_pose_scores_itself_perfectly(self):
-        for pose in POSES.values():
+        for pose in SCORED.values():
             result = assess(pose, pose.targets, tolerance_scale=0.88)
             self.assertEqual(round(result.accuracy, 6), 1.0, pose.id)
             self.assertTrue(result.tracked)
@@ -223,7 +242,11 @@ class TestPoses(unittest.TestCase):
         self.assertIn("left", message)
 
     def test_a_symmetric_pose_never_claims_the_wrong_side(self):
-        for pose_id in ("mountain", "goddess", "star", "chair", "cactus_arms"):
+        # Chair used to be in this list and is guided now, on purpose: a
+        # frontal table cannot say "sitting back", so the coach shows a real
+        # squat and nothing marks it. See `Pose.scored`.
+        for pose_id in ("mountain", "goddess", "star", "upward_salute",
+                        "cactus_arms"):
             pose = POSES[pose_id]
             self.assertFalse(
                 assess(pose, metrics_for(pose_id, swap_sides=True)).wrong_side,
@@ -240,8 +263,8 @@ class TestPoses(unittest.TestCase):
 
     def test_calibration_removes_the_player_from_the_measurement(self):
         """A long-legged player is not permanently told to sink lower."""
-        pose = POSES["chair"]
-        tall = metrics_for("chair", legs=1.18)
+        pose = POSES["goddess"]
+        tall = metrics_for("goddess", legs=1.18)
         uncalibrated = assess(pose, tall, tolerance_scale=1.05).accuracy
 
         calibration = Calibration()
@@ -382,6 +405,22 @@ class TestLessons(unittest.TestCase):
 
 class TestSession(unittest.TestCase):
 
+    def test_a_course_selection_sets_its_level_and_authored_duration(self):
+        session = YogaSession()
+        session.select_course("intermediate_04")
+        course = syllabus.COURSES["intermediate_04"]
+        self.assertEqual(session.course_id, "intermediate_04")
+        self.assertEqual(session.difficulty, "intermediate")
+        self.assertIs(session.lesson, course)
+        session.start(100.0)
+        self.assertEqual(session.duration, course.total_seconds)
+        self.assertEqual(session.time_left, course.total_seconds)
+        self.assertEqual(session.snapshot(100.0)["course"], "intermediate_04")
+
+    def test_an_unknown_course_is_refused(self):
+        with self.assertRaises(ValueError):
+            YogaSession().select_course("beginner_99")
+
     def test_a_level_has_to_be_chosen_before_the_gesture_will_start_anything(self):
         session = YogaSession()
         self.assertFalse(session.startable)
@@ -415,6 +454,75 @@ class TestSession(unittest.TestCase):
         now = settle(session, now, 2.6, "mountain")
         self.assertEqual(session.snapshot(now)["countdown"], "2")
         now = settle(session, now, 2.0, "mountain")
+        # The finished pose is shown before anybody is asked to move into it.
+        self.assertIs(session.phase, Phase.PREVIEW)
+        now = settle(session, now, session.lesson.preview_s + 0.1, "mountain")
+        self.assertIs(session.phase, Phase.TRANSITION)
+
+    def test_the_finished_pose_is_shown_before_anybody_is_asked_to_move(self):
+        """Preview, then movement, then scoring - in that order, every pose.
+
+        Nobody can copy a movement whose end they have not seen. The class used
+        to name a pose and start animating towards it in the same instant, so
+        the player's first act was watching a shape they could not identify.
+        The preview is the finished pose held still, with no instruction spoken
+        and nothing scored.
+        """
+        session, now = ready()
+        session.start(now)
+        now = settle(session, now, COUNTDOWN_SECONDS + 0.2, "mountain")
+        self.assertIs(session.phase, Phase.PREVIEW)
+
+        snapshot = session.snapshot(now)
+        # The pose on screen during the preview is the finished one.
+        self.assertEqual(snapshot["rig"]["pose"], session.step.pose_id)
+        self.assertGreaterEqual(snapshot["rig"]["blend"], 0.99)
+        self.assertFalse(snapshot["speaking"])
+
+        now = settle(session, now, session.lesson.preview_s + 0.1, "mountain")
+        self.assertIs(session.phase, Phase.TRANSITION)
+        # Nothing has been scored yet, in either phase.
+        self.assertEqual(session.snapshot(now)["pose"]["hold_left"],
+                         session.step.hold_s)
+
+    def test_the_preview_is_taken_out_of_the_transition_not_added_to_it(self):
+        """The class is twenty minutes whatever happens inside it."""
+        for difficulty in ("beginner", "intermediate", "advanced"):
+            with self.subTest(difficulty=difficulty):
+                lesson = LESSONS[difficulty]
+                self.assertAlmostEqual(
+                    lesson.preview_s + lesson.movement_s, lesson.transition_s)
+                self.assertGreater(lesson.preview_s, 1.5)
+                self.assertGreater(lesson.movement_s, lesson.preview_s)
+                self.assertLessEqual(lesson.total_seconds, LESSON_SECONDS)
+
+    def test_the_instruction_is_spoken_when_the_movement_starts(self):
+        """Spoken once, at the movement, and never during the preview.
+
+        The voice is injected rather than reached for, so a device with no
+        speaker runs the same class with the same timing and only reads it.
+        """
+        said = []
+        session = YogaSession(speak=said.append)
+        session.select_difficulty("beginner")
+        now = settle(session, 100.0, 3.0, "mountain")
+        session.start(now)
+        now = settle(session, now, COUNTDOWN_SECONDS + 0.2, "mountain")
+        self.assertEqual(said, [])                       # the preview is silent
+
+        now = settle(session, now, session.lesson.preview_s + 0.2, "mountain")
+        self.assertEqual(said, [session.step.pose.instruction])
+        # And the page is told, so it can duck the music under her.
+        self.assertTrue(session.snapshot(now)["speaking"])
+        later = settle(session, now, 9.0, session.step.pose_id)
+        self.assertFalse(session.snapshot(later)["speaking"])
+
+    def test_a_class_runs_the_same_with_no_voice_at_all(self):
+        session, now = ready()
+        self.assertIsNone(session.speak)
+        session.start(now)
+        now = settle(session, now, COUNTDOWN_SECONDS + session.lesson.preview_s
+                     + 0.4, "mountain")
         self.assertIs(session.phase, Phase.TRANSITION)
 
     def test_the_hold_timer_only_runs_while_the_player_is_in_the_pose(self):
@@ -517,7 +625,8 @@ class TestSession(unittest.TestCase):
         frames = 0
         while session.state is State.PLAYING and frames < 30 * 1400:
             step = session.step
-            session.tick_pose(now, body(step.pose_id if step else "mountain"), now)
+            wanted = step.pose_id if step and step.scored else "mountain"
+            session.tick_pose(now, body(wanted), now)
             now += 1 / 30
             frames += 1
 
@@ -527,7 +636,9 @@ class TestSession(unittest.TestCase):
         self.assertEqual(summary["band"], "Excellent")
         self.assertGreaterEqual(summary["average_accuracy"], 95)
         self.assertEqual(summary["completed"], summary["total"])
-        self.assertGreater(summary["hold_seconds"], 900)
+        self.assertGreater(summary["poses_shown"], summary["total"],
+                           "an advanced class is part guided")
+        self.assertGreater(summary["hold_seconds"], 300)
         self.assertIsNotNone(summary["best"])
         self.assertIsNotNone(summary["lowest"])
         self.assertLessEqual(summary["lowest"]["score"], summary["best"]["score"])
@@ -570,8 +681,11 @@ class TestSession(unittest.TestCase):
         self.assertIn("bones", rig)
         self.assertIn("from_bones", rig)
         self.assertIn("spine", rig["bones"])
-        self.assertLess(rig["blend"], 0.4)
-        now = settle(session, now, session.lesson.transition_s, "mountain")
+        # The preview is the finished pose, standing still: fully blended.
+        self.assertGreaterEqual(rig["blend"], 0.99)
+        now = settle(session, now, session.lesson.preview_s + 0.1, "mountain")
+        self.assertLess(session.snapshot(now)["rig"]["blend"], 0.4)
+        now = settle(session, now, session.lesson.movement_s, "mountain")
         self.assertGreaterEqual(session.snapshot(now)["rig"]["blend"], 0.99)
 
     def test_a_score_card_appears_and_then_goes_away_on_its_own(self):

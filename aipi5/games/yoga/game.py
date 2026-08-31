@@ -25,12 +25,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import logging
 import math
 
 from aipi5.games.fruit_ninja.game import State
 from aipi5.games.yoga.lesson import (
     COUNTDOWN_SECONDS, DEADLINE_ALLOWANCE, DEADLINE_FACTOR, DIFFICULTIES,
-    LESSON_SECONDS, RESULT_SECONDS, Lesson, get_lesson)
+    LESSON_SECONDS, RESULT_SECONDS, Lesson, get_course, get_lesson)
 from aipi5.games.yoga.poses import POSES, get as get_pose
 from aipi5.games.yoga.rig import measure, player_joints
 from aipi5.games.yoga.scoring import (
@@ -61,6 +62,8 @@ PRAISE_ACCURACY = 0.86
 CALIBRATION_ACCURACY = 0.62
 
 
+log = logging.getLogger("aipi5.games.yoga")
+
 class Phase(str, Enum):
     """Where one *pose* is, inside `State.PLAYING`.
 
@@ -72,8 +75,12 @@ class Phase(str, Enum):
     """
 
     COUNTDOWN = "countdown"
-    #: The coach is moving into the pose; the name, instruction and hold are on
-    #: screen. Nothing is being scored yet.
+    #: The finished pose, held still, with its name and nothing else. The
+    #: player is being shown where this is going before being asked to go
+    #: there; no instruction is spoken and nothing is scored.
+    PREVIEW = "preview"
+    #: The coach is moving into the pose, through the transition frames, and
+    #: the instruction is on screen and spoken. Still nothing scored.
     TRANSITION = "transition"
     HOLDING = "holding"
 
@@ -112,6 +119,7 @@ class YogaSession:
 
     best: int = 0
     difficulty: str = ""
+    course_id: str = ""
     state: State = State.READY
     score: int = 0
     events: list[dict] = field(default_factory=list)
@@ -132,7 +140,18 @@ class YogaSession:
     calibration: Calibration = field(default_factory=Calibration)
     feedback: FeedbackPicker = field(default_factory=FeedbackPicker)
 
+    #: Where a spoken instruction goes, injected by the manager so this file
+    #: never reaches for the assistant's voice. `None` in tests and whenever
+    #: the device has no speaker, and the class then reads exactly the same on
+    #: screen — the instruction has always been written down as well.
+    speak: object = None
+
     _last_tick: float = -1.0
+    #: Until when the coach is believed to be talking. Estimated rather than
+    #: reported: piper is handed the line and returns immediately, and the only
+    #: consumer is the page ducking its music under her voice, which does not
+    #: need the truth to the millisecond.
+    _speaking_until: float = 0.0
     _paused_at: float = 0.0
     _accuracy: float = 0.0
     _assessment: Assessment = field(default_factory=Assessment)
@@ -161,7 +180,7 @@ class YogaSession:
 
     @property
     def startable(self) -> bool:
-        return self.difficulty in DIFFICULTIES
+        return self.difficulty in DIFFICULTIES and self.lesson is not None
 
     @property
     def gesture_phase(self) -> str:
@@ -182,7 +201,31 @@ class YogaSession:
             raise ValueError("the difficulty cannot change during a lesson")
         self.difficulty = difficulty
         self.lesson = get_lesson(difficulty)
+        self.course_id = self.lesson.course_id
         self.state = State.READY
+
+    def select_course(self, course_id: str) -> None:
+        """Choose one of the twenty-one authored classes."""
+        if self.state is State.PLAYING:
+            raise ValueError("the course cannot change during a lesson")
+        lesson = get_course(course_id)
+        self.course_id = lesson.course_id
+        self.difficulty = lesson.difficulty
+        self.lesson = lesson
+        self.state = State.READY
+
+    @property
+    def next_pose_id(self) -> str:
+        """The pose after this one, or "" at the end of the class.
+
+        Sent to the page for one reason: it fetches that pose's transition
+        drawings during the current hold, which is forty seconds of warning
+        for a file it would otherwise ask for at the instant it is needed.
+        """
+        following = self.step_index + 1
+        if self.lesson is None or following >= len(self.lesson.steps):
+            return ""
+        return self.lesson.steps[following].pose_id
 
     @property
     def total_poses(self) -> int:
@@ -201,12 +244,12 @@ class YogaSession:
 
     def start(self, now: float) -> None:
         if not self.startable:
-            raise ValueError("choose Beginner, Intermediate or Advanced first")
-        self.lesson = get_lesson(self.difficulty)
+            raise ValueError("choose a yoga course first")
+        self.lesson = get_lesson(self.difficulty, self.course_id or None)
         self.state = State.PLAYING
         self.score = 0
-        self.duration = LESSON_SECONDS
-        self.time_left = LESSON_SECONDS
+        self.duration = self.lesson.total_seconds
+        self.time_left = self.duration
         self.step_index = 0
         self.results.clear()
         self.events.clear()
@@ -220,7 +263,8 @@ class YogaSession:
         # coach's legs rather than the player's.
         self.feedback.reset()
         self._enter(Phase.COUNTDOWN, now, COUNTDOWN_SECONDS)
-        self.events.append({"name": "yoga-start", "difficulty": self.difficulty})
+        self.events.append({"name": "yoga-start", "difficulty": self.difficulty,
+                            "course": self.course_id})
 
     def pause(self, now: float) -> bool:
         if self.state is not State.PLAYING:
@@ -279,16 +323,51 @@ class YogaSession:
         self._held_s = 0.0
         self._praise = self.feedback.praise()
         self.feedback.reset()
-        self._enter(Phase.TRANSITION, now, self.lesson.transition_s)
+        self._enter(Phase.PREVIEW, now, self.lesson.preview_s)
         self.events.append({
             "name": "yoga-pose", "pose": step.pose_id,
             "title": step.pose.name, "index": self.step_index + 1,
             "total": self.total_poses, "hold": step.hold_s,
             "segment": step.segment})
 
+    #: Words a second, and the breath either side of a spoken line.
+    SPEECH_RATE = 2.6
+    SPEECH_TAIL = 0.7
+
+    def _say(self, text: str, now: float) -> None:
+        """Say one line, and remember roughly how long it will take.
+
+        Non-blocking on purpose: this is called from the pose loop, and a
+        class whose animation stops while the coach talks is worse than one
+        with no voice at all.
+        """
+        text = (text or "").strip()
+        if not text:
+            return
+        words = max(1, len(text.split()))
+        self._speaking_until = now + min(
+            8.0, words / self.SPEECH_RATE + self.SPEECH_TAIL)
+        if self.speak is None:
+            return
+        try:
+            self.speak(text)
+        except Exception:  # noqa: BLE001 - a silent coach must not stop a class
+            log.warning("the coach could not speak", exc_info=True)
+
     def _score_pose(self, now: float) -> None:
         step = self.step
         if step is None:
+            return
+        if not step.scored:
+            # Nothing to score, and nothing to put on the card. The pose still
+            # ends and the class still moves on; it simply leaves no mark in
+            # the results, so the overall score stays an average of the poses
+            # that were genuinely measured.
+            self._previous_pose_id = step.pose_id
+            self.events.append({
+                "name": "yoga-pose-complete", "pose": step.pose_id,
+                "title": step.pose.name, "guided": True,
+                "complete": self._held_s >= step.hold_s - 0.05})
             return
         quality = (self._quality_sum / self._quality_frames
                    if self._quality_frames else 0.0)
@@ -363,6 +442,15 @@ class YogaSession:
             self._calibrate()
             if now >= self.phase_until:
                 self._begin_step(now)
+        elif self.phase is Phase.PREVIEW:
+            # Watched, not measured. The player is looking at the pose they are
+            # about to be asked for, and the pose stream is still read so the
+            # tracking numbers do not arrive cold at the hold.
+            self._evaluate(now, dt, counting=False)
+            if now >= self.phase_until:
+                self._enter(Phase.TRANSITION, now, self.lesson.movement_s)
+                self._say(self.pose.instruction, now)
+                self.events.append({"name": "yoga-move", "pose": self.pose.id})
         elif self.phase is Phase.TRANSITION:
             self._evaluate(now, dt, counting=False)
             if now >= self.phase_until:
@@ -405,6 +493,10 @@ class YogaSession:
         step = self.step
         if step is not None and step.pose_id in ("mountain", "mountain_breath"):
             self._calibrate()
+
+        if step is not None and not step.scored:
+            self._follow(now, dt, counting=counting)
+            return
 
         self._assessment = assess(
             pose, self._metrics,
@@ -451,6 +543,37 @@ class YogaSession:
         self.feedback.update(now, message,
                              urgent=self._assessment.wrong_side)
 
+    def _follow(self, now: float, dt: float, *, counting: bool) -> None:
+        """A guided pose: demonstrated, cued, and not measured.
+
+        Fifty-five of the ninety-one poses are on the floor, seated, prone or
+        supine, where the seventeen numbers `rig.measure` produces stop meaning
+        anything -- plus Chair, which is switched off by choice so the coach can
+        show a real squat instead of a scoreable fake one.
+
+        The class still has to *run* through them, and the hold has to end. So
+        the clock is the only thing counted: hold time is spent by the second
+        rather than earned by being close to a target. What must not happen is
+        the pose being marked anyway -- an empty bone table scores everybody
+        perfect, and a class that hands out a hundred per cent for lying on the
+        floor is worse than one that says nothing.
+        """
+        self._assessment = None
+        self._accuracy = 0.0
+        self._holding = counting
+        if counting:
+            if not self._reached:
+                self._reached = True
+                step = self.step
+                self.events.append({"name": "yoga-in-pose",
+                                    "pose": step.pose_id if step else ""})
+            spent = min(dt, self.hold_left)
+            self.hold_left = max(0.0, self.hold_left - spent)
+            self._held_s += spent
+        # The cue, held on screen for as long as the pose is. There is no
+        # correction to give: nothing is being measured to correct against.
+        self.feedback.update(now, self.pose.cue)
+
     # ── results ──────────────────────────────────────────────────────
 
     @property
@@ -458,6 +581,11 @@ class YogaSession:
         if not self.results:
             return 0
         return int(round(sum(r.score for r in self.results) / len(self.results)))
+
+    @property
+    def scored_poses(self) -> int:
+        """How many of this class the player is actually marked on."""
+        return sum(1 for step in self.lesson.steps if step.scored)
 
     @property
     def average_accuracy(self) -> int:
@@ -481,7 +609,11 @@ class YogaSession:
             "band": band(overall),
             "average_accuracy": self.average_accuracy,
             "completed": completed,
-            "total": self.total_poses,
+            # The poses that were *marked*. A class of thirty with seventeen
+            # guided poses in it is not seventeen poses the player failed, and
+            # a summary that said "13 of 30" would read exactly like one.
+            "total": self.scored_poses,
+            "poses_shown": self.total_poses,
             "hold_seconds": round(self.total_hold_s),
             "required_seconds": round(sum(r.required_s for r in self.results)),
             "best": best.as_dict() if best else None,
@@ -546,6 +678,8 @@ class YogaSession:
             "state": self.state.value,
             "difficulty": self.difficulty,
             "lesson": self.lesson.name if self.lesson else "",
+            "course": self.lesson.course_id if self.lesson else "",
+            "scored_poses": self.scored_poses if self.lesson else 0,
             "score": self.score,
             "best": self.best,
             "time_left": round(self.time_left, 1),
@@ -553,9 +687,12 @@ class YogaSession:
             "phase": self.phase.value if self.state is State.PLAYING else "",
             "countdown": self._countdown(now),
             "accuracy": round(100 * self._accuracy),
-            "tracked": self._assessment.tracked,
+            "tracked": self._assessment.tracked if self._assessment else True,
             "holding": self._holding,
-            "wrong_side": self._assessment.wrong_side,
+            "next_pose": self.next_pose_id,
+            # For the page's music ducking, and for nothing else.
+            "speaking": now < self._speaking_until,
+            "wrong_side": bool(self._assessment and self._assessment.wrong_side),
             "feedback": self.feedback.message,
             "calibration": self.calibration.as_dict(),
             "framing": self._framing(),
@@ -570,6 +707,10 @@ class YogaSession:
                 "cue": pose.cue,
                 "segment": step.segment,
                 "side": pose.side,
+                # What the screen shows instead of an accuracy dial. The page
+                # has no other way to know: a guided pose looks exactly like a
+                # scored one that nobody is managing to do.
+                "scored": step.scored,
                 "index": self.step_index + 1,
                 "total": self.total_poses,
                 "hold": round(step.hold_s),

@@ -1,12 +1,19 @@
 /* AIPI5 Yoga Coach renderer.
  *
- * The coach is not a picture. She is the same fourteen bone directions the Pi
- * scores the player against, run through the same forward kinematics and drawn
- * — so the shape being demonstrated and the shape being marked are one number
- * per joint, and cannot drift apart. It is also what makes the transitions
- * free: interpolating two angles gives a limb that swings, where interpolating
- * two drawings gives a cross-fade and interpolating two sets of joint
- * positions gives a limb that stretches.
+ * The coach is a person now, standing in a field, and the pictures of her were
+ * made *from* the fourteen bone directions the Pi scores the player against --
+ * `scripts/build_yoga_coach.py` renders each pose's skeleton with the scorer's
+ * own `forward_kinematics` and the artwork is drawn on top of that. So the
+ * shape demonstrated and the shape marked still come from one table, one joint
+ * at a time; what changed is who draws the last step.
+ *
+ * The rig that used to draw her is still here and still exact, and it is the
+ * fallback: until the images have loaded -- or if one is missing -- the coach
+ * is drawn from the bones rather than not drawn at all.
+ *
+ * **There is no live camera on this screen.** The camera runs the whole time,
+ * because every number in the HUD comes from it, but the player watches the
+ * coach and their own score rather than themselves.
  *
  * Rules, timing and scoring all stay on the Pi beside the pose stream, exactly
  * as they do for Boxing. This file owns no camera, no pose model and no clock
@@ -33,14 +40,22 @@
 
   /* Where the coach stands. `UNIT` is pixels per spine length and `FLOOR_Y` is
    * where her lowest foot lands; `COACH_HIP_Y` is only the origin the rig is
-   * laid out around, since `drawCoach` re-anchors her to the floor.
+   * laid out around, since both the drawn and the photographed coach re-anchor
+   * her to the floor.
    *
-   * The three numbers are a fit rather than a taste. She has to clear the pose
-   * card above her (Mountain Pose puts her head highest at rest), keep
-   * Triangle's raised hand below the top bar, and keep Extended Hand to Toe's
-   * lifted foot clear of the live camera panel at x=656 — which is the widest
-   * anything in the pose library reaches. */
-  const COACH_X = 376, COACH_HIP_Y = 424, UNIT = 110, FLOOR_Y = 712;
+   * Centre of the screen and half again as big as she was: the live camera
+   * panel used to own the right half, and with it gone the constraint that set
+   * these numbers is gone too. 160 is the largest that keeps Tree Pose with
+   * arms high -- the tallest shape in the library at 3.9 spines -- under the
+   * top bar. `UNIT` must match `SERVED_UNIT` in `scripts/build_yoga_coach.py`;
+   * a test checks it, because a coach drawn at one scale and photographed at
+   * another swaps size every time the images finish loading. */
+  const COACH_X = 640, COACH_HIP_Y = 424, UNIT = 160, FLOOR_Y = 726;
+
+  /* The accuracy dial. Right of the widest pose in the library -- Half Moon
+   * stops around x=970 -- and high enough that its two labels finish above the
+   * correction line, which owns the full width from y=708 down. */
+  const ACCURACY_X = 1150, ACCURACY_Y = 548;
 
   /* Limb thickness in pixels, scaled with the figure. Written against a
    * 150-pixel spine because that is the size these numbers were drawn at; the
@@ -54,7 +69,6 @@
   const TOP = "#33c6ae", TOP_DARK = "#1c8e7c", TOP_LIGHT = "#68e6d1";
   const LEG = "#5f4d92", LEG_DARK = "#3a2e60", LEG_LIGHT = "#8a75c6";
   const HAIR = "#2a1f36", HAIR_LIGHT = "#4d3b63";
-  const MAT = "#c9603d", MAT_DARK = "#8f3f25";
   const GOOD = "#5fe3b4", WARN = "#ffcc5c", BAD = "#ff7a6b";
 
   let active = false;
@@ -65,8 +79,258 @@
   let lastCountdown = "";
   let breathPhase = 0;
   let smoothedAccuracy = 0;
-  let smoothedHold = 0;
   let ripples = [];
+
+  /* == the artwork ================================================== */
+
+  /* The field she stands in, and the pictures of her standing in it. Both are
+   * loaded once, at file scope, because this page is opened and closed all
+   * evening and re-fetching a background every time somebody starts a class is
+   * work the browser cache should not have to be trusted with.
+   *
+   * `coach` is keyed by pose id. Left and right versions of a pose share one
+   * picture and the right one is drawn mirrored -- see the manifest's
+   * `mirror_of` -- which is not a saving so much as a guarantee: a pair built
+   * from one drawing cannot disagree about anything except which way round it
+   * is. */
+  const field = new Image();
+  let fieldReady = false;
+  field.decoding = "async";
+  field.onload = () => { fieldReady = true; };
+  field.src = "/assets/yoga/field-forest.webp";
+
+  let coachManifest = null;
+  const coachImages = {};
+
+  /* Fetched when they are about to be needed, not all at once.
+   *
+   * There are 78 drawings now -- 21 poses and three transition frames for
+   * almost every one of them -- and a decoded 500x600 bitmap is about a
+   * megabyte whatever the WebP on disk cost. Asking Chromium on a Pi to hold
+   * all of them at once is asking for ninety megabytes of decoded pixels to
+   * demonstrate a pose that lasts forty seconds. So a drawing is loaded when
+   * the class first reaches for it, and the frames of the pose *after* this
+   * one are asked for while the current one is being held -- which is forty
+   * seconds of warning for a 30 kB file. */
+  fetch("/assets/yoga/coach/manifest.json")
+    .then((response) => response.json())
+    .then((manifest) => {
+      coachManifest = manifest;
+      // Standing is the shape every transition passes near, and the fallback
+      // when a frame is missing. It is the one drawing worth having early.
+      load("mountain");
+    })
+    .catch(() => { coachManifest = null; });
+
+  function load(id) {
+    if (!coachManifest || !id) return null;
+    const entry = coachManifest.poses && coachManifest.poses[id];
+    if (!entry) return null;
+    const file = entry.mirror_of || id;
+    if (!coachImages[file]) {
+      const image = new Image();
+      image.decoding = "async";
+      image.src = `/assets/yoga/coach/${file}.webp`;
+      coachImages[file] = image;
+    }
+    return { image: coachImages[file], entry, mirror: !!entry.mirror_of };
+  }
+
+  /* Whether there is a picture of this shape that has finished loading. Every
+   * caller has a rig to fall back on, so this is a question and not an error;
+   * asking also starts the download. */
+  function coachPicture(id) {
+    const found = load(id);
+    if (!found || !found.image.complete || !found.image.naturalWidth) return null;
+    return found;
+  }
+
+  /* Everything the next transition will ask for, requested early. */
+  function preload(poseId) {
+    if (!poseId) return;
+    load(poseId);
+    load(stepId(poseId));
+    loadClip(poseId);
+  }
+
+  /* == the coach, moving ============================================ */
+
+  /* Twenty short films of her standing up out of one shape and down into
+   * another, and they are what a transition actually plays.
+   *
+   * The drawings above can only dissolve one shape into the next, and a
+   * dissolve is not a movement: two bodies overlap, and neither of them is
+   * doing anything. These are the same coach really moving, generated *from*
+   * two of those drawings as the first and last frame of one continuous shot
+   * -- so the ends of a clip are the drawings it was made from, measured at
+   * one to three pixels of placement across all twenty, and the handover from
+   * clip to drawing when she arrives has nothing in it to see.
+   *
+   * **One clip per pose, played both ways.** Every clip runs from standing
+   * into its pose. Entering a pose plays it forwards, leaving one plays it
+   * backwards, and standing is the hinge they meet on. That is why twenty
+   * clips cover the seventy-four transitions the three lessons contain, and
+   * why the coach is recognisably one person for the whole of each: a single
+   * shot cannot change her face halfway through, and a second visit to an
+   * image model always did.
+   */
+  let clipManifest = null;
+  const clipFrames = {};
+  const clipUsed = {};
+  let clipClock = 0;
+
+  fetch("/assets/yoga/clips/manifest.json")
+    .then((response) => response.json())
+    .then((manifest) => { clipManifest = manifest; })
+    .catch(() => { clipManifest = null; });
+
+  /* Which clip plays this pose, and whether it plays mirrored.
+   *
+   * The right-hand poses are the left-hand clip flipped, exactly as the
+   * drawings are. She stands on the centre line of the stage, so flipping the
+   * whole 1280-wide frame about its middle is the same flip `drawCoachPicture`
+   * does about her hips -- and a pair built from one clip cannot disagree
+   * about anything except which way round it is.
+   *
+   * Standing has no clip of its own, deliberately: it is the first frame of
+   * every one of these, so a clip of her standing still would be twenty copies
+   * of a frame that already ships. Callers read the `null` as "nothing to play
+   * here", which for standing is the truth. */
+  function clipSource(poseId) {
+    if (!clipManifest || !poseId) return null;
+    const poses = clipManifest.poses || {};
+    if (poses[poseId]) return { id: poseId, entry: poses[poseId], mirror: false };
+    if (poseId.endsWith("_right")) {
+      const twin = poseId.slice(0, -"_right".length) + "_left";
+      if (poses[twin]) return { id: twin, entry: poses[twin], mirror: true };
+    }
+    return null;
+  }
+
+  /* How many poses' clips stay decoded.
+   *
+   * Seven cut-out frames is four or five megabytes once Chromium has unpacked
+   * them, whatever the 140 kB on disk cost, and a lesson visits ten poses:
+   * keeping every clip a class touches is fifty megabytes of bitmaps held to
+   * demonstrate the one transition happening now. Three is exactly what is
+   * ever wanted at once -- the half being played, the half it hands over to,
+   * and the pose the class moves to next, asked for a hold in advance. */
+  const CLIPS_KEPT = 3;
+
+  function loadClip(poseId) {
+    const source = clipSource(poseId);
+    if (!source) return null;
+    clipUsed[source.id] = ++clipClock;
+    if (!clipFrames[source.id]) {
+      const frames = [];
+      for (let index = 0; index < source.entry.frames; index += 1) {
+        const image = new Image();
+        image.decoding = "async";
+        image.src = "/assets/yoga/clips/" + source.id + "/"
+                    + String(index).padStart(2, "0") + ".webp";
+        frames.push(image);
+      }
+      clipFrames[source.id] = frames;
+      forgetOldClips();
+    }
+    return source;
+  }
+
+  /* Drop the clips nobody has reached for lately. Letting go of the last
+   * reference to an Image is the whole of what this can do -- when the bitmap
+   * is actually freed is the browser's business -- but keeping the reference
+   * is a guarantee that it is not. */
+  function forgetOldClips() {
+    const ids = Object.keys(clipFrames);
+    if (ids.length <= CLIPS_KEPT) return;
+    ids.sort((a, b) => (clipUsed[b] || 0) - (clipUsed[a] || 0));
+    for (const id of ids.slice(CLIPS_KEPT)) {
+      delete clipFrames[id];
+      delete clipUsed[id];
+    }
+  }
+
+  /* One frame of one pose's clip, if it has arrived. Every caller has the
+   * drawings to fall back on, so a frame that has not decoded yet is a
+   * question and not an error -- and asking for it starts the download. */
+  function clipFrame(poseId, index) {
+    const source = loadClip(poseId);
+    if (!source) return null;
+    const frames = clipFrames[source.id];
+    const at = (source.entry.at || [])[index];
+    const image = frames && frames[index];
+    if (!at || !image || !image.complete || !image.naturalWidth) return null;
+    return { image, at, mirror: source.mirror };
+  }
+
+  function clipIndex(source, along) {
+    const count = Math.max(1, source.entry.frames);
+    return Math.min(count - 1, Math.max(0, Math.round(along * (count - 1))));
+  }
+
+  /* Which frame of which clip a transition is on, at this blend.
+   *
+   * A transition leaves the shape she is in and enters the next one, and each
+   * half is one clip: `from`'s run backwards to stand her up, then `to`'s run
+   * forwards. A pose with no clip contributes no half -- standing is the one
+   * that matters, being every clip's first frame rather than a clip of its own
+   * -- so moving out of Mountain is the second half alone and spans the whole
+   * blend, and moving into it is the first half alone.
+   *
+   * `blend` is read raw here where the rig reads it eased. The easing is there
+   * to make interpolated bones start and stop softly; a clip already carries
+   * how its movement is paced, and easing it again would drag out both ends of
+   * a movement that was generated with ends of its own.
+   *
+   * Returns null the moment there is nothing to play -- she has arrived, or
+   * neither end has a clip -- and null is what sends `drawTheCoach` back to
+   * the drawings. Arriving is a handover rather than a fallback: the last
+   * frame of a clip is a frame of video *of* the drawing it was made from, and
+   * the drawing is the better picture to hold still for forty seconds. */
+  function clipAt(rig, blend) {
+    const from = rig.from, to = rig.pose;
+    if (!from || !to || from === to || !(blend < 0.999)) return null;
+    const leaving = clipSource(from) ? from : null;
+    const entering = clipSource(to) ? to : null;
+    if (!leaving && !entering) return null;
+
+    // Both halves are asked for the instant the transition starts. The second
+    // is not drawn until the midpoint, but seven files requested *at* the
+    // midpoint are seven files that arrive after it, and she would finish the
+    // move as a cross-fade having spent the first half loading nothing.
+    if (leaving) loadClip(leaving);
+    if (entering) loadClip(entering);
+
+    const t = Math.min(1, Math.max(0, blend));
+    const play = (poseId, along) => {
+      const source = clipSource(poseId);
+      const frame = source && clipFrame(poseId, clipIndex(source, along));
+      return frame ? { poseId, frame } : null;
+    };
+    if (leaving && entering) {
+      return t < 0.5 ? play(leaving, 1 - t / 0.5)
+                     : play(entering, (t - 0.5) / 0.5);
+    }
+    return leaving ? play(leaving, 1 - t) : play(entering, t);
+  }
+
+  /* A clip frame goes where the packer found her, in the stage's own pixels.
+   * These were generated at the size and in the place the game draws, then
+   * cropped to her with the offset written down, so there is nothing here to
+   * anchor the way a trimmed drawing has to be: the picture's own corner is
+   * already the answer. A mirrored pose flips the whole stage, which is why
+   * the offset flips with it rather than being recomputed. */
+  function drawClipFrame(ctx, frame, alpha) {
+    const { image, at, mirror } = frame;
+    ctx.save();
+    ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+    if (mirror) {
+      ctx.translate(W, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(image, at.x, at.y, at.w, at.h);
+    ctx.restore();
+  }
 
   const el = (id) => gameEl(id);
 
@@ -376,48 +640,338 @@
     ctx.restore();
   }
 
-  /* ── the studio ─────────────────────────────────────────────────── */
+  /* == the photographed coach ======================================= */
 
-  function drawStudio(ctx, now) {
-    const sky = ctx.createLinearGradient(0, 0, 0, H);
-    sky.addColorStop(0, "#14102a");
-    sky.addColorStop(0.55, "#241a41");
-    sky.addColorStop(1, "#160f28");
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, W, H);
+  /* Where a picture of the coach goes. Her hips land on `COACH_X` and her floor
+   * line on `FLOOR_Y`, both read from the manifest in the picture's own pixels,
+   * because a trimmed drawing is only as big as the ink in it: Standing Forward
+   * Fold and Tree Pose have their hips at completely different fractions of
+   * their own heights, and stacking the two by their centres makes the coach
+   * hop every time the pose changes. */
+  function drawCoachPicture(ctx, found, alpha) {
+    const { image, entry, mirror } = found;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(COACH_X, FLOOR_Y);
+    if (mirror) ctx.scale(-1, 1);
+    ctx.drawImage(image, -entry.hip_x, -entry.floor_y, entry.w, entry.h);
+    ctx.restore();
+  }
 
-    // A warm light behind the coach. Slowly breathing, which is the only thing
-    // moving on screen while somebody holds a pose for forty seconds.
+  /* The soft ground shadow. The pictures are cut out with no shadow of their
+   * own -- deliberately, since one baked into the artwork would be lit for a
+   * room she is not in -- so the grass gets one here, and it widens with her
+   * stance the same way the drawn coach's did. */
+  function drawGroundShadow(ctx, figureWidth, alpha) {
+    const width = (figureWidth || 220) * 0.42;
+    ctx.save();
+    ctx.globalAlpha = 0.3 * alpha;
+    ctx.beginPath();
+    ctx.ellipse(COACH_X, FLOOR_Y + 4, width, 15, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "#20361c";
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /* How far apart two poses are, in degrees of bone rotation summed over the
+   * body. Used for one decision only: whether a transition needs a step in the
+   * middle. */
+  function boneDistance(from, to) {
+    let total = 0;
+    for (const name of Object.keys(Object.assign({}, from, to))) {
+      const a = from[name], b = to[name];
+      if (a === undefined || b === undefined) continue;
+      total += Math.abs(wrap(b - a));
+    }
+    return total;
+  }
+
+  /* Above this, in summed degrees, a pose is "far from standing". Both ends of
+   * a transition being far from standing is the case that needs a frame in the
+   * middle -- Warrior II straight into Triangle is two deep shapes with nothing
+   * between them, and cross-fading one into the other is a dissolve, not a
+   * movement. */
+  const FAR_FROM_STANDING = 300;
+
+  /* The chain of pictures a transition plays through.
+   *
+   * **A class must never cut from one shape to another.** Between any two
+   * poses the coach comes *out* of the one she is in, passes through standing,
+   * and moves *into* the next, and the artwork for that is one picture per
+   * pose rather than one per pair: every pose has a frame of its own halfway
+   * between standing and itself. That matters because the three lessons
+   * contain 74 consecutive pairs and would otherwise need a drawing for each.
+   *
+   *     Warrior II -> halfway out -> Mountain -> halfway in -> Triangle
+   *
+   * It was three frames per pose (a quarter, a half, three quarters) first.
+   * Three frames are three separate visits to the image model and it does not
+   * draw the same face twice, so the drift was at its most visible exactly
+   * where the frames play back to back. One frame per pose is one thing to
+   * keep consistent, and the movement still reads.
+   */
+  const STEP = 50;
+
+  function stepId(pose) { return pose + "__" + STEP; }
+
+  function chain(rig) {
+    const from = rig.from || rig.pose, to = rig.pose;
+    if (!from || from === to) return [to];
+    const keys = [from];
+    if (coachPicture(stepId(from))) keys.push(stepId(from));
+    // Standing between the two halves: it is where a class actually passes
+    // between two deep poses, and it is the one picture always present.
+    if (from !== "mountain" && to !== "mountain" && coachPicture("mountain")) {
+      keys.push("mountain");
+    }
+    if (coachPicture(stepId(to))) keys.push(stepId(to));
+    keys.push(to);
+    return keys;
+  }
+
+  /* The bones of any key in that chain, without asking the Pi for them.
+   *
+   * A step frame is defined as an interpolation between standing and its pose,
+   * and that is a calculation this file already does sixty times a second. The
+   * payload carries the two endpoint tables; everything between them is
+   * derived, so the chain costs nothing on the wire. */
+  function keyBones(id, rig) {
+    const standing = restingBones();
+    const to = rig.bones || standing, from = rig.from_bones || to;
+    const [base, step] = id.split("__");
+    const table = base === rig.pose ? to
+      : base === (rig.from || rig.pose) ? from
+      : standing;
+    if (!step) return table;
+    return blendBones(standing, table, Number(step) / 100);
+  }
+
+  function keyScales(id, rig) {
+    const [base, step] = id.split("__");
+    const scales = base === rig.pose ? rig.scales
+      : base === (rig.from || rig.pose) ? rig.from_scales : {};
+    const t = step ? Number(step) / 100 : 1;
+    return blendScales({}, scales, t);
+  }
+
+  /* Which two pictures are on screen, how far between them, and which pair of
+   * shapes the arrows are being drawn for. Each key holds still for the first
+   * and last quarter of its slice and dissolves across the middle half, so the
+   * coach arrives in each shape long enough to be copied. */
+  function transitionKeys(rig, blend) {
+    const keys = chain(rig);
+    if (keys.length === 1) return { keys: [{ id: keys[0], alpha: 1 }] };
+    const segments = keys.length - 1;
+    const along = Math.min(0.999999, Math.max(0, blend)) * segments;
+    const index = Math.floor(along);
+    const t = ease(Math.min(1, Math.max(0, (along - index - 0.25) / 0.5)));
+    const here = keys[index], next = keys[index + 1];
+    const drawn = t >= 0.999 ? [{ id: next, alpha: 1 }]
+      : t <= 0.001 ? [{ id: here, alpha: 1 }]
+      : [{ id: here, alpha: 1 - t }, { id: next, alpha: t }];
+    return { keys: drawn, here, next, t };
+  }
+
+  /* == the arrows =================================================== */
+
+  /* Where each joint of a shape lands on the screen.
+   *
+   * The same anchoring the coach herself gets -- hips on `COACH_X`, lowest
+   * foot on `FLOOR_Y` -- because the arrows have to start on her hands and
+   * feet, not near them. It works for the photographed coach as well as the
+   * drawn one because both are laid out at `UNIT` pixels per spine from the
+   * same bone table; that is the whole reason those two numbers are required
+   * to match. */
+  function screenJoints(bones, scales) {
+    const joints = kinematics(bones, scales);
+    const points = {};
+    let lowest = -Infinity;
+    for (const [name, point] of Object.entries(joints)) {
+      const at = toScreen(point);
+      points[name] = { x: at[0], y: at[1] };
+      if (name === "left_ankle" || name === "right_ankle") {
+        lowest = Math.max(lowest, at[1]);
+      }
+    }
+    const lift = FLOOR_Y - lowest;
+    for (const point of Object.values(points)) point.y += lift;
+    return points;
+  }
+
+  /* Which joints get an arrow, and how far a joint has to travel to earn one.
+   *
+   * Hands and feet only. A body moving into Warrior II moves every joint it
+   * has, and an arrow on each of them is a diagram of a skeleton rather than
+   * an instruction -- what a player needs to know is where to put the ends of
+   * their limbs, and the rest follows. The threshold is in pixels at the size
+   * she is drawn: a quarter of a spine length, which is roughly a hand's
+   * travel that somebody would notice. */
+  const ARROW_JOINTS = ["left_wrist", "right_wrist", "left_ankle", "right_ankle"];
+  const ARROW_MIN = UNIT * 0.25;
+
+  /* One curved arrow, drawn dark-then-light so it survives sunlit grass. */
+  function arrow(ctx, from, to, phase) {
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 1) return;
+    // Bowed to one side, always the same side relative to the direction of
+    // travel, so a pair of arrows on two limbs reads as one movement rather
+    // than as two unrelated hooks.
+    const bow = Math.min(58, length * 0.28);
+    const mid = { x: (from.x + to.x) / 2 - (dy / length) * bow,
+                  y: (from.y + to.y) / 2 + (dx / length) * bow };
+    // A breath of travel along the arrow, so it reads as a direction and not
+    // as a bracket. Slow: this sits under a five-second movement.
+    const grow = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(phase * 2.2));
+    const head = {
+      x: from.x + (mid.x - from.x) * 2 * grow * (1 - grow)
+         + (to.x - from.x) * grow * grow,
+      y: from.y + (mid.y - from.y) * 2 * grow * (1 - grow)
+         + (to.y - from.y) * grow * grow,
+    };
+    const before = {
+      x: from.x + (mid.x - from.x) * 2 * (grow - 0.03) * (1 - grow + 0.03)
+         + (to.x - from.x) * (grow - 0.03) * (grow - 0.03),
+      y: from.y + (mid.y - from.y) * 2 * (grow - 0.03) * (1 - grow + 0.03)
+         + (to.y - from.y) * (grow - 0.03) * (grow - 0.03),
+    };
+
+    // A dark rim under a solid cream stroke. The rim is not decoration: this
+    // is drawn over sunlit grass and over the coach herself, and a single
+    // pale line disappears against both. It has to be *opaque* cream, too —
+    // a translucent one takes the rim's colour and the arrow comes out olive.
+    for (const pass of [{ w: 15, colour: "rgba(14,30,12,.55)" },
+                        { w: 8, colour: "#fff2a8" }]) {
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = pass.colour;
+      ctx.fillStyle = pass.colour;
+      ctx.lineWidth = pass.w;
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.quadraticCurveTo(mid.x, mid.y, to.x, to.y);
+      ctx.stroke();
+
+      // The head rides along the curve at `grow`, pointing the way the curve
+      // is going at that instant.
+      const angle = Math.atan2(head.y - before.y, head.x - before.x);
+      const size = 13 + pass.w;
+      ctx.translate(head.x, head.y);
+      ctx.rotate(angle);
+      ctx.beginPath();
+      ctx.moveTo(size, 0);
+      ctx.lineTo(-size * 0.65, size * 0.55);
+      ctx.lineTo(-size * 0.35, 0);
+      ctx.lineTo(-size * 0.65, -size * 0.55);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  /* The arrows for the step of the transition currently on screen: from where
+   * each hand and foot is now to where the next frame puts it.
+   *
+   * Computed rather than drawn into the artwork, for the reason the coach's
+   * shapes are computed: there are 74 transitions in the three lessons and
+   * one bone table for all of them. They fade in and out with the frames they
+   * belong to, so nothing snaps. */
+  function drawMoveArrows(ctx, rig, step, now) {
+    const here = screenJoints(keyBones(step.here, rig), keyScales(step.here, rig));
+    const next = screenJoints(keyBones(step.next, rig), keyScales(step.next, rig));
+    // Brightest mid-dissolve, but never off: the moment the coach is *holding*
+    // a transition frame is exactly the moment a player looks up to see where
+    // the next one is, and an arrow that has faded out by then is an arrow
+    // that is only ever visible while the thing it describes is happening.
+    const strength = Math.sin(Math.PI * Math.min(1, Math.max(0, step.t || 0)));
+    ctx.save();
+    ctx.globalAlpha = 0.8 + 0.2 * strength;
+    for (const joint of ARROW_JOINTS) {
+      const a = here[joint], b = next[joint];
+      if (!a || !b) continue;
+      if (Math.hypot(b.x - a.x, b.y - a.y) < ARROW_MIN) continue;
+      arrow(ctx, a, b, now / 1000);
+    }
+    ctx.restore();
+  }
+
+  /* The coach, however she can be drawn: photographed if her pictures are
+   * here, and from the rig if they are not. The fallback is not a placeholder
+   * -- it is the coach this game shipped with, exact to the same bone table --
+   * so a slow first load or a missing file costs the picture and nothing else. */
+  function drawTheCoach(ctx, game, bones, scales, now) {
+    const rig = game && game.rig;
+    const blend = rig && rig.blend !== undefined ? rig.blend : 1;
+
+    /* Her clips first, because a film of the movement beats a dissolve between
+     * two drawings of its ends. `clipAt` returns null the moment there is
+     * nothing to play -- she has arrived, or this pair has no clip -- and the
+     * chain of drawings below is what happens then.
+     *
+     * No arrows over a clip. They exist to say where a limb is going while two
+     * still shapes cross-fade through each other, and a picture of her limb
+     * going there says it better than an arrow drawn on top of it does. */
+    const moving = rig ? clipAt(rig, blend) : null;
+    if (moving) {
+      drawGroundShadow(ctx, moving.frame.at.w, 1);
+      drawClipFrame(ctx, moving.frame, 1);
+      return;
+    }
+
+    const step = rig ? transitionKeys(rig, blend)
+                     : { keys: [{ id: "", alpha: 1 }] };
+    const found = step.keys.map((key) => ({ key, found: coachPicture(key.id) }))
+                           .filter((item) => item.found);
+    if (!found.length) {
+      // No picture for this pose yet. The rig still knows the shape exactly,
+      // so she is drawn rather than missing.
+      drawCoach(ctx, bones, scales);
+      return;
+    }
+    const heaviest = found.reduce((a, b) => (a.key.alpha >= b.key.alpha ? a : b));
+    drawGroundShadow(ctx, heaviest.found.entry.w, 1);
+    for (const item of found) drawCoachPicture(ctx, item.found, item.key.alpha);
+    // The arrows go on top of her, and only while she is actually moving.
+    if (rig && step.next && game.state === "playing"
+        && game.phase === "transition") {
+      drawMoveArrows(ctx, rig, step, now);
+    }
+  }
+
+  /* == the field =================================================== */
+
+  /* A mown clearing ringed by forest, and nothing else: no mat, no props, no
+   * path, and the middle of the frame deliberately empty grass. The coach is
+   * the only thing on this screen the player has to read, and every mark
+   * behind her is something the eye has to reject first.
+   *
+   * The gradient below is what is drawn until the picture arrives, and is the
+   * same dawn-to-grass it fades into, so a slow load reads as a plain sky
+   * rather than as a broken screen. */
+  function drawField(ctx, now) {
+    if (fieldReady) {
+      ctx.drawImage(field, 0, 0, W, H);
+    } else {
+      const sky = ctx.createLinearGradient(0, 0, 0, H);
+      sky.addColorStop(0, "#b9dcea");
+      sky.addColorStop(0.52, "#cfe6d9");
+      sky.addColorStop(0.56, "#87ae63");
+      sky.addColorStop(1, "#6f9a4e");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // Warm light on the clearing, breathing slowly. Under a forty-second hold
+    // this is the only thing on screen that moves at all.
     const pulse = 1 + 0.03 * Math.sin(now / 2600);
     const glow = ctx.createRadialGradient(
-      COACH_X, 430, 40, COACH_X, 430, 430 * pulse);
-    glow.addColorStop(0, "rgba(255,196,140,.20)");
-    glow.addColorStop(0.55, "rgba(160,110,200,.10)");
+      COACH_X, 430, 60, COACH_X, 430, 520 * pulse);
+    glow.addColorStop(0, "rgba(255,244,206,.22)");
+    glow.addColorStop(0.6, "rgba(255,236,190,.07)");
     glow.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = glow;
-    ctx.fillRect(0, 120, 672, 640);
-
-    ctx.fillStyle = "rgba(255,255,255,.035)";
-    ctx.fillRect(0, FLOOR_Y + 6, 672, 800 - FLOOR_Y - 6);
-
-    // The mat, in perspective, hung off the same floor line the coach stands
-    // on rather than off a second number that would have to be kept in step.
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(COACH_X - 210, FLOOR_Y - 12);
-    ctx.lineTo(COACH_X + 210, FLOOR_Y - 12);
-    ctx.lineTo(COACH_X + 268, FLOOR_Y + 46);
-    ctx.lineTo(COACH_X - 268, FLOOR_Y + 46);
-    ctx.closePath();
-    const mat = ctx.createLinearGradient(0, FLOOR_Y - 12, 0, FLOOR_Y + 46);
-    mat.addColorStop(0, MAT_DARK);
-    mat.addColorStop(1, MAT);
-    ctx.fillStyle = mat;
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,220,190,.24)";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
+    ctx.fillRect(0, 80, W, 700);
   }
 
   /* ── the rings ──────────────────────────────────────────────────── */
@@ -445,43 +999,100 @@
     return BAD;
   }
 
-  function drawGauges(ctx, game, now) {
+  /* == the hold clock =============================================== */
+
+  /* One number, read two ways.
+   *
+   * The bar across the bottom and the figure in the top right are the same
+   * `hold_left` -- there is no second timer anywhere in this file, and the
+   * text is written from the value the bar is drawn from, so the two cannot
+   * disagree even by a frame. What they share is *interpolated*, because the
+   * Pi sends state thirty times a second rounded to a tenth of a second and a
+   * bar stepping in tenths is a bar that visibly ticks. So the page runs the
+   * clock down itself between snapshots and is pulled back to the server's
+   * number gently rather than snapped to it.
+   *
+   * It only runs while the player is actually in the pose, which is the rule
+   * the Pi scores by: `hold_left` freezes when they come out of it. */
+  let holdShown = 0, holdTotal = 0, holdPose = "", holdAt = 0;
+
+  function holdClock(game, now) {
     const pose = game.pose || {};
+    const total = Number(pose.hold) || 0;
+    const target = Math.max(0, Number(pose.hold_left) || 0);
+    const dt = holdAt ? Math.min(0.5, (now - holdAt) / 1000) : 0;
+    holdAt = now;
+
+    if (pose.id !== holdPose || !total) {
+      // A new pose starts full. Easing into it from the last one's remainder
+      // would run the bar backwards up the screen for a third of a second.
+      holdPose = pose.id || "";
+      holdTotal = total;
+      holdShown = target;
+    } else {
+      if (game.holding && game.state === "playing") holdShown -= dt;
+      holdShown += (target - holdShown) * Math.min(1, dt * 6);
+      holdShown = Math.max(0, Math.min(total, holdShown));
+    }
+    return { left: holdShown, total: holdTotal || total };
+  }
+
+  /* The bar. Full width, at the very bottom, falling from 100% to 0 over the
+   * same seconds the number counts down -- a shape anybody can read from the
+   * back of the room without finding a two-digit number first. */
+  function drawHoldBar(ctx, hold, holding) {
+    const height = 18, top = H - height;
+    ctx.fillStyle = "rgba(12,20,10,.42)";
+    ctx.fillRect(0, top, W, height);
+    const fraction = hold.total ? Math.max(0, Math.min(1, hold.left / hold.total)) : 0;
+    if (fraction > 0) {
+      const fill = ctx.createLinearGradient(0, top, 0, H);
+      const warm = hold.left <= 5 && holding;
+      fill.addColorStop(0, holding ? (warm ? "#ffd166" : "#7cf0c0") : "#9fb6c8");
+      fill.addColorStop(1, holding ? (warm ? "#f5a623" : "#3fbf90") : "#6d8296");
+      ctx.fillStyle = fill;
+      ctx.fillRect(0, top, W * fraction, height);
+    }
+    ctx.fillStyle = "rgba(255,255,255,.22)";
+    ctx.fillRect(0, top, W, 2);
+  }
+
+  /* == the gauges =================================================== */
+
+  function drawGauges(ctx, game, now, hold) {
     const holding = !!game.holding;
 
-    // Hold. Under the live feed, because that is where the player is already
-    // looking — and never over it, because a number across somebody's chest is
-    // a number covering the thing they are trying to correct.
-    const holdFraction = pose.hold ? 1 - (pose.hold_left || 0) / pose.hold : 0;
-    smoothedHold += (holdFraction - smoothedHold) * 0.2;
-    ring(ctx, 964, 620, 62, smoothedHold, holding ? GOOD : "rgba(255,255,255,.34)");
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#fff";
-    ctx.font = "700 40px Inter, system-ui, sans-serif";
-    ctx.fillText(Math.ceil(pose.hold_left || 0), 964, 634);
-    ctx.font = "600 13px Inter, system-ui, sans-serif";
-    ctx.fillStyle = holding ? GOOD : "rgba(255,255,255,.5)";
-    ctx.fillText(holding ? "HOLDING" : "FIND THE POSE", 964, 706);
+    // Accuracy, out on the right where the coach never reaches: the widest
+    // pose in the library, Half Moon, stops around x=970.
+    if (game.pose?.scored !== false) {
+      const accuracy = Math.max(0, Math.min(1, (game.accuracy || 0) / 100));
+      smoothedAccuracy += (accuracy - smoothedAccuracy) * 0.18;
+      ring(ctx, ACCURACY_X, ACCURACY_Y, 58, smoothedAccuracy,
+           accuracyColour(smoothedAccuracy));
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#fff";
+      ctx.font = "700 40px Inter, system-ui, sans-serif";
+      ctx.fillText(Math.round(game.accuracy || 0), ACCURACY_X, ACCURACY_Y + 14);
+      ctx.font = "600 13px Inter, system-ui, sans-serif";
+      ctx.fillStyle = "rgba(255,255,255,.62)";
+      ctx.fillText("ACCURACY", ACCURACY_X, ACCURACY_Y + 84);
+      ctx.fillStyle = holding ? GOOD : "#ffe9a8";
+      ctx.font = "700 15px Inter, system-ui, sans-serif";
+      ctx.fillText(holding ? "HOLDING" : "FIND THE POSE", ACCURACY_X,
+                   ACCURACY_Y + 110);
+    }
 
-    // Accuracy.
-    const accuracy = Math.max(0, Math.min(1, (game.accuracy || 0) / 100));
-    smoothedAccuracy += (accuracy - smoothedAccuracy) * 0.18;
-    ring(ctx, 782, 620, 62, smoothedAccuracy, accuracyColour(smoothedAccuracy));
-    ctx.fillStyle = "#fff";
-    ctx.font = "700 40px Inter, system-ui, sans-serif";
-    ctx.fillText(Math.round(game.accuracy || 0), 782, 634);
-    ctx.font = "600 13px Inter, system-ui, sans-serif";
-    ctx.fillStyle = "rgba(255,255,255,.5)";
-    ctx.fillText("ACCURACY", 782, 706);
-
-    // Lesson progress, as a thin bar the whole width of the coach's half.
+    // The lesson, as a hairline along the very top edge. Twenty minutes is a
+    // fact the player checks twice a class; it does not need a gauge.
     const total = Number(game.duration) || 1200;
     const done = Math.max(0, Math.min(1, 1 - (game.time_left || 0) / total));
-    ctx.fillStyle = "rgba(255,255,255,.12)";
-    ctx.fillRect(1146, 580, 10, 168);
-    ctx.fillStyle = "rgba(140,220,255,.85)";
-    ctx.fillRect(1146, 580 + 168 * (1 - done), 10, 168 * done);
+    ctx.fillStyle = "rgba(255,255,255,.2)";
+    ctx.fillRect(0, 0, W, 4);
+    ctx.fillStyle = "rgba(150,225,255,.9)";
+    ctx.fillRect(0, 0, W * done, 4);
     ctx.textAlign = "left";
+
+    drawHoldBar(ctx, hold, holding);
   }
 
   function drawCountdown(ctx, text) {
@@ -514,10 +1125,25 @@
   function render(ctx, now, payload, fps) {
     if (!active) return;
     ctx.clearRect(0, 0, W, H);
-    drawStudio(ctx, now);
 
     const game = (payload && payload.game) || null;
-    if (!game || game.kind !== "yoga") { drawCoach(ctx, restingBones(), {}); return; }
+    const using3d = !!window.Yoga3D?.ready;
+    if (using3d) {
+      if (game && game.kind === "yoga" && game.state === "playing") {
+        const hold = holdClock(game, now);
+        drawGauges(ctx, game, now, hold);
+        const seconds = String(Math.ceil(hold.left));
+        const box = el("yoga-hold-clock");
+        if (box && box.textContent !== seconds) box.textContent = seconds;
+        drawCountdown(ctx, game.countdown === "READY" ? "" : game.countdown);
+      }
+      return;
+    }
+    drawField(ctx, now);
+    if (!game || game.kind !== "yoga") {
+      drawTheCoach(ctx, null, restingBones(), {}, now);
+      return;
+    }
 
     const rig = game.rig || {};
     const to = rig.bones || restingBones();
@@ -528,7 +1154,9 @@
 
     // Breathing, once she has arrived. Two degrees on the spine and a little
     // on the arms — under a hold that lasts forty seconds a perfectly still
-    // figure stops reading as a person.
+    // figure stops reading as a person. It moves the drawn coach only; her
+    // pictures breathe by being scaled, below, which is the same idea done to
+    // a photograph rather than to a skeleton.
     if (blend >= 0.999 && game.state === "playing") {
       breathPhase = now / 1000;
       const breath = Math.sin(breathPhase * 0.9);
@@ -539,9 +1167,19 @@
       bones.right_upper_arm -= breath * 1.1;
     }
 
-    drawCoach(ctx, bones, scales);
+    drawTheCoach(ctx, game, bones, scales, now);
     stepRipples(ctx, now);
-    if (game.state === "playing") drawGauges(ctx, game, now);
+    const hold = holdClock(game, now);
+    if (game.state === "playing") {
+      drawGauges(ctx, game, now, hold);
+      // The figure in the top right is HTML, and it is written here rather
+      // than in `applyState` so that it comes off the same interpolated clock
+      // the bar is drawn from. Only when the second changes: this runs sixty
+      // times a second and layout is not free.
+      const seconds = String(Math.ceil(hold.left));
+      const box = el("yoga-hold-clock");
+      if (box && box.textContent !== seconds) box.textContent = seconds;
+    }
     drawCountdown(ctx, game.countdown === "READY" ? "" : game.countdown);
   }
 
@@ -561,23 +1199,24 @@
     return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
   }
 
-  function cameraOn(on) {
-    const camera = el("yoga-camera");
-    if (on && !camera.getAttribute("src")) {
-      // Twelve frames a second and a wider frame than the start screen's
-      // thumbnail: this is the mirror the player corrects themselves in, and
-      // the server clamps both numbers so a stale tab cannot ask for more.
-      camera.src = "/api/game/preview?fps=12&w=640&t=" + Date.now();
-    } else if (!on && camera.getAttribute("src")) {
-      camera.removeAttribute("src");
-    }
-  }
+  /* There is no `cameraOn` here any more, and its absence is the point.
+   *
+   * This screen used to show the player a live 12 fps feed of themselves,
+   * because somebody two metres away being told to straighten their back
+   * cannot see their own back. It was the only game on the device that showed
+   * the room during play. It is gone: the class is the coach, the correction
+   * and the time left, and a video of yourself in the corner is a thing to
+   * watch instead of the coach. The camera itself never stops -- every number
+   * on this screen is computed from it on the Pi -- it is only that none of
+   * its pixels reach the screen. `/api/game/preview` is still what the start
+   * sheet uses to prove somebody is standing there. */
 
   function applyState(state) {
     latest = state;
     const game = state.game;
     if (!game || game.kind !== "yoga") return;
     const playing = game.state === "playing";
+    const pose = game.pose || {};
     const stage = el("game-stage");
     stage.classList.toggle("yoga-active", active);
     stage.classList.toggle("yoga-playing", active && playing);
@@ -588,9 +1227,20 @@
     // instruction was.
     stage.classList.toggle("yoga-reading",
                            active && playing && game.phase === "transition");
-    cameraOn(active && playing);
+    // The preview: the finished pose, standing still, before anybody is asked
+    // to move into it. The card shows its name and holds the instruction back
+    // until the movement starts, which is the point of the phase.
+    stage.classList.toggle("yoga-previewing",
+                           active && playing && game.phase === "preview");
+    const guided = pose.scored === false;
+    stage.classList.toggle("yoga-guided", active && playing && guided);
+    if (window.Yoga3D) window.Yoga3D.applyState(game);
 
-    const pose = game.pose || {};
+    // The music runs for as long as the class does and is never restarted in
+    // between - a pose change must not be audible as one.
+    if (active && playing) startMusic(); else stopMusic();
+    duckMusic(!!game.speaking);
+    el("yoga-course").textContent = game.lesson || "";
     el("yoga-segment").textContent = pose.segment || game.lesson || "";
     el("yoga-count").textContent = pose.total
       ? `POSE ${pose.index} / ${pose.total}` : "";
@@ -604,7 +1254,10 @@
     el("yoga-hold").textContent = pose.hold ? `HOLD ${pose.hold} SECONDS` : "";
 
     const feedback = el("yoga-feedback");
-    const message = playing ? (game.feedback || "") : (game.framing || "");
+    const message = playing
+      ? (guided ? (pose.cue || game.feedback || "FOLLOW THE COACH")
+                : (game.feedback || ""))
+      : (game.framing || "");
     feedback.textContent = message;
     feedback.className = !message ? "" :
       game.wrong_side ? "urgent" :
@@ -612,7 +1265,7 @@
       game.holding && (game.accuracy || 0) >= 86 ? "praise" : "";
 
     const card = el("yoga-result");
-    if (game.last) {
+    if (game.last && !guided) {
       card.innerHTML =
         `<span class="band">${game.last.band}</span>` +
         `<span class="value">${game.last.score}</span>` +
@@ -633,8 +1286,12 @@
     // could steal must not be the only way a sound gets played.
     if (pose.id && pose.id !== lastPoseId && playing) {
       lastPoseId = pose.id;
+      // The frames this pose will need on the way out, and the ones the next
+      // pose will need on the way in. Asked for a whole hold in advance.
+      preload(pose.id);
+      preload(game.next_pose);
       chime(392, 0.5, 0.05);
-      ripples.push({ x: COACH_X, y: 430, at: performance.now() });
+      ripples.push({ x: COACH_X, y: 420, at: performance.now() });
     }
     if (!playing) lastPoseId = "";
     if (game.countdown && game.countdown !== lastCountdown) {
@@ -674,6 +1331,159 @@
     return audio || null;
   }
 
+  /* == the music ==================================================== */
+
+  /* Twenty minutes of calm, synthesised here rather than played from a file.
+   *
+   * Not for cleverness: a twenty-minute recording is a twenty-minute download
+   * on a device fed by `scp`, it loops audibly however carefully it is cut,
+   * and it would be the first sound in this repository that somebody else
+   * owns. What plays instead is a slow pad on an A minor pentatonic
+   * progression with an occasional bell over it — endless by construction, so
+   * it never restarts and never has a seam, which is exactly what "do not stop
+   * and start the music between poses" asks for.
+   *
+   * It starts when the class starts and stops when the class stops, and
+   * nothing in between touches it. */
+  const CHORDS = [
+    [110.00, 164.81, 220.00],   // A2  E3  A3
+    [ 87.31, 130.81, 174.61],   // F2  C3  F3
+    [ 98.00, 146.83, 196.00],   // G2  D3  G3
+    [130.81, 196.00, 261.63],   // C3  G3  C4
+  ];
+  const BELLS = [440.00, 523.25, 587.33, 659.25, 783.99];
+
+  //: Chord length, and how long one fades into the next. Long, and overlapping,
+  //: because the point is that nobody can hear where one ends.
+  const CHORD_S = 15, CHORD_FADE = 6;
+
+  //: The ceiling. Low enough that a spoken instruction sits on top of it
+  //: without either of them being turned up.
+  const MUSIC_GAIN = 0.055;
+  //: What it drops to while the coach is speaking, and how long the duck and
+  //: the recovery take. Down fast enough not to talk over her first word, back
+  //: slowly enough that the return is not itself an event.
+  const DUCK_GAIN = 0.22, DUCK_S = 0.25, UNDUCK_S = 1.1;
+
+  let music = null;
+
+  function startMusic() {
+    const ctx = context();
+    if (!ctx || music) return;
+    const out = ctx.createGain();
+    out.connect(ctx.destination);
+
+    /* Four seconds up from silence, scheduled from *now* — and again from
+     * whenever "now" turns out to be.
+     *
+     * A browser that has not seen a real touch yet keeps its audio clock at
+     * zero, so a fade scheduled against `currentTime` is a fade scheduled in
+     * the past: the moment the context resumes it has already finished, and
+     * the class opens with the pad at full volume instead of arriving. The
+     * kiosk normally has been touched — the level sheet is a button — but a
+     * class started by voice has not. */
+    const fadeIn = () => {
+      const at = ctx.currentTime;
+      out.gain.cancelScheduledValues(at);
+      out.gain.setValueAtTime(0.0001, at);
+      out.gain.linearRampToValueAtTime(MUSIC_GAIN, at + 4);
+    };
+    fadeIn();
+    if (ctx.state !== "running") ctx.resume().then(fadeIn).catch(() => {});
+    music = { out, voices: [], timer: null, bell: null, ducked: false,
+              level: 1, chord: -1 };
+
+    // Three voices, retuned rather than restarted. A note that stops and
+    // starts is a note somebody hears begin.
+    for (let i = 0; i < 3; i += 1) {
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+      oscillator.type = "sine";
+      oscillator.detune.value = (i - 1) * 6;
+      filter.type = "lowpass";
+      filter.frequency.value = 900;
+      gain.gain.value = [0.5, 0.34, 0.22][i];
+      oscillator.connect(filter).connect(gain).connect(out);
+      oscillator.start();
+      music.voices.push({ oscillator, gain });
+    }
+
+    const nextChord = () => {
+      if (!music) return;
+      music.chord = (music.chord + 1) % CHORDS.length;
+      const chord = CHORDS[music.chord];
+      const at = ctx.currentTime;
+      music.voices.forEach((voice, i) => {
+        // Glided, not jumped: the pad slides between chords over six seconds.
+        voice.oscillator.frequency.cancelScheduledValues(at);
+        voice.oscillator.frequency.setValueAtTime(
+          voice.oscillator.frequency.value || chord[i], at);
+        voice.oscillator.frequency.linearRampToValueAtTime(
+          chord[i], at + CHORD_FADE);
+      });
+      music.timer = window.setTimeout(nextChord, CHORD_S * 1000);
+    };
+    nextChord();
+
+    const nextBell = () => {
+      if (!music) return;
+      const note = BELLS[Math.floor(Math.random() * BELLS.length)];
+      const at = ctx.currentTime;
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(note, at);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.13, at + 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 3.2);
+      oscillator.connect(gain).connect(music.out);
+      oscillator.start(at);
+      oscillator.stop(at + 3.4);
+      music.bell = window.setTimeout(nextBell, (5 + Math.random() * 7) * 1000);
+    };
+    music.bell = window.setTimeout(nextBell, 6000);
+  }
+
+  function stopMusic() {
+    if (!music) return;
+    const ctx = context();
+    const dying = music;
+    music = null;
+    window.clearTimeout(dying.timer);
+    window.clearTimeout(dying.bell);
+    if (!ctx) return;
+    // Faded, not cut. Two seconds, which is under the shortest gap there is
+    // between a class ending and anything else being started.
+    const at = ctx.currentTime;
+    dying.out.gain.cancelScheduledValues(at);
+    dying.out.gain.setValueAtTime(dying.out.gain.value, at);
+    dying.out.gain.linearRampToValueAtTime(0.0001, at + 2);
+    window.setTimeout(() => {
+      for (const voice of dying.voices) {
+        try { voice.oscillator.stop(); } catch (err) { /* already stopped */ }
+      }
+      try { dying.out.disconnect(); } catch (err) { /* already gone */ }
+    }, 2200);
+  }
+
+  /* Under her voice and back up again. Called with what the Pi believes about
+   * whether the coach is talking, which is an estimate from the length of the
+   * line — a duck does not need the truth to the millisecond, and asking piper
+   * for it would mean asking on every frame. */
+  function duckMusic(under) {
+    if (!music || under === music.ducked) return;
+    const ctx = context();
+    if (!ctx) return;
+    music.ducked = under;
+    const at = ctx.currentTime;
+    music.out.gain.cancelScheduledValues(at);
+    music.out.gain.setValueAtTime(music.out.gain.value, at);
+    music.out.gain.linearRampToValueAtTime(
+      under ? MUSIC_GAIN * DUCK_GAIN : MUSIC_GAIN,
+      at + (under ? DUCK_S : UNDUCK_S));
+  }
+
   /* Deliberately soft and deliberately short. This game is twenty minutes long
    * and the arcade sounds that suit a sixty-second Fruit Ninja round would be
    * unbearable by minute four. */
@@ -697,7 +1507,7 @@
     switch (event.name) {
       case "yoga-in-pose":
         chime(659, 0.35, 0.05);
-        ripples.push({ x: 964, y: 620, at: performance.now() });
+        ripples.push({ x: ACCURACY_X, y: ACCURACY_Y, at: performance.now() });
         break;
       case "yoga-pose-complete":
         chime(523, 0.3, 0.055);
@@ -723,7 +1533,8 @@
   const SHARED_COPY = "Stand where the camera can see your full upper body.";
   const SHARED_OVER = "GAME OVER";
   const YOGA_COPY = "Stand back until the camera can see your whole body, "
-    + "including your feet.";
+    + "including your feet. Follow the coach — she faces you, so copy her "
+    + "as you see her.";
 
   function overHeading(text) {
     const heading = el("sheet-over").querySelector("h2");
@@ -741,17 +1552,16 @@
     active = id === "yoga";
     const stage = el("game-stage");
     stage.classList.toggle("yoga-active", active);
+    if (window.Yoga3D) window.Yoga3D.setActive(active);
     if (!active) {
       stage.classList.remove("yoga-playing");
-      cameraOn(false);
+      stopMusic();
       return;
     }
     resetRound();
     el("start-title").textContent = "Yoga Coach";
     setStartCopy(YOGA_COPY);
-    for (const peer of document.querySelectorAll("[data-yoga-difficulty]")) {
-      peer.classList.remove("selected");
-    }
+    loadCourses();
     // The level sheet comes before the shared start screen, exactly as
     // Boxing's mode sheet does, and for the same reason: the crossed-arms
     // gesture must not start a lesson nobody has chosen.
@@ -764,16 +1574,20 @@
     lastPhase = "";
     lastCountdown = "";
     smoothedAccuracy = 0;
-    smoothedHold = 0;
+    holdShown = 0;
+    holdTotal = 0;
+    holdPose = "";
+    holdAt = 0;
     ripples = [];
   }
 
   function stop() {
     const was = active;
     active = false;
-    cameraOn(false);
+    stopMusic();
     const stage = el("game-stage");
-    stage.classList.remove("yoga-active", "yoga-playing");
+    stage.classList.remove("yoga-active", "yoga-playing", "yoga-guided");
+    if (window.Yoga3D) window.Yoga3D.setActive(false);
     // Only put the shared wording back if it was ours to change. Leaving a
     // game and immediately opening another one calls stop() after the new
     // game's onOpen has already set its own copy.
@@ -781,17 +1595,60 @@
     resetRound();
   }
 
-  for (const button of document.querySelectorAll("[data-yoga-difficulty]")) {
-    button.addEventListener("click", () => {
-      for (const peer of document.querySelectorAll("[data-yoga-difficulty]")) {
-        peer.classList.remove("selected");
-      }
-      button.classList.add("selected");
-      gameCommand(`difficulty-${button.dataset.yogaDifficulty}`)
-        .then(() => showSheet("start"));
-    });
+  /* Choosing one of the twenty-one courses. `gameChoice` rather than
+   * `gameCommand` because this
+   * sheet is on screen for the ~1.8 s the Pi takes to open the game, and a tap
+   * in that window has nothing to talk to yet -- see the queue in index.html.
+   * The level is kept and sent when there is a session.
+   *
+   * The sheet only advances when the Pi has actually taken the choice.
+   * Advancing on the click and letting the next state message flip it back is
+   * what made this look like it needed choosing twice. */
+  let courseData = null;
+  let shownLevel = "beginner";
+  async function loadCourses() {
+    if (!courseData) {
+      const response = await fetch("/assets/yoga/v3/rigdata.json");
+      courseData = (await response.json()).courses || {};
+    }
+    renderCourses(shownLevel);
+  }
+  function renderCourses(level) {
+    shownLevel = level;
+    for (const tab of document.querySelectorAll("[data-yoga-level]")) {
+      tab.classList.toggle("selected", tab.dataset.yogaLevel === level);
+    }
+    const courses = Object.entries(courseData || {})
+      .filter(([, course]) => course.level === level)
+      .sort(([a], [b]) => a.localeCompare(b));
+    el("yoga-course-grid").innerHTML = courses.map(([id, course]) => {
+      const seconds = course.steps.reduce((sum, step) =>
+        sum + Number(step.hold || 0) + Number(step.transition || 0), 4);
+      const guided = course.steps.filter((step) => step.scored === false).length;
+      return `<button class="yoga-course" data-yoga-course="${id}">` +
+        `<strong>${course.name}</strong>` +
+        `<small>${Math.round(seconds / 60)} min · ${course.steps.length} poses` +
+        `${guided ? ` · ${guided} guided` : ""}</small></button>`;
+    }).join("");
+    for (const button of document.querySelectorAll("[data-yoga-course]")) {
+      button.addEventListener("click", () => {
+        for (const peer of document.querySelectorAll("[data-yoga-course]")) {
+          peer.classList.remove("selected");
+        }
+        button.classList.add("selected");
+        gameChoice(`course-${button.dataset.yogaCourse}`).then((answer) => {
+          if (answer.ok) showSheet("start");
+        });
+      });
+    }
+  }
+  for (const tab of document.querySelectorAll("[data-yoga-level]")) {
+    tab.addEventListener("click", () => renderCourses(tab.dataset.yogaLevel));
   }
   el("yoga-back").addEventListener("click", () => show("games"));
+  el("yoga-review").addEventListener("click", () => {
+    window.location.href = "/assets/yoga/v3/stage.html?review=1";
+  });
 
   window.YogaUI = {
     onOpen, stop, resetRound, applyState, handleEvent, render,
@@ -800,5 +1657,16 @@
     // asking for is the one bug in this game that nothing on screen would
     // report, so it is worth a seam to test through.
     rig: { RIG, kinematics, blendBones, lerpAngle },
+    // The same seam for the clips. Which frame of which clip a blend lands on
+    // is arithmetic with no picture in it, and getting it wrong is a coach who
+    // plays a movement backwards or stops halfway -- visible on the Pi and
+    // nowhere else, unless it can be asked the question directly.
+    clips: { source: clipSource, at: clipAt, index: clipIndex,
+             manifest: () => clipManifest },
+    // The music is a graph of oscillators with no visible output, so the only
+    // way to check that it is playing, that it ducks under the coach and that
+    // it is never restarted between poses is to be able to ask it.
+    audio: () => (music ? { playing: true, gain: music.out.gain.value,
+                            ducked: music.ducked, chord: music.chord } : null),
   };
 })();

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Yoga Coach 3D — contact sheet</title>
+<style>
+  html,body{margin:0;background:#11151a;overflow:hidden;color:#e6eaed;
+    font:12px/1.4 ui-monospace,SFMono-Regular,monospace}
+  #wrap{position:relative;width:1280px;height:800px}
+  canvas{display:block}
+  .tag{position:absolute;padding:1px 5px;background:rgba(6,8,11,.72);
+    pointer-events:none;white-space:nowrap}
+  .bad{color:#ff8b6b}
+  .gd{color:#e3a63f}
+</style>
+</head>
+<body>
+<div id="wrap"></div>
+<script type="importmap">{ "imports": { "three": "./lib/three.module.js" } }</script>
+<script type="module">
+/* A contact sheet of posed coaches, twelve to a screen.
+ *
+ * Reviewing ninety-one poses one screenshot at a time is eight minutes of
+ * round trips per pass, and there will be several passes. This tiles them --
+ * every tile is a real render with the camera the pose actually declares, so
+ * what is being judged is what will ship, not an approximation of it.
+ *
+ * It also does the thing the eye is bad at: measures each posed body against
+ * its own frame and says so, which is how "she must not change size between
+ * poses" stops being a matter of opinion.
+ *
+ *   ?from=0&n=12&cols=4     a page of the whole catalog
+ *   ?ids=mountain,star      exactly these
+ *   ?tween=cat,cow          one move, sampled across its whole travel
+ *   ?ids=chair&sweep=0,30,60,90   the same pose from four camera angles
+ *
+ * The tween mode is how a transition gets reviewed at all. A move lasts two
+ * seconds and the interesting failures are instants inside it -- a knee
+ * passing through the grass, a body that stands up on its way from one floor
+ * pose to another -- which is not something a screenshot can be aimed at.
+ */
+import * as THREE from "three";
+import { GLTFLoader } from "./lib/GLTFLoader.js";
+import { Coach, humanoidBones, blendPose, resolveView, placeCamera }
+  from "./coach3d.js";
+
+const P = new URLSearchParams(location.search);
+const W = 1280, H = 800;
+const wrap = document.getElementById("wrap");
+const report = (l) => fetch("/__v3/" + encodeURIComponent(l)).catch(() => {});
+addEventListener("error", (e) => report("ERROR " + (e.message || e) +
+                 " @" + (e.filename || "") + ":" + (e.lineno || 0)));
+addEventListener("unhandledrejection", (e) => report("REJECT " + e.reason));
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(1);
+renderer.setSize(W, H, false);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setScissorTest(true);
+wrap.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const sky = new THREE.Color(0xbcd9e8);
+scene.background = sky;
+scene.add(new THREE.Mesh(new THREE.CircleGeometry(30, 40).rotateX(-Math.PI / 2),
+  new THREE.MeshLambertMaterial({ color: 0x86a95c })));
+const mat = new THREE.Mesh(new THREE.PlaneGeometry(2.1, 0.95).rotateX(-Math.PI / 2),
+  new THREE.MeshLambertMaterial({ color: 0x4f7fa8 }));
+mat.position.y = 0.004;
+scene.add(mat);
+scene.add(new THREE.HemisphereLight(0xdff0ff, 0x6d8a4a, 2.0));
+const sun = new THREE.DirectionalLight(0xfff4dc, 1.5);
+sun.position.set(3, 6, 4);
+scene.add(sun);
+
+const data = await fetch("./rigdata.json", { cache: "no-store" }).then((r) => r.json());
+const gltf = await new GLTFLoader().loadAsync("./models/coach.vrm");
+scene.add(gltf.scene);
+const coach = new Coach(gltf.scene, humanoidBones(gltf));
+
+const poseOf = (id) => data.poses3d[id]
+  || (data.poses[id] ? { bones: data.poses[id].table, view: "standing",
+                          camera: data.poses[id].camera,
+                          terminals: data.poses[id].terminals,
+                          terminal3d: data.poses[id].terminal3d } : null);
+
+const sweep = P.get("sweep") ? P.get("sweep").split(",").map(Number) : null;
+const tween = P.get("tween") ? P.get("tween").split(",") : null;
+const ids = sweep ? sweep.map(() => (P.get("ids") || "chair").split(",")[0])
+  : tween ? Array.from({ length: +(P.get("n") || 8) }, () => tween[0])
+  : P.get("ids") ? P.get("ids").split(",")
+  : Object.keys(data.catalog).sort()
+      .slice(+(P.get("from") || 0), +(P.get("from") || 0) + +(P.get("n") || 12));
+
+const cols = +(P.get("cols") || 4);
+const rows = Math.ceil(ids.length / cols);
+const tw = Math.floor(W / cols), th = Math.floor(H / rows);
+const camera = new THREE.PerspectiveCamera(30, tw / th, 0.1, 60);
+camera.aspect = tw / th;
+camera.updateProjectionMatrix();
+
+/* Where the posed body lands inside its own tile, in fractions of the tile.
+ * Anything outside 0..1 is off-screen; a height that swings between poses is
+ * the size-wander defect the 2D route had, now measurable. */
+function framing() {
+  const box = coach.bounds();
+  const v = new THREE.Vector3();
+  let lo = [9, 9], hi = [-9, -9];
+  for (let i = 0; i < 8; i++) {
+    v.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y,
+          i & 4 ? box.max.z : box.min.z).project(camera);
+    // Reported against the real 16:10 stage rather than against the tile: a
+    // tile is narrower, so a pose that fits perfectly well on the Pi would be
+    // called off-frame here for no reason.
+    const x = 0.5 + ((v.x + 1) / 2 - 0.5) * (tw / th) / (W / H);
+    lo[0] = Math.min(lo[0], x); hi[0] = Math.max(hi[0], x);
+    lo[1] = Math.min(lo[1], (1 - v.y) / 2); hi[1] = Math.max(hi[1], (1 - v.y) / 2);
+  }
+  return { x0: lo[0], x1: hi[0], y0: lo[1], y1: hi[1] };
+}
+
+const lines = [];
+ids.forEach((id, i) => {
+  let pose = poseOf(id);
+  let label = id;
+  if (tween) {
+    const t = i / (ids.length - 1);
+    pose = blendPose(poseOf(tween[0]), poseOf(tween[1]), t);
+    label = t.toFixed(2);
+  }
+  const col = i % cols, row = Math.floor(i / cols);
+  const x = col * tw, y = H - (row + 1) * th;
+  renderer.setViewport(x, y, tw, th);
+  renderer.setScissor(x, y, tw, th);
+  if (!pose) { renderer.render(scene, camera); return; }
+
+  coach.apply(pose);
+  const view = resolveView(pose, data.views);
+  if (sweep) { view.azimuth = sweep[i]; label = `azimuth ${sweep[i]}`; }
+  placeCamera(camera, view);
+  renderer.render(scene, camera);
+
+  const f = framing();
+  const c = tween ? { name: label, scored: true } : (data.catalog[id] || {});
+  const off = f.x0 < 0.02 || f.x1 > 0.98 || f.y0 < 0.02 || f.y1 > 0.995;
+  const tag = document.createElement("div");
+  tag.className = "tag" + (off ? " bad" : "");
+  tag.style.left = x + 2 + "px";
+  tag.style.top = (row * th + 2) + "px";
+  tag.textContent = `${label}  ${(f.y1 - f.y0).toFixed(2)}h ${(f.x1 - f.x0).toFixed(2)}w`
+    + (off ? "  OFF-FRAME" : "");
+  wrap.appendChild(tag);
+  lines.push(`${id}\t${pose.view || "standing"}\th=${(f.y1 - f.y0).toFixed(3)}` +
+    `\tw=${(f.x1 - f.x0).toFixed(3)}\tx=${f.x0.toFixed(2)}..${f.x1.toFixed(2)}` +
+    `\ty=${f.y0.toFixed(2)}..${f.y1.toFixed(2)}${off ? "\tOFF-FRAME" : ""}` +
+    `\t${c.scored ? "scored" : "guided"}`);
+});
+report("SHEET " + ids.length);
+for (const l of lines) report(l);
+report("SHEET_DONE");
+</script>
+</body>
+</html>

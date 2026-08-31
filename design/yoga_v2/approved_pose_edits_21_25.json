@@ -1,0 +1,48 @@
+{
+  "approved_at": "2026-08-23T04:58:49.036Z",
+  "source_file": "yoga-pose-review (2).json",
+  "approved": ["goddess", "half_lift", "half_moon_left", "half_moon_right", "half_split_left"],
+  "pose_edits": {
+    "goddess": {
+      "bones": {"left_forearm": -88, "left_shin": 90, "left_thigh": 150, "left_upper_arm": 175, "neck": -90, "right_forearm": -92, "right_shin": 90, "right_thigh": 30, "right_upper_arm": 5, "spine": -90},
+      "terminal3d": {"left_foot": [30, -90, 0], "right_foot": [30, 90, 0], "left_hand": [-90, 0, 0], "right_hand": [-90, 0, 0]},
+      "terminals": {"left_foot": "floor", "right_foot": "floor"},
+      "view": "standing",
+      "depth3d": {"left_shin": 0, "left_thigh": 0, "right_thigh": 0}
+    },
+    "half_lift": {
+      "bones": {"left_forearm": 120, "left_shin": 90, "left_thigh": 90, "left_upper_arm": 120, "neck": -8, "right_forearm": 120, "right_shin": 90, "right_thigh": 90, "right_upper_arm": 120, "spine": -8},
+      "camera": {"azimuth": 22},
+      "root": {"yaw": 90},
+      "terminals": {"left_foot": "floor", "right_foot": "floor"},
+      "view": "standing",
+      "terminal3d": {"left_foot": [30, 0, 0], "right_foot": [30, 0, 0]}
+    },
+    "half_moon_left": {
+      "bones": {"left_forearm": 90, "left_shin": 95, "left_thigh": 100, "left_upper_arm": 90, "neck": -180, "right_forearm": -90, "right_shin": 0, "right_thigh": 0, "right_upper_arm": -90, "spine": 180},
+      "view": "standing",
+      "camera": {"azimuth": 12},
+      "terminals": {"left_foot": "floor", "right_foot": "flex"},
+      "terminal3d": {"left_foot": [30, -75, 0], "right_foot": [30, -90, 0]},
+      "root": {"pitch": 0, "yaw": 0, "roll": 95}
+    },
+    "half_moon_right": {
+      "bones": {"left_forearm": -90, "left_shin": 180, "left_thigh": 180, "left_upper_arm": -90, "neck": 0, "right_forearm": 90, "right_shin": 84, "right_thigh": 80, "right_upper_arm": 90, "spine": 0},
+      "view": "standing",
+      "camera": {"azimuth": -12},
+      "terminals": {"left_foot": "flex", "right_foot": "floor"},
+      "root": {"roll": -90, "yaw": 0},
+      "terminal3d": {"left_foot": [30, 30, 0], "right_foot": [30, 70, 0]}
+    },
+    "half_split_left": {
+      "bones": {"left_forearm": 50, "left_shin": 31, "left_thigh": 8, "left_upper_arm": 60, "neck": 26, "right_forearm": 46, "right_shin": -180, "right_thigh": 90, "right_upper_arm": 56, "spine": -6},
+      "bones3d": {"hips": [40, 0, 0]},
+      "camera": {"azimuth": -16},
+      "root": {"yaw": 90},
+      "terminals": {"left_foot": "flex", "left_hand": "floor", "right_foot": "top_down", "right_hand": "floor"},
+      "view": "low",
+      "terminal3d": {"left_foot": [90, 0, 0]},
+      "depth3d": {"right_thigh": 0}
+    }
+  }
+}

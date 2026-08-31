@@ -155,7 +155,11 @@ fi
 
 if (( CODE_ONLY )); then
   log "Restarting (code only)"
-  run ssh "$HOST" "systemctl --user restart aipi5 2>/dev/null || true"
+  # Archives made on Windows do not carry Unix executable bits reliably. A
+  # code-only deploy used to overwrite `aipi5-ui.sh` as mode 0644, leaving the
+  # assistant alive but the touchscreen unit in a 203/EXEC restart loop. The
+  # blank kiosk looked exactly like AIPI5 had failed to start at boot.
+  run ssh "$HOST" "cd ~/$REMOTE && chmod +x scripts/*.sh && systemctl --user daemon-reload && systemctl --user restart aipi5 aipi5-ui"
   log "Done"
   exit 0
 fi

@@ -1,0 +1,41 @@
+{
+  "approved_at": "2026-08-22T04:59:10.846Z",
+  "source_file": "yoga-pose-review (4).json",
+  "approved": ["bird_dog_left", "bird_dog_right", "boat", "bridge", "butterfly"],
+  "pose_edits": {
+    "bird_dog_left": {
+      "bones": {"left_forearm": 92, "left_shin": 178, "left_thigh": 174, "left_upper_arm": 92, "neck": 4, "right_forearm": -2, "right_shin": 182, "right_thigh": 88, "right_upper_arm": -6, "spine": -19},
+      "bones3d": {"hips": [88, 0, 0]},
+      "camera": {"azimuth": -34},
+      "root": {"yaw": 90},
+      "terminal3d": {"left_foot": [-88, 180, 0], "right_foot": [-101, 180, 0]},
+      "terminals": {"left_foot": "sole_down", "left_hand": "floor", "right_foot": "sole_down"},
+      "view": "low"
+    },
+    "bird_dog_right": {
+      "bones": {"left_forearm": -2, "left_shin": 178, "left_thigh": 92, "left_upper_arm": -6, "neck": 4, "right_forearm": 88, "right_shin": 178, "right_thigh": 174, "right_upper_arm": 88, "spine": -19},
+      "bones3d": {"hips": [88, 0, 0]},
+      "camera": {"azimuth": -34},
+      "root": {"yaw": 90},
+      "terminal3d": {"left_foot": [-115, -180, 0], "right_foot": [-91, -180, 0]},
+      "terminals": {"left_foot": "sole_down", "right_foot": "sole_down", "right_hand": "floor"},
+      "view": "low"
+    },
+    "bridge": {
+      "bones": {"left_forearm": 0, "left_shin": 70, "left_thigh": -25, "left_upper_arm": 0, "neck": 180, "right_forearm": 0, "right_shin": 70, "right_thigh": -25, "right_upper_arm": 0, "spine": 147},
+      "camera": {"azimuth": 18},
+      "root": {"pitch": -90, "roll": 90, "yaw": 0},
+      "terminals": {"left_foot": "floor_away", "left_hand": "floor", "right_foot": "floor_away", "right_hand": "floor"},
+      "view": "low",
+      "terminal3d": {"left_hand": [5, 65, 0], "right_hand": [0, 80, 0], "left_foot": [30, 0, 0], "right_foot": [30, 0, 0]},
+      "depth3d": {"left_upper_arm": 0}
+    },
+    "boat": {
+      "bones": {"left_forearm": -18, "left_shin": -52, "left_thigh": -60, "left_upper_arm": -16, "neck": -118, "right_forearm": -18, "right_shin": -52, "right_thigh": -60, "right_upper_arm": -24, "spine": -131},
+      "camera": {"azimuth": 18},
+      "root": {"yaw": 90, "roll": 0, "pitch": 0},
+      "terminals": {"left_foot": "flex", "right_foot": "flex"},
+      "view": "seated"
+    }
+  }
+}

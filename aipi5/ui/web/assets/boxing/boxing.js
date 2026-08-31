@@ -4,25 +4,6 @@
  * display rate, synthesises bounded one-shot audio, and owns no camera or pose
  * model.  Classified motion selects registered full-body anime poses while
  * pose capture remains live even when world simulation is slowed.
- *
- * **The view is the player's own eyes.**  It was over their shoulder until the
- * first-person change, and the difference is not a camera position — it is
- * which things exist.  Three of them:
- *
- *   The player has no body.  Nothing of them is drawn but two gloves coming up
- *   from the bottom of the frame, so the rear-view fighter, his head, his
- *   shadow and the whole 21-pose player matrix are simply not used any more.
- *   The files stay on disk; nothing asks for them.
- *
- *   Their head is the camera.  Leaning, ducking and dodging used to move a
- *   figure across a still arena; now they move the arena, because that is what
- *   moving your head does.  `headCamera` is the whole of it and it is applied
- *   to everything except the gloves — which are attached to the same head and
- *   so must not move relative to it.
- *
- *   The opponent is close enough to hit.  Drawn about half again the size it
- *   was and low in the frame, because a boxer you are actually facing fills
- *   your view rather than standing in the middle distance.
  */
 (function () {
   "use strict";
@@ -44,16 +25,16 @@
   let crowdEnergy = 0;
   let shakeUntil = 0;
   let shakePower = 0;
-  //: When the red wash over the whole view fades out. First person's only way
-  //: of saying "that one landed on *you*" — there is no body on screen to show
-  //: recoiling, so the view itself has to take the punch.
-  let hitFlashUntil = 0;
-  let hitFlashPower = 0;
+  let smoothedRig = {};
+  let rigTimestamp = 0;
   let laneMotion = {
     player: { value: 0, at: 0 },
     opponent: { value: 0, at: 0 },
   };
+  let playerScreenX = 640;
   let opponentScreenX = 640;
+  let playerPoseLatch = { pose: "idle", until: 0 };
+  let lastPlayerActionSignature = "";
 
   const arenaImage = new Image();
   let arenaReady = false;
@@ -61,45 +42,26 @@
   arenaImage.onload = () => { arenaReady = true; };
   arenaImage.src = "/assets/boxing/arena-anime-v2.png";
 
-  // The player's own glove and forearm, cut out of the approved pose sheet by
-  // `scripts/build_boxing_first_person.py` — see that file for why the arm is
-  // two pieces rather than one. The geometry it measured comes with them; the
-  // fallback below is only for the first frames before the manifest lands.
-  const fpImages = { forearm: new Image(), glove: new Image() };
-  const fpReady = { forearm: false, glove: false };
-  let fpRig = {
-    forearm: { width: 360, height: 214, elbow: [0, 127], wrist: [360, 89] },
-    glove: { width: 196, height: 166, wrist: [0, 88] },
-  };
-  for (const part of ["forearm", "glove"]) {
-    fpImages[part].decoding = "async";
-    fpImages[part].onload = () => { fpReady[part] = true; };
-    fpImages[part].src = `/assets/boxing/fp/${part}.webp`;
-  }
-  fetch("/assets/boxing/fp/manifest.json")
-    .then((response) => (response.ok ? response.json() : null))
-    .then((data) => { if (data && data.glove) fpRig = data; })
-    .catch(() => {});
-
-  // Only the opponent has a body on screen now. The red rear-view torso, the
-  // sixteen baked player damage bodies and the twenty-one-pose player matrix
-  // are all still on disk and not one of them is requested: the player is
-  // behind the camera. Kept rather than deleted because between them they are
-  // the whole of the third-person view, and nothing needs them gone.
+  const playerBodyImage = new Image();
   const opponentBodyImage = new Image();
+  let playerBodyReady = false;
   let opponentBodyReady = false;
-  opponentBodyImage.decoding = "async";
+  playerBodyImage.decoding = opponentBodyImage.decoding = "async";
+  playerBodyImage.onload = () => { playerBodyReady = true; };
   opponentBodyImage.onload = () => { opponentBodyReady = true; };
+  playerBodyImage.src = "/assets/boxing/player-red-torso.png";
   opponentBodyImage.src = "/assets/boxing/opponent-blue-torso.png";
 
   const DAMAGE_ASSET_VERSION = "20260816-1";
   const DAMAGE_CACHE_LIMIT = 12;
   const DAMAGE_ORDERS = {
     opponent: ["left_eye", "right_eye", "left_shoulder", "right_shoulder"],
+    player: ["left_shoulder", "right_shoulder"],
   };
-  const damageCache = { opponent: new Map() };
+  const damageCache = { opponent: new Map(), player: new Map() };
   const damageBodies = {
     opponent: { key: "", current: null, previous: null, changedAt: 0 },
+    player: { key: "", current: null, previous: null, changedAt: 0 },
   };
 
   function resetDamageBodies() {
@@ -187,9 +149,10 @@
   // constructs arms or paints an injury over a different base pose.
   const POSE_ASSET_VERSION = "20260816-1";
   const POSE_CACHE_LIMIT = 36;
-  const poseCache = { opponent: new Map() };
+  const poseCache = { opponent: new Map(), player: new Map() };
   const poseBodies = {
     opponent: { id: "", current: null, previous: null, changedAt: 0 },
+    player: { id: "", current: null, previous: null, changedAt: 0 },
   };
 
   function resetPoseBodies() {
@@ -309,13 +272,15 @@
     playerReaction = null;
     crowdEnergy = 0;
     shakeUntil = 0;
-    hitFlashUntil = 0;
-    resetFirstPersonHands();
+    smoothedRig = {};
+    rigTimestamp = 0;
     laneMotion = {
       player: { value: 0, at: 0 },
       opponent: { value: 0, at: 0 },
     };
-    opponentScreenX = 640;
+    playerScreenX = opponentScreenX = 640;
+    playerPoseLatch = { pose: "idle", until: 0 };
+    lastPlayerActionSignature = "";
     resetDamageBodies();
     resetPoseBodies();
     clearHeartbeat();
@@ -483,21 +448,13 @@
                 event.target === "head" ? "star" : "ring", event.hook ? 1.35 : 1);
       shake(event.hook || event.target === "head" ? 9 : 4, event.hook ? 220 : 130);
     } else if (name === "opponent-hit") {
-      // **Taken on the camera, not on a body.** The player has no figure on
-      // screen to flinch, so a punch that lands on them is a wash of red over
-      // the whole view and a harder shake — and the sparks happen where the
-      // glove arrived, which in this view is in front of the eyes rather than
-      // at some position along the bottom of the picture.
       playerReaction = reaction(event.target === "head" ? "head" : "body", event, 430);
-      hitFlash(event.target === "head" ? 1 : .62,
-               event.target === "head" ? 420 : 320);
-      const inbound = 640 + (event.side === "left" ? 120 : -120);
-      burst(inbound, event.target === "head" ? 330 : 470, "#ff665f", 22, 1.35);
-      addImpact(inbound, event.target === "head" ? 330 : 470, "#ff665f", "ring", 1.3);
-      shake(event.target === "head" ? 16 : 10, 260);
+      burst(playerScreenX, event.target === "head" ? 535 : 680, "#ff665f", 20, 1.25);
+      addImpact(playerScreenX, event.target === "head" ? 535 : 680, "#ff665f", "ring", 1.15);
+      shake(event.target === "head" ? 10 : 6, 210);
     } else if (name === "player-block" || name === "opponent-block") {
       showMessage("BLOCK", 520, "action", 2);
-      const blockX = name === "opponent-block" ? opponentScreenX : 640;
+      const blockX = name === "opponent-block" ? opponentScreenX : playerScreenX;
       burst(blockX, 500, "#85c7ff", 12, .7);
       addImpact(blockX, 500, "#85c7ff", "shield", .9);
       if (name === "opponent-block") opponentReaction = reaction("block", event, 320);
@@ -507,8 +464,7 @@
       if (name === "opponent-dodge") opponentReaction = reaction("dodge", event, 440);
     } else if (name === "knockout") {
       showMessage("KO", 1900, "ko", 8);
-      const koX = event.fighter === "player" ? 640 : opponentScreenX;
-      if (event.fighter === "player") hitFlash(1.35, 1400);
+      const koX = event.fighter === "player" ? playerScreenX : opponentScreenX;
       burst(koX, 300, "#ffc34d", 54, 2.0);
       crowdEnergy = 1.5;
       if (event.fighter === "player") playerReaction = reaction("ko", event, 2200);
@@ -527,12 +483,6 @@
     const started = performance.now();
     return { kind, side: event.side || "", started,
              until: started + duration, duration };
-  }
-
-  function hitFlash(power, duration) {
-    const now = performance.now();
-    hitFlashPower = Math.max(hitFlashPower * (now < hitFlashUntil ? 1 : 0), power);
-    hitFlashUntil = Math.max(hitFlashUntil, now + duration);
   }
 
   function shake(power, duration) {
@@ -648,34 +598,15 @@
     const sx = shaking ? Math.sin(now * .19) * shakePower * shakeFade : 0;
     const sy = shaking ? Math.cos(now * .23) * shakePower * .55 * shakeFade : 0;
     if (!shaking) shakePower = 0;
-    const camera = headCamera(game.motion && game.motion.posture);
     ctx.save();
     ctx.translate(W / 2 + sx, H / 2 + sy);
     ctx.scale(slowZoom, slowZoom);
     ctx.translate(-W / 2, -H / 2);
-
-    // Two depths, one head. The arena is across the room and the opponent is
-    // an arm's length away, so the same movement of the player's head shifts
-    // them by very different amounts — which is the parallax that makes a flat
-    // pair of images read as a room you are standing in. The numbers are in
-    // `applyCamera`; all that is chosen here is which layer is how far away.
-    ctx.save();
-    applyCamera(ctx, camera, .34);
     drawArena(ctx, now, fps, game);
-    ctx.restore();
-
-    ctx.save();
-    applyCamera(ctx, camera, 1);
     if (game.mode === "training") drawTraining(ctx, game, now);
     else drawOpponent(ctx, game, now);
+    drawPlayer(ctx, payload, now);
     stepAndDrawEffects(ctx, now);
-    ctx.restore();
-
-    // **Outside the camera, deliberately.** These gloves are on the ends of
-    // the arms of the head the camera *is*. Moving them with it would be
-    // moving them twice, and a duck would drop the player's own hands out of
-    // the bottom of their own view.
-    drawFirstPersonHands(ctx, payload, now);
     drawForeground(ctx, game, now);
     if (payload.debug) drawDebugCanvas(ctx, payload);
     ctx.restore();
@@ -687,48 +618,10 @@
     }
   }
 
-  //: How far the world moves for one shoulder-width of head movement, in
-  //: pixels, at the near depth. Generous — a first-person view that barely
-  //: moves when you slip a punch feels like a photograph of a fight rather
-  //: than a fight, and this is the whole of what makes ducking feel like
-  //: ducking rather than like pressing a button.
-  const CAMERA_SWAY_X = 190;
-  const CAMERA_SWAY_Y = 150;
-
-  function headCamera(posture) {
-    const p = posture || {};
-    const bound = (value, limit) =>
-      Math.max(-limit, Math.min(limit, Number(value) || 0));
-    // Negated: an eye that moves right sees the room move left. Bounded rather
-    // than trusted, because `offset_x` is a measured quantity divided by a
-    // measured shoulder span and one badly tracked frame should tilt the room
-    // a little, not throw it off the screen.
-    return {
-      x: -bound(p.offset_x, .62),
-      y: -bound(p.offset_y, .48),
-      // Leaning back shrinks the shoulder span, which is the only depth cue
-      // this camera has and a surprisingly convincing one.
-      zoom: 1 + bound(p.scale_change, .3) * .34,
-      roll: bound(p.torso_angle, 16) * Math.PI / 180 * .30,
-    };
-  }
-
-  function applyCamera(ctx, camera, depth) {
-    ctx.translate(W / 2, H / 2);
-    ctx.rotate(camera.roll * depth);
-    const zoom = 1 + (camera.zoom - 1) * depth;
-    ctx.scale(zoom, zoom);
-    ctx.translate(-W / 2, -H / 2);
-    ctx.translate(camera.x * CAMERA_SWAY_X * depth,
-                  camera.y * CAMERA_SWAY_Y * depth);
-  }
-
   function drawArena(ctx, now, fps, game) {
-    // No parallax of its own any more: the whole layer is moved by
-    // `applyCamera` before this is called, which is one mechanism instead of
-    // two disagreeing ones.
-    const parallaxX = 0;
-    const parallaxY = 0;
+    const posture = game.motion && game.motion.posture || {};
+    const parallaxX = (posture.offset_x || 0) * -34;
+    const parallaxY = Math.max(-1, Math.min(1, posture.offset_y || 0)) * -10;
     if (arenaReady && arenaImage.naturalWidth) {
       const scale = Math.max((W + 54) / arenaImage.naturalWidth,
                              (H + 42) / arenaImage.naturalHeight);
@@ -816,37 +709,22 @@
   }
 
   function drawForeground(ctx, game, now) {
+    const ropeGlow = .28 + Math.sin(now * .0025) * .04;
     ctx.save();
-    // No rope across the bottom any more. It sat where the player's own gloves
-    // now are, and a rope in front of your own hands puts you outside the ring
-    // looking in — which is the one thing this view is not.
+    ctx.strokeStyle = `rgba(225,242,255,${ropeGlow})`;
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(0, 742); ctx.quadraticCurveTo(640, 776, 1280, 742); ctx.stroke();
     const vignette = ctx.createRadialGradient(640, 390, 230, 640, 390, 730);
     vignette.addColorStop(.58, "rgba(0,0,0,0)");
     vignette.addColorStop(1, game.slow_motion ? "rgba(0,18,34,.48)" : "rgba(0,3,8,.36)");
     ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H);
-
-    if (now < hitFlashUntil) {
-      // Strongest at the edges and thin in the middle, so it reads as being
-      // rattled rather than as a red filter over the fight. The opponent stays
-      // visible through it, which matters — the punch after the one that hurt
-      // is the one you have to see coming.
-      const fade = Math.max(0, (hitFlashUntil - now) / 420);
-      const power = Math.min(1, hitFlashPower) * Math.min(1, fade);
-      const wash = ctx.createRadialGradient(640, 400, 140, 640, 400, 780);
-      wash.addColorStop(0, `rgba(190,20,26,${power * .12})`);
-      wash.addColorStop(1, `rgba(150,8,14,${power * .72})`);
-      ctx.fillStyle = wash; ctx.fillRect(0, 0, W, H);
-      if (now >= hitFlashUntil) hitFlashPower = 0;
-    }
     ctx.restore();
   }
 
   function drawTraining(ctx, game, now) {
     // A neutral coaching dummy keeps the target anchored in the same visual
-    // coordinate system as the fight opponent — including how close it stands,
-    // or the two modes would teach different distances.
-    drawBoxer(ctx, 640, OPPONENT_Y, OPPONENT_SCALE,
-              { guard: "none", state: "observe" }, {}, now, true);
+    // coordinate system as the fight opponent.
+    drawBoxer(ctx, 640, 325, 1.0, { guard: "none", state: "observe" }, {}, now, true);
     const prompt = game.prompt;
     if (!prompt) return;
     const offensive = /punch|hook/.test(prompt.kind);
@@ -869,18 +747,6 @@
     }
   }
 
-  //: How big and how low the other fighter stands.
-  //:
-  //: Both moved when the view did. Over the player's shoulder he was a figure
-  //: in the middle distance with the player's own back in front of him; from
-  //: the player's eyes he is a man within arm's reach, and a man within arm's
-  //: reach fills most of the frame and is looked slightly *up* at rather than
-  //: down on. Half again the size and lower in the picture is what that comes
-  //: to. The training dummy uses the same two numbers, so the distance a
-  //: player learns in training is the distance they fight at.
-  const OPPONENT_SCALE = 1.62;
-  const OPPONENT_Y = 372;
-
   function drawOpponent(ctx, game, now) {
     const ai = game.ai || {};
     const dodge = ai.guard === "dodge" || ai.state === "defend";
@@ -895,12 +761,12 @@
     const laneX = smoothLane("opponent", laneIndex(ai.lane), now, 150);
     const x = 640 + laneX + idleX + dodgeLean + reactionLean;
     opponentScreenX = x;
-    const y = OPPONENT_Y + idleY + motion.drive * 30 +
+    const y = 325 + idleY + motion.drive * 30 +
       (react && react.kind === "body" ? reactionPulse(react, now) * 20 : 0);
     const opponent = game.opponent || {};
     const hpRatio = clamp01((opponent.hp ?? 100) / Math.max(1, opponent.max_hp || 100));
     drawAttackCue(ctx, x, y, attack, motion, now);
-    drawBoxer(ctx, x, y, OPPONENT_SCALE + motion.drive * .14,
+    drawBoxer(ctx, x, y, 1.06 + motion.drive * .09,
       Object.assign({}, ai, { reaction: react, hpRatio }),
       game.opponent || {}, now, false);
   }
@@ -918,6 +784,45 @@
 
   function clamp01(value) {
     return Math.max(0, Math.min(1, Number(value) || 0));
+  }
+
+  function playerPoseFor(motion, react, now) {
+    if (react) {
+      if (react.kind === "ko") return "knockout";
+      if (react.kind === "head") return "head_hit";
+      if (react.kind === "body") return "body_hit";
+    }
+    const action = motion.actions && motion.actions[0];
+    if (action && action.name) {
+      const target = action.target === "body" ? "body" : "head";
+      const poses = {
+        left_punch: `left_straight_${target}`,
+        right_punch: `right_straight_${target}`,
+        left_hook: `left_hook_${target}`,
+        right_hook: `right_hook_${target}`,
+        dodge_left: "dodge_left",
+        dodge_right: "dodge_right",
+        duck: "duck",
+        lean_back: "lean_back",
+        parry: action.side === "right" ? "right_parry" : "left_parry",
+      };
+      const pose = poses[action.name];
+      const signature = `${action.name}:${action.side || ""}:${target}`;
+      if (pose && signature !== lastPlayerActionSignature) {
+        playerPoseLatch = {
+          pose,
+          until: now + (action.name.includes("punch") || action.name.includes("hook") ? 330 : 420),
+        };
+      }
+      lastPlayerActionSignature = signature;
+    } else {
+      lastPlayerActionSignature = "";
+    }
+    if (now < playerPoseLatch.until) return playerPoseLatch.pose;
+    if (motion.guard === "two_hand_guard") return "high_guard";
+    if (motion.guard === "left_block") return "left_block";
+    if (motion.guard === "right_block") return "right_block";
+    return "idle";
   }
 
   function opponentPoseFor(ai, react) {
@@ -1354,153 +1259,153 @@
     ctx.restore();
   }
 
-  //: Where the player's arms come into the frame, off the bottom corners.
-  //: Off-screen on purpose — a first-person arm has no visible beginning, and
-  //: an elbow appearing at the edge of the picture is the single thing that
-  //: most makes a view stop reading as your own eyes.
-  const FP_ENTRY_X = 402, FP_ENTRY_Y = 902;
-  //: Where a glove rests when the arm is folded, and where it goes when the
-  //: arm is straight. The rest position is low and wide — you look over your
-  //: own guard, not through it.
-  const FP_REST_X = 336, FP_REST_Y = 716;
-  const FP_REACH_Y = 500;
-  //: Arm extension, as `boxing/motion.py` measures it, mapped to nothing and
-  //: everything. Below the first number the arm is folded; above the second it
-  //: is as straight as it gets.
-  const FP_FOLDED = .42, FP_STRAIGHT = .90;
-  //: Glove size at the two ends of that. **Smaller when extended**, which is
-  //: the opposite of what it feels like it should be and is simply what
-  //: happens: your fist at your chin is half as far from your eyes as your
-  //: fist at the end of a straight punch, so it looks twice the size.
-  const FP_NEAR = 1.28, FP_FAR = .62;
-  //: A forearm is thinner than the glove on the end of it. Without this the
-  //: extended arm reads as a length of pipe rather than as an arm going away
-  //: from you.
-  const FP_ARM_WIDTH = .84;
-  //: How long the forearm is drawn, as a multiple of its own natural length
-  //: at the glove's scale.
-  //:
-  //: **Not "however far it is to the edge of the frame", which is what this
-  //: did first and what made the arm look like a plank.** Stretching a 360 px
-  //: drawing to six hundred smears every muscle in it into a streak, and the
-  //: streak is at its worst on a straight punch — the one shot the player
-  //: throws most. So the arm keeps its own proportions and its far end fades
-  //: out wherever it happens to land, which the sprite carries baked in.
-  const FP_ARM_LENGTH = 1.42;
-  //: How far a hand held high or low moves the glove up or down the screen,
-  //: in pixels per shoulder width. **Much smaller when the arm is out than
-  //: when it is folded**, and that is perspective rather than taste: a hand at
-  //: the end of a straight arm is twice as far from the eye, so the same
-  //: movement of it covers half the angle. The first version used one number
-  //: for both and threw the glove off the top of the screen on every jab.
-  const FP_REST_LIFT = 84, FP_REACH_LIFT = 132;
-
-  let fpHands = {};
-
-  function resetFirstPersonHands() { fpHands = {}; }
-
-  //: Render smoothing on the glove positions. Heavier than the blade in Fruit
-  //: Ninja gets, and it can afford to be: nothing is being aimed with these —
-  //: the punch was classified on the Pi from the unsmoothed wrist before this
-  //: ever ran — so the only job left is to not shiver.
-  const FP_SMOOTH = .34;
-
-  function drawFirstPersonHands(ctx, payload, now) {
+  function drawPlayer(ctx, payload, now) {
+    const body = payload.pose && payload.pose.player && payload.pose.player.body || {};
     const motion = payload.game.motion || {};
     const posture = motion.posture || {};
-    const hands = motion.hands || {};
-    const centre = posture.centre;
-    const span = Number(posture.shoulder_width) || 0;
+    const rawOffsetX = Number(posture.offset_x) || 0;
+    const playerLane = laneIndex(posture.lane || rawOffsetX);
+    const laneOffsetX = smoothLane("player", playerLane, now, 175);
+    const fineOffsetX = Math.max(-.12, Math.min(.12,
+      rawOffsetX - playerLane * .16)) * 120;
+    const duck = Math.max(0, posture.offset_y || 0) * 120;
+    const centreX = 640 + laneOffsetX + fineOffsetX;
+    playerScreenX = centreX;
+    const shoulderY = 610 + duck;
+    const idle = {
+      left_shoulder: [centreX - 190, shoulderY], left_elbow: [centreX - 220, shoulderY + 80], left_wrist: [centreX - 120, shoulderY - 25],
+      right_shoulder: [centreX + 190, shoulderY], right_elbow: [centreX + 220, shoulderY + 80], right_wrist: [centreX + 120, shoulderY - 25],
+    };
+    const mapped = smoothPlayerRig(mapBody(body, centreX, shoulderY), idle, motion, now);
     const react = liveReaction(playerReaction, now);
-    const hurt = reactionPulse(react, now);
+    const hitAmount = reactionPulse(react, now);
+
+    ctx.save();
+    if (react && react.kind === "ko") {
+      const fall = smoothStep((now - react.started) / react.duration);
+      ctx.translate(fall * 120, fall * 150); ctx.rotate(fall * .28);
+    } else if (react && react.kind === "head") {
+      ctx.translate(Math.sin(now * .11) * hitAmount * 13, hitAmount * 10);
+      ctx.rotate(Math.sin(now * .09) * hitAmount * .035);
+    } else if (react && react.kind === "body") {
+      ctx.translate(0, hitAmount * 20); ctx.scale(1.03, 1 - hitAmount * .06);
+    }
+
+    ctx.fillStyle = "rgba(0,0,0,.3)";
+    ctx.beginPath(); ctx.ellipse(centreX, 792, 265, 28, 0, 0, Math.PI * 2); ctx.fill();
+
+    const selectedPose = playerPoseFor(motion, react, now);
+    if (drawPoseBody(ctx, "player", selectedPose,
+        payload.game.player || {}, now, [centreX - 280, 95, 560, 747], .64)) {
+      ctx.restore();
+      return;
+    }
+
+    if (playerBodyReady && playerBodyImage.naturalWidth) {
+      // The reference's red rear-view player is the semi-transparent body
+      // layer. Live Hailo joints still own both separately drawn arms.
+      drawDamageBody(ctx, "player", payload.game.player || {}, playerBodyImage,
+        now, [centreX - 255, shoulderY - 140, 510, 540], .62);
+    } else {
+    // The player's rear-view torso is intentionally translucent so the
+    // center fighter remains readable. Gloves stay fully opaque and dominant.
+    ctx.save(); ctx.globalAlpha = .68;
+    const jersey = ctx.createLinearGradient(centreX - 220, shoulderY - 30, centreX + 190, H);
+    jersey.addColorStop(0, "#2b9fbd"); jersey.addColorStop(.48, "#126080"); jersey.addColorStop(1, "#071d31");
+    ctx.fillStyle = jersey; ctx.strokeStyle = "#071723"; ctx.lineWidth = 12;
+    ctx.beginPath();
+    ctx.moveTo(centreX - 196, shoulderY); ctx.quadraticCurveTo(centreX - 252, 702, centreX - 226, H + 8);
+    ctx.lineTo(centreX + 226, H + 8); ctx.quadraticCurveTo(centreX + 252, 702, centreX + 196, shoulderY);
+    ctx.quadraticCurveTo(centreX + 82, shoulderY - 22, centreX, shoulderY + 16);
+    ctx.quadraticCurveTo(centreX - 82, shoulderY - 22, centreX - 196, shoulderY);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "rgba(98,232,247,.28)";
+    ctx.beginPath(); ctx.moveTo(centreX - 172, shoulderY + 18);
+    ctx.quadraticCurveTo(centreX - 118, 704, centreX - 128, H);
+    ctx.lineTo(centreX - 42, H); ctx.quadraticCurveTo(centreX - 65, 690, centreX - 172, shoulderY + 18); ctx.fill();
+    ctx.strokeStyle = "rgba(137,238,249,.42)"; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(centreX, shoulderY + 45); ctx.lineTo(centreX, H); ctx.stroke();
+    ctx.restore();
+
+    // Rear neck and head: no facial features, so the camera direction is
+    // unambiguous even when the real player leans or ducks.
+    ctx.fillStyle = "#744338"; ctx.strokeStyle = "#171722"; ctx.lineWidth = 9;
+    ctx.beginPath(); ctx.roundRect(centreX - 36, shoulderY - 48, 72, 68, 24); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#955645";
+    ctx.beginPath(); ctx.ellipse(centreX, shoulderY - 88, 58, 67, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#955645";
+    ctx.beginPath(); ctx.ellipse(centreX - 59, shoulderY - 87, 10, 19, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(centreX + 59, shoulderY - 87, 10, 19, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#182334";
+    ctx.beginPath();
+    ctx.moveTo(centreX - 59, shoulderY - 97);
+    ctx.quadraticCurveTo(centreX - 43, shoulderY - 158, centreX + 8, shoulderY - 151);
+    ctx.quadraticCurveTo(centreX + 49, shoulderY - 148, centreX + 59, shoulderY - 98);
+    ctx.lineTo(centreX + 50, shoulderY - 67);
+    ctx.lineTo(centreX + 34, shoulderY - 82);
+    ctx.lineTo(centreX + 18, shoulderY - 66);
+    ctx.lineTo(centreX + 1, shoulderY - 82);
+    ctx.lineTo(centreX - 17, shoulderY - 66);
+    ctx.lineTo(centreX - 34, shoulderY - 82);
+    ctx.lineTo(centreX - 51, shoulderY - 67);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
 
     for (const side of ["left", "right"]) {
-      const hand = hands[side];
-      // A hand the model has lost keeps its last place and stays drawn. The
-      // alternative is a glove that blinks out of the player's own view, which
-      // reads as the game breaking rather than as tracking dropping a frame.
-      let target = fpHands[side];
-      if (hand && centre && span > .02) {
-        target = {
-          dx: (Number(hand.x) - centre[0]) / span,
-          dy: (Number(hand.y) - centre[1]) / span,
-          reach: clamp01((Number(hand.extension) - FP_FOLDED) /
-                         (FP_STRAIGHT - FP_FOLDED)),
-        };
-      }
-      if (!target) continue;
-      const previous = fpHands[side] || target;
-      const eased = {
-        dx: previous.dx + (target.dx - previous.dx) * FP_SMOOTH,
-        dy: previous.dy + (target.dy - previous.dy) * FP_SMOOTH,
-        reach: previous.reach + (target.reach - previous.reach) * FP_SMOOTH,
-      };
-      fpHands[side] = eased;
-      drawFirstPersonArm(ctx, side, eased, hurt);
+      const s = mapped[`${side}_shoulder`] || idle[`${side}_shoulder`];
+      const e = mapped[`${side}_elbow`] || idle[`${side}_elbow`];
+      const w = mapped[`${side}_wrist`] || idle[`${side}_wrist`];
+      drawPlayerLimb(ctx, s, e, w, side);
+      const hand = motion.hands && motion.hands[side] || {};
+      const speedScale = Math.min(.28, Math.max(0, hand.speed || 0) * .075);
+      const reachScale = Math.max(0, Math.min(.22, (shoulderY - w[1] - 65) / 520));
+      const gloveAngle = Math.atan2(e[1] - w[1], e[0] - w[0]) - Math.PI / 2;
+      glove(ctx, w[0], w[1], side === "left" ? "#ef3b48" : "#bc243b",
+        1.16 + speedScale + reachScale, side === "left" ? -1 : 1, gloveAngle);
     }
+    ctx.restore();
   }
 
-  function drawFirstPersonArm(ctx, side, hand, hurt) {
-    if (!fpReady.glove || !fpReady.forearm) return;
-    ctx.save();
-    // Both arms are drawn as the right one and the left is reflected about the
-    // middle of the screen. The sprite is a right arm, the geometry below is
-    // written once, and the two hands are guaranteed to be mirror images
-    // rather than two sets of numbers that have to be kept agreeing.
-    if (side === "left") { ctx.translate(W, 0); ctx.scale(-1, 1); }
-    const across = side === "left" ? -hand.dx : hand.dx;
-    const t = clamp01(hand.reach);
+  function smoothPlayerRig(raw, idle, motion, now) {
+    if (!rigTimestamp || now - rigTimestamp > 450) smoothedRig = {};
+    rigTimestamp = now;
+    for (const side of ["left", "right"]) {
+      const speed = motion.hands && motion.hands[side]
+        ? Number(motion.hands[side].speed) || 0 : 0;
+      const fastAlpha = speed > 1.1 ? .70 : .38;
+      for (const joint of ["shoulder", "elbow", "wrist"]) {
+        const name = `${side}_${joint}`;
+        const target = raw[name] || idle[name];
+        const previous = smoothedRig[name] || target;
+        const alpha = joint === "shoulder" ? .28 : fastAlpha;
+        smoothedRig[name] = [previous[0] + (target[0] - previous[0]) * alpha,
+                             previous[1] + (target[1] - previous[1]) * alpha];
+      }
+      const s = smoothedRig[`${side}_shoulder`];
+      const e = constrainJoint(s, smoothedRig[`${side}_elbow`], 72, 176);
+      const w = constrainJoint(e, smoothedRig[`${side}_wrist`], 68, 188);
+      smoothedRig[`${side}_elbow`] = e;
+      smoothedRig[`${side}_wrist`] = w;
+    }
+    return smoothedRig;
+  }
 
-    const restX = W / 2 + FP_REST_X + across * 96;
-    const restY = FP_REST_Y + hand.dy * FP_REST_LIFT + hurt * 34;
-    const reachX = W / 2 + across * 300;
-    const reachY = FP_REACH_Y + hand.dy * FP_REACH_LIFT + hurt * 34;
-    const gx = restX + (reachX - restX) * t;
-    const gy = restY + (reachY - restY) * t;
-    const scale = FP_NEAR + (FP_FAR - FP_NEAR) * t;
+  function constrainJoint(anchor, point, minimum, maximum) {
+    const dx = point[0] - anchor[0], dy = point[1] - anchor[1];
+    const length = Math.max(.001, Math.hypot(dx, dy));
+    const fixed = Math.max(minimum, Math.min(maximum, length));
+    return [anchor[0] + dx / length * fixed, anchor[1] + dy / length * fixed];
+  }
 
-    // The arm points from a fixed anchor off the bottom corner — where the
-    // player's shoulder would be — towards wherever the glove is. Only the
-    // direction comes from that anchor; the length does not.
-    const entryX = W / 2 + FP_ENTRY_X, entryY = FP_ENTRY_Y;
-    const theta = Math.atan2(gy - entryY, gx - entryX);
-
-    const forearm = fpRig.forearm, glove = fpRig.glove;
-    const axisX = forearm.wrist[0] - forearm.elbow[0];
-    const axisY = forearm.wrist[1] - forearm.elbow[1];
-    const axisLength = Math.max(1, Math.hypot(axisX, axisY));
-    const armLength = axisLength * scale * FP_ARM_LENGTH;
-    const elbowX = gx - Math.cos(theta) * armLength;
-    const elbowY = gy - Math.sin(theta) * armLength;
-    // The sprite was cut from a real drawing, so its own axis is a few degrees
-    // off horizontal. Undoing that here is what stops the glove hanging off
-    // the side of its own wrist.
-    const axisAngle = Math.atan2(axisY, axisX);
-
-    // **The negative y is the arm's roll, and it is not decoration.** The
-    // sprite is a right arm drawn reaching away to the right, so its top edge
-    // is the outside of the limb. Pointing it up and inward — which is where a
-    // guard is — turns it past vertical, and a sprite rotated past vertical
-    // has its top edge underneath. That reads as two things at once, and both
-    // were reported: each arm upside down, *and* the pair swapped, because an
-    // arm reflected along its own length is the other arm.
-    ctx.save();
-    ctx.translate(elbowX, elbowY);
-    ctx.rotate(theta);
-    ctx.scale(armLength / axisLength, -scale * FP_ARM_WIDTH);
-    ctx.rotate(-axisAngle);
-    ctx.drawImage(fpImages.forearm, -forearm.elbow[0], -forearm.elbow[1]);
-    ctx.restore();
-
-    // The glove takes the same roll. Its own axis tilt changes sign with it,
-    // which is why this adds `axisAngle` where the forearm subtracts it.
-    ctx.save();
-    ctx.translate(gx, gy);
-    ctx.rotate(theta + axisAngle);
-    ctx.scale(scale, -scale);
-    ctx.drawImage(fpImages.glove, -glove.wrist[0], -glove.wrist[1]);
-    ctx.restore();
-    ctx.restore();
+  function drawPlayerLimb(ctx, shoulder, elbow, wrist, side) {
+    drawAnimeArm(ctx, shoulder, elbow, wrist, {
+      ink: "rgba(22,15,19,.98)",
+      light: side === "left" ? "#e59a68" : "#d88b5f",
+      mid: side === "left" ? "#b96746" : "#a95b43",
+      dark: side === "left" ? "#70372f" : "#62302d",
+      wrap: side === "left" ? "#ef3b48" : "#bc243b",
+      width: 58,
+    });
   }
 
   function mapBody(body, centreX, shoulderY) {
@@ -1628,13 +1533,17 @@
     panel.classList.add("on");
   }
 
-  gameEl("boxing-training").addEventListener("click", () => gameCommand("mode-training"));
-  gameEl("boxing-fight").addEventListener("click", () => gameCommand("mode-fight"));
+  // The mode sheet is on screen while the Pi is still opening the game, so a
+  // tap on it can arrive before there is a session to take it. `gameChoice`
+  // keeps it and sends it when there is one; `gameCommand` used to drop it,
+  // which is the same fault Yoga's level sheet had.
+  gameEl("boxing-training").addEventListener("click", () => gameChoice("mode-training"));
+  gameEl("boxing-fight").addEventListener("click", () => gameChoice("mode-fight"));
   for (const button of document.querySelectorAll("[data-boxing-difficulty]")) {
     button.addEventListener("click", () => {
       for (const peer of document.querySelectorAll("[data-boxing-difficulty]")) peer.classList.remove("selected");
       button.classList.add("selected");
-      gameCommand(`difficulty-${button.dataset.boxingDifficulty}`);
+      gameChoice(`difficulty-${button.dataset.boxingDifficulty}`);
     });
   }
   gameEl("boxing-fullscreen").addEventListener("click", () => {
@@ -1646,7 +1555,7 @@
 
   window.BoxingUI = {
     onOpen, stop, resetRound, applyState, handleEvent, render,
-    positions: () => ({ playerX: 640,
+    positions: () => ({ playerX: Math.round(playerScreenX),
                         opponentX: Math.round(opponentScreenX) }),
   };
 })();

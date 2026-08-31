@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WebGL capability probe</title>
+<style>
+ html,body{margin:0;background:#0d1014;color:#e6eaed;font:14px/1.6 ui-monospace,monospace}
+ #out{padding:16px;white-space:pre-wrap}
+ canvas{position:fixed;right:8px;bottom:8px;width:240px;height:150px;border:1px solid #2e353b}
+</style>
+</head>
+<body>
+<div id="out">probing…</div>
+<canvas id="gl" width="1280" height="800"></canvas>
+<script>
+/* Can this device render a rigged character in the browser at 1280x800?
+ *
+ * Reports what the GPU actually is and then measures a skinning-shaped load:
+ * a few thousand triangles redrawn every frame with per-vertex matrix work,
+ * which is the same shape of cost a skinned humanoid mesh has. It reports
+ * through the static server's log, because the page console is not readable
+ * from another machine here.
+ */
+const out = document.getElementById("out");
+const say = (l) => { out.textContent += "\n" + l;
+                     fetch("/__gl/" + encodeURIComponent(l)).catch(() => {}); };
+
+const canvas = document.getElementById("gl");
+const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+if (!gl) {
+  say("NO WEBGL AT ALL");
+} else {
+  const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+  say("context      " + (canvas.getContext("webgl2") ? "webgl2" : "webgl1"));
+  say("vendor       " + gl.getParameter(dbg ? dbg.UNMASKED_VENDOR_WEBGL : gl.VENDOR));
+  say("renderer     " + gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+  say("version      " + gl.getParameter(gl.VERSION));
+  say("max texture  " + gl.getParameter(gl.MAX_TEXTURE_SIZE));
+  say("max verts    " + gl.getParameter(gl.MAX_VERTEX_UNIFORM_VECTORS) + " vertex uniform vectors");
+  say("(a skinned humanoid needs ~60 bone matrices = 240 vectors)");
+
+  // A deliberately skinning-shaped load: many triangles, per-vertex transform.
+  const vs = `attribute vec2 p; attribute float b; uniform mat4 bones[24];
+    void main(){ int i = int(b); gl_Position = bones[i] * vec4(p, 0.0, 1.0); }`;
+  const fs = `precision mediump float; void main(){ gl_FragColor = vec4(0.31,0.75,0.72,1.0); }`;
+  function shader(type, src) {
+    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) say("shader error " + gl.getShaderInfoLog(s));
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, shader(gl.VERTEX_SHADER, vs));
+  gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(prog); gl.useProgram(prog);
+
+  const TRIS = 12000;
+  const pos = new Float32Array(TRIS * 6), bone = new Float32Array(TRIS * 3);
+  for (let i = 0; i < TRIS * 3; i++) {
+    pos[i * 2] = Math.random() * 2 - 1; pos[i * 2 + 1] = Math.random() * 2 - 1;
+    bone[i] = Math.floor(Math.random() * 24);
+  }
+  const bind = (data, name, size) => {
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, name);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+  };
+  bind(pos, "p", 2); bind(bone, "b", 1);
+  const locs = [];
+  for (let i = 0; i < 24; i++) locs.push(gl.getUniformLocation(prog, `bones[${i}]`));
+
+  let frames = 0, t0 = performance.now(), gaps = [];
+  let last = t0;
+  function draw(now) {
+    const m = new Float32Array(16);
+    for (let i = 0; i < 24; i++) {
+      const a = now / 900 + i;
+      m.set([Math.cos(a),Math.sin(a),0,0, -Math.sin(a),Math.cos(a),0,0, 0,0,1,0, 0,0,0,1]);
+      gl.uniformMatrix4fv(locs[i], false, m);
+    }
+    gl.viewport(0, 0, 1280, 800);
+    gl.clearColor(0.05, 0.06, 0.08, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES, 0, TRIS * 3);
+    gaps.push(now - last); last = now;
+    if (++frames < 300) { requestAnimationFrame(draw); return; }
+    gaps.sort((a, b) => a - b);
+    const med = gaps[Math.floor(gaps.length / 2)];
+    say(`drew ${frames} frames of ${TRIS} skinned triangles at 1280x800`);
+    say(`median frame ${med.toFixed(1)}ms  -> ${(1000 / med).toFixed(0)} fps`);
+    say(med < 20 ? "VERDICT: runtime 3D is comfortably viable"
+        : med < 40 ? "VERDICT: viable at 10 fps, tight for 60"
+        : "VERDICT: too slow, pre-render instead");
+  }
+  requestAnimationFrame(draw);
+}
+</script>
+</body>
+</html>

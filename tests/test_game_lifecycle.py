@@ -363,16 +363,16 @@ class TestCatalogueAndCommands(GameManagerCase):
         with self.assertRaises(GameError):
             self.manager.command("difficulty-expert")
 
-    def test_the_three_yoga_levels_keep_separate_records(self):
-        """A beginner 87 and an advanced 87 are not the same achievement."""
+    def test_yoga_courses_keep_separate_records(self):
+        """Scores from two different authored courses are not competitors."""
         self.manager.open("yoga")
-        self.manager.command("difficulty-beginner")
+        self.manager.command("course-beginner_03")
         session = self.manager.session
         self.assertEqual(
-            self.manager._session_score_key("yoga", session), "yoga:beginner")
-        self.manager.command("difficulty-advanced")
+            self.manager._session_score_key("yoga", session), "yoga:beginner_03")
+        self.manager.command("course-advanced_06")
         self.assertEqual(
-            self.manager._session_score_key("yoga", session), "yoga:advanced")
+            self.manager._session_score_key("yoga", session), "yoga:advanced_06")
 
     def test_yoga_uses_the_same_single_pose_and_camera_lease(self):
         self.manager.open("yoga")

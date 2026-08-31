@@ -1,0 +1,433 @@
+{
+  "poses": {
+    "cactus_arms": {
+      "floor_y": 494.0,
+      "h": 494,
+      "hip_x": 119.0,
+      "w": 238
+    },
+    "cactus_arms__50": {
+      "floor_y": 545.0,
+      "h": 545,
+      "hip_x": 142.5,
+      "w": 285
+    },
+    "chair": {
+      "floor_y": 579.0,
+      "h": 579,
+      "hip_x": 115.0,
+      "w": 230
+    },
+    "chair__50": {
+      "floor_y": 513.0,
+      "h": 513,
+      "hip_x": 224.0,
+      "w": 448
+    },
+    "child_pose": {
+      "floor_y": 396.5,
+      "h": 281,
+      "hip_x": 420.0,
+      "placement": "floor",
+      "w": 840
+    },
+    "crescent_moon_left": {
+      "floor_y": 573.0,
+      "h": 573,
+      "hip_x": 181.3,
+      "w": 219
+    },
+    "crescent_moon_left__50": {
+      "floor_y": 575.0,
+      "h": 575,
+      "hip_x": 246.2,
+      "w": 293
+    },
+    "crescent_moon_right": {
+      "floor_y": 573.0,
+      "h": 573,
+      "hip_x": 181.3,
+      "mirror_of": "crescent_moon_left",
+      "w": 219
+    },
+    "crescent_moon_right__50": {
+      "floor_y": 575.0,
+      "h": 575,
+      "hip_x": 246.2,
+      "mirror_of": "crescent_moon_left__50",
+      "w": 293
+    },
+    "easy_seat": {
+      "floor_y": 536.0,
+      "h": 560,
+      "hip_x": 207.0,
+      "placement": "floor",
+      "w": 414
+    },
+    "forward_fold": {
+      "floor_y": 328.0,
+      "h": 328,
+      "hip_x": 71.7,
+      "w": 140
+    },
+    "forward_fold__50": {
+      "floor_y": 323.0,
+      "h": 323,
+      "hip_x": 193.4,
+      "w": 246
+    },
+    "goddess": {
+      "floor_y": 477.0,
+      "h": 477,
+      "hip_x": 136.5,
+      "w": 273
+    },
+    "goddess__50": {
+      "floor_y": 472.0,
+      "h": 472,
+      "hip_x": 142.0,
+      "w": 284
+    },
+    "half_moon_left": {
+      "floor_y": 639.0,
+      "h": 639,
+      "hip_x": 195.4,
+      "w": 464
+    },
+    "half_moon_left__50": {
+      "floor_y": 665.0,
+      "h": 665,
+      "hip_x": 203.5,
+      "w": 489
+    },
+    "half_moon_right": {
+      "floor_y": 639.0,
+      "h": 639,
+      "hip_x": 195.4,
+      "mirror_of": "half_moon_left",
+      "w": 464
+    },
+    "half_moon_right__50": {
+      "floor_y": 665.0,
+      "h": 665,
+      "hip_x": 203.5,
+      "mirror_of": "half_moon_left__50",
+      "w": 489
+    },
+    "hand_to_toe_left": {
+      "floor_y": 529.0,
+      "h": 529,
+      "hip_x": 184.4,
+      "w": 415
+    },
+    "hand_to_toe_left__50": {
+      "floor_y": 530.0,
+      "h": 530,
+      "hip_x": 188.6,
+      "w": 418
+    },
+    "hand_to_toe_right": {
+      "floor_y": 529.0,
+      "h": 529,
+      "hip_x": 184.4,
+      "mirror_of": "hand_to_toe_left",
+      "w": 415
+    },
+    "hand_to_toe_right__50": {
+      "floor_y": 530.0,
+      "h": 530,
+      "hip_x": 188.6,
+      "mirror_of": "hand_to_toe_left__50",
+      "w": 418
+    },
+    "mountain": {
+      "floor_y": 542.0,
+      "h": 542,
+      "hip_x": 69.5,
+      "w": 139
+    },
+    "mountain_breath": {
+      "floor_y": 544.0,
+      "h": 544,
+      "hip_x": 66.5,
+      "w": 133
+    },
+    "mountain_breath__50": {
+      "floor_y": 520.0,
+      "h": 520,
+      "hip_x": 70.0,
+      "w": 140
+    },
+    "neck_tilt_left": {
+      "floor_y": 563.0,
+      "h": 563,
+      "hip_x": 75.5,
+      "w": 151
+    },
+    "neck_tilt_left__50": {
+      "floor_y": 545.0,
+      "h": 545,
+      "hip_x": 77.0,
+      "w": 154
+    },
+    "neck_tilt_right": {
+      "floor_y": 563.0,
+      "h": 563,
+      "hip_x": 75.5,
+      "mirror_of": "neck_tilt_left",
+      "w": 151
+    },
+    "neck_tilt_right__50": {
+      "floor_y": 545.0,
+      "h": 545,
+      "hip_x": 77.0,
+      "mirror_of": "neck_tilt_left__50",
+      "w": 154
+    },
+    "savasana": {
+      "floor_y": 370.0,
+      "h": 228,
+      "hip_x": 420.0,
+      "placement": "floor",
+      "w": 840
+    },
+    "shoulder_opener": {
+      "floor_y": 561.0,
+      "h": 561,
+      "hip_x": 56.0,
+      "w": 112
+    },
+    "shoulder_opener__50": {
+      "floor_y": 544.0,
+      "h": 544,
+      "hip_x": 57.0,
+      "w": 114
+    },
+    "side_angle_left": {
+      "floor_y": 571.0,
+      "h": 571,
+      "hip_x": 259.2,
+      "w": 429
+    },
+    "side_angle_left__50": {
+      "floor_y": 531.0,
+      "h": 531,
+      "hip_x": 239.8,
+      "w": 390
+    },
+    "side_angle_right": {
+      "floor_y": 571.0,
+      "h": 571,
+      "hip_x": 259.2,
+      "mirror_of": "side_angle_left",
+      "w": 429
+    },
+    "side_angle_right__50": {
+      "floor_y": 531.0,
+      "h": 531,
+      "hip_x": 239.8,
+      "mirror_of": "side_angle_left__50",
+      "w": 390
+    },
+    "side_bend_left": {
+      "floor_y": 567.0,
+      "h": 567,
+      "hip_x": 160.0,
+      "w": 212
+    },
+    "side_bend_left__50": {
+      "floor_y": 601.0,
+      "h": 601,
+      "hip_x": 201.8,
+      "w": 274
+    },
+    "side_bend_right": {
+      "floor_y": 567.0,
+      "h": 567,
+      "hip_x": 160.0,
+      "mirror_of": "side_bend_left",
+      "w": 212
+    },
+    "side_bend_right__50": {
+      "floor_y": 601.0,
+      "h": 601,
+      "hip_x": 201.8,
+      "mirror_of": "side_bend_left__50",
+      "w": 274
+    },
+    "star": {
+      "floor_y": 579.0,
+      "h": 579,
+      "hip_x": 208.5,
+      "w": 417
+    },
+    "star__50": {
+      "floor_y": 528.0,
+      "h": 528,
+      "hip_x": 212.5,
+      "w": 425
+    },
+    "tree_heart_left": {
+      "floor_y": 509.0,
+      "h": 509,
+      "hip_x": 68.1,
+      "w": 168
+    },
+    "tree_heart_left__50": {
+      "floor_y": 515.0,
+      "h": 515,
+      "hip_x": 87.2,
+      "w": 183
+    },
+    "tree_heart_right": {
+      "floor_y": 509.0,
+      "h": 509,
+      "hip_x": 68.1,
+      "mirror_of": "tree_heart_left",
+      "w": 168
+    },
+    "tree_heart_right__50": {
+      "floor_y": 515.0,
+      "h": 515,
+      "hip_x": 87.2,
+      "mirror_of": "tree_heart_left__50",
+      "w": 183
+    },
+    "tree_overhead_left": {
+      "floor_y": 617.0,
+      "h": 617,
+      "hip_x": 91.6,
+      "w": 222
+    },
+    "tree_overhead_left__50": {
+      "floor_y": 509.0,
+      "h": 509,
+      "hip_x": 217.5,
+      "w": 435
+    },
+    "tree_overhead_right": {
+      "floor_y": 617.0,
+      "h": 617,
+      "hip_x": 91.6,
+      "mirror_of": "tree_overhead_left",
+      "w": 222
+    },
+    "tree_overhead_right__50": {
+      "floor_y": 509.0,
+      "h": 509,
+      "hip_x": 217.5,
+      "mirror_of": "tree_overhead_left__50",
+      "w": 435
+    },
+    "triangle_left": {
+      "floor_y": 681.0,
+      "h": 681,
+      "hip_x": 254.6,
+      "w": 411
+    },
+    "triangle_left__50": {
+      "floor_y": 541.0,
+      "h": 541,
+      "hip_x": 221.1,
+      "w": 445
+    },
+    "triangle_right": {
+      "floor_y": 681.0,
+      "h": 681,
+      "hip_x": 254.6,
+      "mirror_of": "triangle_left",
+      "w": 411
+    },
+    "triangle_right__50": {
+      "floor_y": 541.0,
+      "h": 541,
+      "hip_x": 221.1,
+      "mirror_of": "triangle_left__50",
+      "w": 445
+    },
+    "upward_salute": {
+      "floor_y": 679.0,
+      "h": 679,
+      "hip_x": 100.0,
+      "w": 200
+    },
+    "upward_salute__50": {
+      "floor_y": 559.0,
+      "h": 559,
+      "hip_x": 240.0,
+      "w": 480
+    },
+    "warrior_one_left": {
+      "floor_y": 529.0,
+      "h": 529,
+      "hip_x": 149.0,
+      "w": 341
+    },
+    "warrior_one_left__50": {
+      "floor_y": 459.0,
+      "h": 459,
+      "hip_x": 217.5,
+      "w": 435
+    },
+    "warrior_one_right": {
+      "floor_y": 529.0,
+      "h": 529,
+      "hip_x": 149.0,
+      "mirror_of": "warrior_one_left",
+      "w": 341
+    },
+    "warrior_one_right__50": {
+      "floor_y": 459.0,
+      "h": 459,
+      "hip_x": 217.5,
+      "mirror_of": "warrior_one_left__50",
+      "w": 435
+    },
+    "warrior_three_left": {
+      "floor_y": 528.0,
+      "h": 540,
+      "hip_x": 161.0,
+      "placement": "floor",
+      "w": 322
+    },
+    "warrior_two_left": {
+      "floor_y": 439.0,
+      "h": 439,
+      "hip_x": 234.0,
+      "w": 468
+    },
+    "warrior_two_left__50": {
+      "floor_y": 462.0,
+      "h": 462,
+      "hip_x": 226.0,
+      "w": 452
+    },
+    "warrior_two_right": {
+      "floor_y": 439.0,
+      "h": 439,
+      "hip_x": 234.0,
+      "mirror_of": "warrior_two_left",
+      "w": 468
+    },
+    "warrior_two_right__50": {
+      "floor_y": 462.0,
+      "h": 462,
+      "hip_x": 226.0,
+      "mirror_of": "warrior_two_left__50",
+      "w": 452
+    },
+    "wide_leg_fold": {
+      "floor_y": 283.0,
+      "h": 283,
+      "hip_x": 159.5,
+      "w": 319
+    },
+    "wide_leg_fold__50": {
+      "floor_y": 320.0,
+      "h": 320,
+      "hip_x": 188.1,
+      "w": 292
+    }
+  },
+  "unit": 160.0
+}

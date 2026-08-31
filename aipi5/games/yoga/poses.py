@@ -29,7 +29,7 @@ care.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 
 from aipi5.games.yoga.rig import bones, pose_metrics
@@ -65,7 +65,9 @@ class Pose:
     #: the ones we built go in the right direction — see `lesson.py`.
     level: int
     family: str
-    table: dict[str, float]
+    #: The bone directions. Empty for a **guided** pose -- one the coach
+    #: demonstrates and nothing measures. See `scored` below.
+    table: dict[str, float] = field(default_factory=dict)
     scales: dict[str, float] = field(default_factory=dict)
     #: "" for a symmetric pose; otherwise the side that is doing the work, so
     #: a lesson can be checked for doing both of them.
@@ -76,13 +78,31 @@ class Pose:
     #: camera reports poorly — a forward fold's spine is pointing at the lens
     #: and its estimated direction is correspondingly vague.
     tolerance_scale: float = 1.0
+    #: Whether the player is marked on this pose.
+    #:
+    #: False for the floor, seated, supine and prone poses the camera cannot
+    #: measure -- and for Chair, which is scored off *by choice*: sitting back
+    #: into a chair is a bend in the sagittal plane, which a frontal table
+    #: cannot describe, and showing a real Chair matters more than marking a
+    #: fake one. A guided pose is taught, cued and demonstrated; it simply has
+    #: no number attached to it.
+    scored: bool = True
     #: Feedback wording this pose wants instead of the generic phrasing, keyed
     #: by metric: (what to say when the player has too little, too much).
     cues: dict[str, tuple[str, str]] = field(default_factory=dict)
 
     @cached_property
     def targets(self) -> dict[str, float]:
-        """What the coach's body measures. The thing the player is compared to."""
+        """What the coach's body measures. The thing the player is compared to.
+
+        A guided pose has nothing to compare against and says so, loudly. The
+        quiet failure -- returning the metrics of an empty table -- would mark
+        every player perfect on every floor pose, which is worse than not
+        marking them at all and would look exactly like the game working.
+        """
+        if not self.scored:
+            raise ValueError(
+                f"{self.id!r} is a guided pose: it is demonstrated, not scored")
         return pose_metrics(self.table, self.scales)
 
     @property
@@ -528,6 +548,43 @@ _POSES: tuple[Pose, ...] = (
 #: checked against this at import, so a typo in a sequence is an ImportError on
 #: the Pi rather than a blank coach fifteen minutes into somebody's practice.
 POSES: dict[str, Pose] = {pose.id: pose for pose in _POSES}
+
+#: The thirty-two poses written out in this file, by hand, with tuned
+#: tolerances -- and the only ones the 2D pipeline ever drew. Kept as its own
+#: name because "has artwork" and "is scored" stopped being the same set: Chair
+#: has a drawing and is guided now, and five standing poses are scored off
+#: tables that were authored for the 3D coach and never drawn.
+AUTHORED: dict[str, Pose] = dict(POSES)
+
+#: The scored library, before the guided poses are folded in. Kept separate
+#: because it is the set every tuned tolerance, mirror rule and scoring test in
+#: this project is written about.
+SCORED: dict[str, Pose] = dict(POSES)
+
+# The other fifty-nine. They come from the curriculum file rather than being
+# written out here, because they carry no numbers anybody tuned -- a name, a
+# sanskrit name, an instruction and a cue -- and because that is the same file
+# the coach is drawn from, so the two cannot name different sets of poses.
+from aipi5.games.yoga import curriculum as _curriculum  # noqa: E402
+
+PROMOTED: dict[str, Pose] = _curriculum.promoted_poses(Pose, set(SCORED))
+POSES.update(PROMOTED)
+SCORED.update(PROMOTED)
+
+GUIDED: dict[str, Pose] = _curriculum.guided_poses(Pose, set(SCORED))
+POSES.update(GUIDED)
+
+# The catalog is the single authority on which poses are scored, including for
+# poses authored above with a full bone table. Chair is the case: it has one,
+# it is accurate, and it is switched off anyway -- a frontal table cannot say
+# "sitting back", so the choice was between a coach standing upright that
+# scores and a coach in a real Chair that does not, and teaching wins.
+for _pose_id, _entry in _curriculum.CATALOG.items():
+    _pose = POSES.get(_pose_id)
+    if _pose is not None and _pose.scored and not _entry["scored"]:
+        POSES[_pose_id] = replace(_pose, scored=False)
+        GUIDED[_pose_id] = POSES[_pose_id]
+        SCORED.pop(_pose_id, None)
 
 
 def get(pose_id: str) -> Pose:

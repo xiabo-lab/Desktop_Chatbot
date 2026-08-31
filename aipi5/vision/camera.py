@@ -321,6 +321,11 @@ class Camera:
         self._last_attempt = 0.0
         #: When the device went away mid-run, or 0. See `_mark_lost`.
         self._lost_since = 0.0
+        #: The most recent still, or None. Held so the screen can show the
+        #: picture the description was made from — `_prune` keeps the last ten
+        #: files on tmpfs, but only this one is the one that was just asked
+        #: about, and the page must not have to guess which by filename.
+        self._last_capture: Capture | None = None
 
         if not cfg.enabled:
             self._error = "disabled in the configuration"
@@ -649,7 +654,25 @@ class Camera:
 
         self._prune()
         log.info("captured %s (%dx%d)", path, width, height)
-        return Capture(path=path, taken_at=time.time(), width=width, height=height)
+        still = Capture(path=path, taken_at=time.time(), width=width, height=height)
+        # Recorded after `_prune`, so what is remembered is a file that
+        # survived it. The screen reads this through `/api/camera/capture` —
+        # the picture the assistant is about to describe belongs beside the
+        # description, and there is nothing else that knows which of the ten
+        # files on tmpfs that is.
+        self._last_capture = still
+        return still
+
+    @property
+    def last_capture(self) -> Capture | None:
+        """The most recent still, or None if nothing has been captured yet.
+
+        Not a copy and not a guarantee that the file is still there: `_prune`
+        keeps ten and a long-running session eventually deletes this one. The
+        reader is `aipi5/ui/server.py`, which answers 404 when the file has
+        gone rather than pretending it has a picture.
+        """
+        return self._last_capture
 
     def frame(self):
         """The current frame as an RGB numpy array, or None.

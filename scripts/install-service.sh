@@ -168,6 +168,16 @@ log "Enabling and starting"
 systemctl --user enable --now aipi5.service
 systemctl --user enable --now aipi5-ui.service
 
+# Queue the user units at machine boot rather than depending entirely on the
+# desktop auto-login to create this user's systemd manager. Both services wait
+# for the Wayland socket themselves, so starting the manager early is safe and
+# removes a fragile extra condition from kiosk startup.
+if sudo -n loginctl enable-linger "$USER" 2>/dev/null; then
+  echo "  user lingering enabled — services are queued from machine boot"
+else
+  warn "could not enable user lingering without sudo; services will start at desktop login"
+fi
+
 sleep 15
 log "Status"
 for unit in "${UNITS[@]}"; do

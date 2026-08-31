@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Yoga v2 animation bench</title>
+<style>
+  html,body{margin:0;background:#0d1014;color:#e6eaed;
+    font:14px/1.5 system-ui,-apple-system,sans-serif;overflow:hidden}
+  #stage{display:block;width:100vw;height:auto;max-height:100vh;background:#000}
+  #hud{position:fixed;top:0;left:0;right:0;padding:8px 12px;
+    background:rgba(8,10,13,.82);font-variant-numeric:tabular-nums;
+    display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+  #hud b{color:#4fbfb8;font-weight:600}
+  #log{position:fixed;bottom:0;left:0;right:0;max-height:34vh;overflow:auto;
+    padding:8px 12px;background:rgba(8,10,13,.9);font:12px/1.45 ui-monospace,monospace;
+    white-space:pre-wrap}
+</style>
+</head>
+<body>
+<canvas id="stage" width="1280" height="800"></canvas>
+<div id="hud"></div>
+<div id="log"></div>
+<script>
+/* Yoga v2 animation bench.
+ *
+ * Plays every packed clip and hold loop at the manifest's own frame rate and
+ * reports what the device actually managed: displayed fps, the spread of frame
+ * intervals, how many frames arrived late, decode time and heap.
+ *
+ * It draws the same way the game will -- field background, then one cropped
+ * frame composited at the offset the packer recorded -- so the number it
+ * produces is the number the game would get, not a synthetic one.
+ */
+const stage = document.getElementById("stage");
+const ctx = stage.getContext("2d", { alpha: false });
+const hud = document.getElementById("hud");
+const logEl = document.getElementById("log");
+const W = 1280, H = 800;
+
+/* The page console cannot be read from another machine, but every GET this
+ * page makes lands in the static server's access log. That is the channel. */
+const report = (line) =>
+  fetch("/__bench/" + encodeURIComponent(line)).catch(() => {});
+const log = (line) => { logEl.textContent += line + "\n";
+                        logEl.scrollTop = logEl.scrollHeight;
+                        console.log("[bench] " + line);
+                        report(line); };
+window.addEventListener("error", (e) =>
+  report("ERROR " + (e.message || "?") + " @" + (e.filename || "") +
+         ":" + (e.lineno || 0)));
+window.addEventListener("unhandledrejection", (e) =>
+  report("REJECT " + String(e.reason)));
+
+const field = new Image();
+let fieldReady = false;
+field.onload = () => { fieldReady = true; };
+field.src = "/assets/yoga/field-forest.webp";
+
+function loadFrames(base, count) {
+  return Promise.all(Array.from({ length: count }, (_, i) => new Promise((ok, bad) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => ok(image);
+    image.onerror = () => bad(new Error(base + i));
+    image.src = `${base}/${String(i).padStart(3, "0")}.webp`;
+  })));
+}
+
+function heapMB() {
+  return performance.memory
+    ? (performance.memory.usedJSHeapSize / 1048576).toFixed(1) : "n/a";
+}
+
+/* One asset, played through `passes` times, measured. */
+async function play(name, base, entry, fps, passes) {
+  const t0 = performance.now();
+  const frames = await loadFrames(base, entry.frames);
+  const loadMs = performance.now() - t0;
+
+  const period = 1000 / fps;
+  const gaps = [];
+  let late = 0, drawn = 0;
+  const started = performance.now();
+  let previous = started;
+
+  await new Promise((done) => {
+    function tick(now) {
+      // requestAnimationFrame hands back the time the *frame* began, which can
+      // be earlier than the performance.now() taken just before scheduling it.
+      // Left alone that makes elapsed negative on the first callback, and JS
+      // gives -1 % 22 === -1, so the lookup misses and the throw stops the
+      // chain -- which is how this stalled silently the first time.
+      const elapsed = Math.max(0, now - started);
+      const wanted = Math.floor(elapsed / period);
+      if (wanted >= entry.frames * passes) { done(); return; }
+      const index = ((wanted % entry.frames) + entry.frames) % entry.frames;
+      const at = entry.at[index];
+
+      if (fieldReady) ctx.drawImage(field, 0, 0, W, H);
+      else { ctx.fillStyle = "#22303a"; ctx.fillRect(0, 0, W, H); }
+      try {
+        ctx.drawImage(frames[index], at.x, at.y, at.w, at.h);
+      } catch (err) {
+        // A throw inside requestAnimationFrame settles nothing and stops the
+        // chain silently, which is exactly how the first run stalled.
+        fetch("/__bench/DRAWFAIL " + encodeURIComponent(
+          name + " frame " + index + " " + JSON.stringify(at) + " " + err)).catch(() => {});
+        done();
+        return;
+      }
+
+      drawn += 1;
+      const gap = now - previous;
+      previous = now;
+      gaps.push(gap);
+      if (gap > period * 1.5) late += 1;
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  });
+
+  const wall = (performance.now() - started) / 1000;
+  gaps.sort((a, b) => a - b);
+  const median = gaps[Math.floor(gaps.length / 2)] || 0;
+  const worst = gaps[gaps.length - 1] || 0;
+  const bytes = entry.frames;
+  log(`${name.padEnd(30)} ${String(entry.frames).padStart(3)}f  ` +
+      `load ${loadMs.toFixed(0).padStart(5)}ms  ` +
+      `drawn ${String(drawn).padStart(4)}  ` +
+      `median gap ${median.toFixed(1).padStart(5)}ms  ` +
+      `worst ${worst.toFixed(0).padStart(4)}ms  ` +
+      `late ${String(late).padStart(3)}  heap ${heapMB()}MB`);
+  return { name, frames: entry.frames, loadMs, median, worst, late, drawn, wall };
+}
+
+(async function main() {
+  const manifest = await fetch("/assets/yoga/v2/manifest.json").then(r => r.json());
+  const fps = manifest.fps || 10;
+  log(`manifest: ${Object.keys(manifest.clips).length} clips, ` +
+      `${Object.keys(manifest.loops).length} loops, target ${fps} fps`);
+  log(`canvas ${W}x${H}  dpr ${devicePixelRatio}  heap at start ${heapMB()}MB`);
+  log("");
+
+  const rows = [];
+  for (const [name, entry] of Object.entries(manifest.clips)) {
+    hud.innerHTML = `<b>clip</b> ${name}`;
+    rows.push(await play("clip " + name, `/assets/yoga/v2/clips/${name}`, entry, fps, 2));
+  }
+  for (const [name, entry] of Object.entries(manifest.loops)) {
+    hud.innerHTML = `<b>loop</b> ${name} &times;8`;
+    // A hold loop has to survive a whole relaxation hold, so it is played
+    // eight times rather than twice -- that is 17.6 s of Savasana.
+    rows.push(await play("loop " + name, `/assets/yoga/v2/loops/${name}`, entry, fps, 8));
+  }
+
+  const totalLate = rows.reduce((a, r) => a + r.late, 0);
+  const totalDrawn = rows.reduce((a, r) => a + r.drawn, 0);
+  const medians = rows.map(r => r.median).sort((a, b) => a - b);
+  log("");
+  log(`TOTAL  drawn ${totalDrawn}  late ${totalLate} ` +
+      `(${(100 * totalLate / totalDrawn).toFixed(1)}%)  ` +
+      `median of medians ${medians[Math.floor(medians.length / 2)].toFixed(1)}ms ` +
+      `(target ${(1000 / fps).toFixed(0)}ms)  heap ${heapMB()}MB`);
+  hud.innerHTML = `<b>done</b> ${totalDrawn} frames drawn, ${totalLate} late`;
+  window.BENCH = rows;
+})();
+</script>
+</body>
+</html>

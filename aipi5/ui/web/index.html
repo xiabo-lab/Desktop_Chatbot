@@ -8,6 +8,7 @@
      for the display rather than reflowed to it. -->
 <meta name="viewport" content="width=1280, height=800, initial-scale=1.0, user-scalable=no">
 <title>小爱同学</title>
+<link rel="stylesheet" href="/assets/calendar/calendar.css?v=20260830-5">
 <style>
   /* 1280 x 800. Sizes below are in px against that panel deliberately — this
      is not a responsive page, it is one screen, and a rem-based scale would
@@ -1785,6 +1786,7 @@
          anybody looking at the device over `ssh -L` — see `fromHash`. -->
     <button data-action="weather"><span class="glyph">🌤</span><span class="label">Weather</span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
+    <button data-page="calendar"><span class="glyph">📅</span><span class="label">Calendar</span></button>
     <button data-action="kodama"><span class="glyph">🎵</span><span class="label">Music</span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
     <!-- Navigation only, like Files and Settings below. Opening the library
@@ -2114,6 +2116,114 @@
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
   </div>
 </div>
+
+<!-- ── calendar ────────────────────────────────────────────────── -->
+<div id="page-calendar" class="page full">
+  <header class="calendar-header">
+    <button class="back" data-back>Back to Home Menu</button>
+    <div class="calendar-nav" aria-label="Calendar navigation">
+      <button id="cal-prev" class="cal-arrow" aria-label="Previous month">‹</button>
+      <div id="cal-month-title" aria-live="polite"></div>
+      <button id="cal-next" class="cal-arrow" aria-label="Next month">›</button>
+    </div>
+    <button id="cal-today" class="cal-back-today">Back to Today</button>
+  </header>
+  <div class="calendar-shell">
+    <main class="calendar-left">
+      <div class="cal-weekdays" aria-hidden="true">
+        <div>Sunday</div><div>Monday</div><div>Tuesday</div><div>Wednesday</div>
+        <div>Thursday</div><div>Friday</div><div>Saturday</div>
+      </div>
+      <div id="cal-grid" role="grid" aria-label="Monthly calendar"></div>
+    </main>
+    <aside class="calendar-panel" aria-label="Holidays and birthdays">
+      <div class="cal-panel-head">
+        <div id="cal-panel-title"></div>
+        <div id="cal-storage-note"></div>
+      </div>
+      <div id="cal-panel-scroll">
+        <div id="cal-selected-detail" class="cal-selected-detail"></div>
+        <section class="cal-section">
+          <h2>美国节日</h2>
+          <div id="cal-us-events"></div>
+        </section>
+        <section class="cal-section">
+          <h2>中国节日</h2>
+          <div id="cal-cn-events"></div>
+        </section>
+        <section class="cal-section">
+          <h2>生日</h2>
+          <div id="cal-birthday-events"></div>
+        </section>
+      </div>
+      <button id="cal-birthday-settings" class="cal-birthday-settings"
+              aria-label="Open birthday settings">⚙ Birthday Settings</button>
+    </aside>
+  </div>
+</div>
+
+<dialog id="birthday-settings-dialog" class="calendar-dialog birthday-settings-dialog">
+  <div class="calendar-birthday-settings">
+    <div class="calendar-settings-head">
+      <h2>Birthday Settings</h2>
+      <button id="birthday-settings-dismiss" class="calendar-dialog-dismiss" type="button"
+              aria-label="Close birthday settings">×</button>
+    </div>
+    <div id="birthday-settings-list" class="birthday-settings-list"></div>
+    <div class="calendar-dialog-actions">
+      <button id="birthday-settings-close" type="button">Close</button>
+      <button id="birthday-settings-add" class="primary" type="button">+ Add Birthday</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="birthday-dialog" class="calendar-dialog">
+  <form id="birthday-form">
+    <h2 id="birthday-dialog-title">Add Birthday</h2>
+    <div class="calendar-form-grid">
+      <label class="wide">Name
+        <input id="birthday-name" maxlength="80" required autocomplete="off">
+      </label>
+      <label>Calendar
+        <select id="birthday-calendar">
+          <option value="solar">Solar / Gregorian</option>
+          <option value="lunar">Chinese Lunar</option>
+        </select>
+      </label>
+      <label>Optional birth year
+        <input id="birthday-year" type="number" min="1800" max="2100" inputmode="numeric">
+      </label>
+      <label>Month
+        <select id="birthday-month"></select>
+      </label>
+      <label>Day
+        <select id="birthday-day"></select>
+      </label>
+      <label id="birthday-leap-wrap" class="calendar-check wide" hidden>
+        <input id="birthday-leap" type="checkbox"> Leap lunar month (闰月)
+      </label>
+      <label class="wide">Optional note
+        <textarea id="birthday-note" maxlength="400"></textarea>
+      </label>
+    </div>
+    <div id="birthday-error" class="calendar-form-error" role="alert"></div>
+    <div class="calendar-dialog-actions">
+      <button id="birthday-cancel" type="button">Cancel</button>
+      <button class="primary" type="submit">Save Birthday</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="birthday-delete-dialog" class="calendar-dialog">
+  <div class="calendar-confirm">
+    <h2>Delete Birthday</h2>
+    <p id="birthday-delete-text"></p>
+    <div class="calendar-dialog-actions">
+      <button id="birthday-delete-cancel" type="button">Cancel</button>
+      <button id="birthday-delete-confirm" class="danger" type="button">Delete</button>
+    </div>
+  </div>
+</dialog>
 
 <!-- ── weather ─────────────────────────────────────────────────── -->
 <div id="page-weather" class="page">
@@ -2466,6 +2576,9 @@
   <div id="sd-hint">Touch anywhere to cancel</div>
 </div>
 
+<script src="/assets/calendar/solarlunar.min.js?v=3.1.0"></script>
+<script src="/assets/calendar/calendar-core.js?v=20260830-1"></script>
+<script src="/assets/calendar/calendar.js?v=20260830-3"></script>
 <script>
 "use strict";
 
@@ -2532,6 +2645,7 @@ function show(page) {
   // handler.
   if (previous === "call") stopCall();
   if (previous === "weather") stopWeather();
+  if (previous === "calendar") stopCalendar();
   // The settings page polls while it is open — a picking session finishing on
   // somebody's phone has to appear here — and must stop the moment it is not,
   // for the same reason the camera preview does.
@@ -2545,6 +2659,7 @@ function show(page) {
   if (page === "camera") startCamera();
   if (page === "call") startCall();
   if (page === "weather") startWeather();
+  if (page === "calendar") startCalendar();
   if (page === "files") loadFiles();
   if (page === "settings") startSettings();
   if (page === "games") startLibrary();

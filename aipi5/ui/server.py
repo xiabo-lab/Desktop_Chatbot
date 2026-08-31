@@ -35,6 +35,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from aipi5.calendar import BirthdayError
 from aipi5.call import signaling as call_signaling
 from aipi5.files import web as files_web
 from aipi5.files.store import FileError
@@ -51,6 +52,7 @@ ASSET_ROOT = PAGE.parent / "assets"
 # replacement crossed-arms gesture comes from the Hailo pose stream. Keep this
 # deliberately small rather than growing a general static server here.
 ASSET_TYPES = {
+    ".css": "text/css; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
     ".mjs": "text/javascript; charset=utf-8",
     ".json": "application/json; charset=utf-8",
@@ -89,6 +91,7 @@ MAX_LIMIT = 500
 # A POST body larger than this is not one of ours. `{"action":"camera"}` is
 # nineteen bytes; the margin is for whitespace and a future field.
 MAX_BODY = 1024
+CALENDAR_MAX_BODY = 4096
 
 # The call routes are the exception: an SDP offer for a video call with the
 # codecs Chromium offers runs to several kilobytes, so they get their own,
@@ -235,6 +238,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._system()
         elif route.path == "/api/weather":
             self._weather(params)
+        elif route.path == "/api/calendar/birthdays":
+            self._calendar_birthdays()
         elif route.path == "/api/news":
             self._news(params)
         elif route.path == "/api/camera/stream":
@@ -307,7 +312,8 @@ class _Handler(BaseHTTPRequestHandler):
                         "/api/photos", "/api/game/open", "/api/game/close",
                         "/api/game/command", "/api/game/debug",
                         "/api/game/settings", "/api/agent/gesture",
-                        "/api/hand/debug", "/api/hand/pause"):
+                        "/api/hand/debug", "/api/hand/pause",
+                        "/api/calendar/birthdays"):
             self._json({"error": "not found"}, 404)
             return
 
@@ -315,7 +321,8 @@ class _Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
-        if length > MAX_BODY:
+        maximum = CALENDAR_MAX_BODY if path == "/api/calendar/birthdays" else MAX_BODY
+        if length > maximum:
             self._json({"error": "too large"}, 413)
             return
 
@@ -338,6 +345,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/api/photos":
             self._photo_post(payload)
+            return
+
+        if path == "/api/calendar/birthdays":
+            self._calendar_birthdays_post(payload)
             return
 
         if path.startswith("/api/game/"):
@@ -487,6 +498,36 @@ class _Handler(BaseHTTPRequestHandler):
                        503)
             return None
         return games
+
+    def _calendar_birthdays(self) -> None:
+        """The reboot-safe birthday list; calendar arithmetic stays in-browser."""
+        store = getattr(self.ui, "birthdays", None)
+        if store is None:
+            self._json({"birthdays": []})
+            return
+        self._json({"birthdays": store.list()})
+
+    def _calendar_birthdays_post(self, payload: dict) -> None:
+        store = getattr(self.ui, "birthdays", None)
+        if store is None:
+            self._json({"ok": False, "error": "birthday storage is unavailable"}, 503)
+            return
+        try:
+            action = str(payload.get("action", "save"))
+            if action == "save":
+                birthday = payload.get("birthday")
+                if not isinstance(birthday, dict):
+                    raise BirthdayError("birthday is required")
+                saved = store.save(birthday)
+                self._json({"ok": True, "birthday": saved,
+                            "birthdays": store.list()})
+            elif action == "delete":
+                store.delete(str(payload.get("id", "")))
+                self._json({"ok": True, "birthdays": store.list()})
+            else:
+                raise BirthdayError("unknown birthday action")
+        except BirthdayError as exc:
+            self._json({"ok": False, "error": str(exc)}, 400)
 
     def _games(self) -> None:
         games = self._game()
@@ -1313,7 +1354,7 @@ class WebUI:
                  weather=None, news=None, camera=None, call=None,
                  on_call_change=lambda: None, countdown=None, files=None,
                  photos=None, screen=None, games=None, on_wake=lambda why: None,
-                 agent=None, hands=None):
+                 agent=None, hands=None, birthdays=None):
         self.cfg = cfg
         self.state = state
         # Called the moment a `wake` arrives, before it is queued for the voice
@@ -1326,6 +1367,7 @@ class WebUI:
         # manager's, which is what keeps the four hardware handoffs in one
         # place rather than spread across HTTP handlers.
         self.games = games
+        self.birthdays = birthdays
         # The agent, or None where it is not installed. The same `AgentProxy`
         # the call server holds — one socket, not two — and this server uses
         # exactly one thing on it: forwarding a hand gesture to the agent's

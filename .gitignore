@@ -42,3 +42,11 @@ call-devices.json
 # backstop; tests/test_photos.py asserts the tree is clean.
 google-photos-client.json
 google-photos-token.json
+
+# The Yoga Coach's raw video frames. `scripts/comfy_video.py` writes 39 frames
+# per pose at 1280x800 — 518 MB across twenty clips — and
+# `scripts/build_yoga_clips.py` reduces them to the 2.8 MB that ships in
+# `aipi5/ui/web/assets/yoga/clips/`. Deploys go over `git archive | ssh`, and
+# these regenerate from the `_first_`/`_last_` endpoint drawings beside them,
+# which are committed.
+artwork/yoga/video/*-chroma/

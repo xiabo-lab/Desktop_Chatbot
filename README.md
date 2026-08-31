@@ -42,6 +42,9 @@ verified on the device:
   strip, seven days, the sun's position through the day, and whether to go
   outside — the last decided by rules rather than by a model, so the page
   renders the instant it opens.
+* **A fully offline family calendar** with Gregorian and Chinese lunar dates,
+  dynamically calculated U.S. and Chinese holidays, recurring solar and lunar
+  birthdays, and reboot-safe local storage.
 
 **Not yet done:** Cantonese has not been spoken to it, and twenty-one of the
 twenty-two Kodama commands are covered by routing tests but have not been said
@@ -268,7 +271,7 @@ with `ssh -L 8092:127.0.0.1:8092 aipi5.local`.
 specification is explicit that the old 1920×440 geometry must not be inherited,
 and AIA's layer-shell strip is not used here.
 
-The main screen is the conversation, a status line, and seven buttons. The
+The main screen is the conversation, a status line, and eight buttons. The
 buttons are why this UI is not read-only the way AIA's is: each posts a name
 from a fixed tuple into a queue and the voice loop decides what it means.
 Nothing in that tuple is destructive — shutting down, restarting and closing the
@@ -360,11 +363,11 @@ reliably. Checked on this device: `/sys/class/backlight/` is empty, there is no
 no software control. The night screen is dark because it is black with dim grey
 type, which is what actually reduces the light in the room.
 
-## The screen: seven pages, six cooldowns
+## The screen: pages and cooldowns
 
 The buttons open **pages, not windows**. This is a Chromium kiosk on a
 compositor with no title bars and no taskbar, so a second window would be a
-page nobody could get back from; the seven destinations are views in one
+page nobody could get back from; the destinations are views in one
 document, exactly one of them visible. It also makes "no duplicate instances"
 a property of the design rather than a rule to enforce — a view is either the
 current one or it is not, and navigating to the current one does nothing.
@@ -399,6 +402,23 @@ right place for a wake word and a microphone gain; what is on the panel is what
 has to be done there, because it needs a phone camera and a Google account. On a
 machine with a keyboard, `#settings` in the URL reaches it directly — which is
 also how it gets tested through an `ssh -L` tunnel.
+
+### Calendar
+
+Calendar sits directly beside Weather and opens a 75/25 month-and-events view.
+Every date is converted locally through the bundled `solarlunar` table; no
+calendar or holiday route uses the network. U.S. moving holidays are rule-based,
+Chinese traditional holidays follow their lunar dates, and 清明节 follows the
+local solar-term calculation. Holiday labels are red and birthday labels are
+green in both the grid and the detail panel.
+
+Birthdays are saved atomically in `~/.config/aipi5/birthdays.json`, beside the
+other persistent touchscreen choices. Lunar birthdays retain lunar month, day
+and leap-month status and are converted again for each displayed year. The
+browser holds one inactivity timeout only while a non-current month is on screen
+and returns to Today after five quiet minutes. A separate one-shot timeout is
+scheduled for the next local midnight. Both are cleared on leaving the page, so
+repeated visits do not accumulate timers or listeners.
 
 ## Call: a phone rings the Pi and it picks up
 

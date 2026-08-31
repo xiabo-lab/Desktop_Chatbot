@@ -67,6 +67,7 @@ from aia.ui.history import ConversationLog
 from aia.ui.retention import Retention
 
 from aipi5 import __version__
+from aipi5.calendar import BirthdayStore
 from aipi5.call.server import CallServer
 from aipi5.agent.pilot import HandPilot
 from aipi5.core import volume as volume_control
@@ -270,6 +271,7 @@ class Assistant:
         volume_control.apply(settings.audio.volume)
         self.files = FileStore(settings.files)
         self.files.start()
+        self.birthdays = BirthdayStore()
         # The agent console, when the agent is installed. This is a socket path
         # and a timeout and nothing else — `aipi5-agent.service` owns the
         # runtime, under a user this process is not, and the assistant holds no
@@ -370,6 +372,7 @@ class Assistant:
                          agent=self.agent,
                          hands=self.hands,
                          games=self.games,
+                         birthdays=self.birthdays,
                          # A touch on the screensaver has to reopen the camera,
                          # and it cannot wait for the voice loop to notice.
                          on_wake=self.wake_screen)
