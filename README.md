@@ -5,8 +5,9 @@ milliseconds **or** a conversation with GPT — plus weather, local news, bedtim
 stories, a camera that can describe the room, local person detection, and a
 1280×800 touchscreen that gives way to a clock when nobody is there.
 
-**Status: deployed and running on `aipi5.local`.** 863 tests pass on the Pi as
-well as off it. Verified on the device: SenseVoice loads, both Piper voices
+**Status: deployed and running on `aipi5.local`.** 1,463 tests pass off the
+device and 1,480 on it — the difference is the hardware-bound ones, which skip
+where there is no camera and no accelerator to bind to. Verified on the device: SenseVoice loads, both Piper voices
 speak, the wake model loads, the OpenAI model answers, live weather and local
 news reach the speaker, Kodama-Lite starts by command and answers over MPRIS,
 and the router matches in 9.7–22.7 ms. The Logitech BRIO 4K opens by name on
@@ -49,6 +50,39 @@ verified on the device:
 **Not yet done:** Cantonese has not been spoken to it, and twenty-one of the
 twenty-two Kodama commands are covered by routing tests but have not been said
 out loud. `REPORT.md` §25 has the full list.
+
+## The screens
+
+The panel is 1280×800, and every destination is a **view in one document**
+rather than a window — on a kiosk with no title bars and no taskbar, a second
+window is a place nobody can get back from. Each of the eight buttons then
+ignores itself for ten seconds, because a finger on a capacitive panel produces
+repeats and every one of these actions takes seconds of real work.
+
+Every image below is a native 1280×800 capture from the running device.
+
+![Home](docs/screenshots/main.png)
+
+**Home** — the eight destinations, the conversation so far above them, and the
+current conditions in the corner. The conversation is the same one the Talk page
+shows; the assistant answers in whichever language it was asked in.
+
+| | |
+|---|---|
+| ![Talk](docs/screenshots/talk.png) | ![Weather](docs/screenshots/weather.png) |
+| **Talk** — the turn-by-turn conversation. *Listen* starts a turn as though the wake word had fired, and *What do you see?* sends a frame to the vision model. English and Mandarin in the same thread, because the language follows the speaker rather than a setting. | **Weather** — current conditions, an hourly strip, seven days, the sun's path through the day, and whether to go outside. That last one is decided by **rules rather than a model**, so the page renders the instant it opens instead of waiting on a request. |
+| ![Calendar](docs/screenshots/calendar.png) | ![Game](docs/screenshots/game.png) |
+| **Calendar** — Gregorian and Chinese lunar dates in the same cell, and **no network at all**: every conversion runs through a bundled table. U.S. moving holidays are rule-based, Chinese ones follow their lunar dates, and 清明节 follows the solar term. Holidays in red, birthdays in green. | **Game** — four AI Motion games played by moving in front of the camera, with the pose estimation running on the AI HAT+ 2. Fruit Ninja, Yoga Coach and Boxing are playable; best scores persist per game. Nothing in the motion layer knows what a fruit is. |
+| ![Music](docs/screenshots/music.png) | ![Files](docs/screenshots/files.png) |
+| **Music** — Kodama-Lite, and the one destination on this list that is a separate application rather than a page. Twenty-odd voice commands reach it over MPRIS, and the assistant's own voice ducks it rather than talking over it. | **Files** — one folder a phone can reach over HTTPS with the same token the call uses. Uploads stream to disk a chunk at a time, so a 220 MB video moves the service's memory by +0.0 MB; downloads go through a ticket so Safari can follow a plain link. |
+| ![Calls](docs/screenshots/call.png) | ![Settings](docs/screenshots/settings.png) |
+| **Calls** — a paired phone rings the Pi and it answers, or the Pi rings the phone through Web Push and waits for a tap. Measured over 5G: `host/udp -> prflx rtt 34ms`, no relay. **Off by default** — it is the one setting here whose failure mode is a camera. | **Settings** — one master volume across the game, the call, the player, the browser and the agent, and the screensaver: its schedule, its source, and what the camera is allowed to do while the screen is asleep. Everything else lives in the YAML. |
+
+*Three of these carry stand-in content rather than what was on the device: the
+conversation, the birthday, and the file name. The originals were somebody's.
+The blurred rectangle on Music is the signed-in account. Nothing else is
+retouched — the weather, the scores, the free space and the lunar dates are
+what the device was showing when the shutter went.*
 
 ## It is AIA with a conversational layer, not a fork of it
 
@@ -826,7 +860,7 @@ well as today's outcome.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests -t .    # 476 tests, no hardware needed
+python -m unittest discover -s tests -t .    # 1,463 tests, no hardware needed
 ```
 
 No microphone, no camera, no accelerator, no network, no API key. That
@@ -861,10 +895,17 @@ stopped being ceilings at all.
 ```
 aipi5/
   core/       aia_bridge (finds AIA), config (YAML), presence, preflight,
+              volume (one level across every application),
               shutdown (the countdown that can be cancelled)
   llm/        the OpenAI client, bounded conversation, tool schemas, prompts
   tools/      weather, news, clock, bedtime stories, advice (the weather rules)
   vision/     camera (one V4L2 handle, shared), description, person detection
+  motion/     the pose stream: one accelerator, seventeen joints, no opinion
+              about what they mean
+  games/      the manager that owns the hardware, then fruit_ninja, yoga, boxing
+  agent/      investigate, plan, act, verify, recover — and the browser it
+              drives, under its own user and its own privileges
+  calendar/   offline lunar/solar conversion and the birthday store
   kodama/     the one command AIA does not have: open the player
   call/       signalling, device tokens, TLS, push, the phone's page
   files/      the transfer folder, a streaming multipart reader, download tickets
@@ -872,10 +913,12 @@ aipi5/
   photos/     Google OAuth, the Picker API, the bounded cache, the sync thread
   ui/         the 1280×800 page, its server, and the shared state
 config/       aipi5.yaml — the settings a person changes
+docs/         the agent guide, and the screenshots at the top of this file
 scripts/      hardware check, model fetch, service install, the kiosk browser
 systemd/      the user units
 tests/        the off-device testable part
 REPORT.md     the engineering report section 38 asks for
+ASSET_LICENSES.md  every bundled pixel, and every reference that is not bundled
 ```
 
 Nothing here duplicates AIA. If you are looking for the wake word, the
