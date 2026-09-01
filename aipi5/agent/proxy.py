@@ -72,6 +72,19 @@ class AgentProxy:
     def say(self, message: dict) -> tuple[int, dict]:
         return self._request("POST", "/agent/v1/say", body=message)
 
+    def open_page(self, url: str, timeout: float | None = None) -> tuple[int, dict]:
+        """Put a page in the agent's browser, without starting a run.
+
+        Its own method rather than a `say` at the call site, because this is
+        the one message the *assistant* originates about a page rather than
+        forwarding on the phone's behalf, and because it wants its own timeout:
+        the helper navigates and then reads the page, which is seconds, and
+        `DEFAULT_TIMEOUT_S` is sized for a long poll instead.
+        """
+        return self._request("POST", "/agent/v1/say",
+                             body={"type": "agent.open", "url": url},
+                             timeout=timeout)
+
     def snapshot(self) -> dict | None:
         """Cheap enough for the four-second idle poll. Never blocks for long."""
         now = time.monotonic()

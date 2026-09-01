@@ -30,7 +30,9 @@ from aia.plugins.kodama import KodamaLite
 from aia.plugins.system import System
 from aia.router.fast import FastRouter, similarity
 
-from aipi5.core.config import GamesConfig, KodamaLaunchConfig, MotionConfig
+from aipi5.browser.launcher import BrowserLauncher
+from aipi5.core.config import (BrowserConfig, GamesConfig, KodamaLaunchConfig,
+                                MotionConfig)
 from aipi5.games import manager as manager_mod
 from aipi5.games.fruit_ninja.game import State
 from aipi5.games.manager import GameManager
@@ -71,7 +73,8 @@ def build_router(manager=None) -> FastRouter:
     """The real router, with the real command declarations, plus this one."""
     launcher = KodamaLauncher(KodamaLaunchConfig(), StubPlayer())
     voice = GameVoice(manager if manager is not None else StubManager())
-    registry = Registry([KodamaLite(), System(), launcher, voice])
+    registry = Registry([KodamaLite(), System(), launcher,
+                         BrowserLauncher(BrowserConfig()), voice])
     return FastRouter(registry, wake_words=CONFIG.wake.variants)
 
 

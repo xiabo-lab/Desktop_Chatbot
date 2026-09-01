@@ -135,6 +135,16 @@ HAND_WIDTH = 480
 #: to read the scores whether or not one can be started.
 CAMERA_ACTIONS = frozenset({"camera", "call"})
 
+#: What the kiosk's agent console may send. Three, and the shape of the list
+#: matters more than its length: it is what the *page* may originate, not what
+#: the runtime understands.
+#:
+#: `agent.gesture` is absent because it has its own route with its own bounds,
+#: and `agent.open` is absent because it is the assistant's message about a
+#: page somebody asked for out loud — a browser opened from a text box would
+#: be a URL bar with a language model in it.
+AGENT_MESSAGES = frozenset({"agent.ask", "agent.stop", "agent.answer"})
+
 PREVIEW_FPS = 6
 
 #: As fast as `/api/camera/stream` may be asked to go. Hand tracking wants
@@ -250,6 +260,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._hand_stream(params)
         elif route.path == "/api/camera/capture":
             self._camera_capture()
+        elif route.path == "/api/agent/poll":
+            self._agent_poll(params)
         elif route.path == "/api/call/poll":
             self._call_poll(params)
         elif route.path == "/api/files":
@@ -314,6 +326,7 @@ class _Handler(BaseHTTPRequestHandler):
                         "/api/photos", "/api/game/open", "/api/game/close",
                         "/api/game/command", "/api/game/debug",
                         "/api/game/settings", "/api/agent/gesture",
+                        "/api/agent/say", "/api/agent/dictate",
                         "/api/hand/debug", "/api/hand/pause",
                         "/api/calendar/birthdays", "/api/volume"):
             self._json({"error": "not found"}, 404)
@@ -363,6 +376,14 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/api/agent/gesture":
             self._gesture_post(payload)
+            return
+
+        if path == "/api/agent/say":
+            self._agent_say(payload)
+            return
+
+        if path == "/api/agent/dictate":
+            self._dictate_post(payload)
             return
 
         if path == "/api/hand/debug":
@@ -614,6 +635,86 @@ class _Handler(BaseHTTPRequestHandler):
              "at": at if isinstance(at, dict) else None})
         self._json(answer if answer else {"ok": False},
                    200 if status == 200 else status)
+
+    # ── the agent console, on the screen as well as on the phone ────
+    #
+    # The console was the phone's alone by decision, not by accident: the
+    # panel has no keyboard, and a chat surface nobody can type into is worse
+    # than no chat surface. Dictation is what changed that — see
+    # `aipi5/ui/dictation.py`.
+    #
+    # These three forward and nothing more, the way `_gesture_post` does. What
+    # a caller may ask the agent for is bounded by the message types the
+    # runtime knows, which is why that list lives there and not here.
+
+    def _agent_poll(self, params: dict) -> None:
+        """Hold a GET until the agent has something to say, or ~20 s passes.
+
+        Long-polled rather than ticked, for the reason the phone's console is:
+        a run posts a dozen events in a few seconds and a timer either shows
+        them late or asks constantly while nothing is happening. The cursor is
+        the whole of the reconnection story — the mailbox lives in
+        `aipi5-agent.service`, which is *not* the service the agent is most
+        often asked to restart, so this page can lose its connection, ask
+        again from the cursor it had, and be handed what it missed.
+        """
+        if self._agent_missing():
+            return
+        try:
+            since = int(params.get("since", ["0"])[0])
+        except (TypeError, ValueError):
+            since = 0
+        status, payload = self.ui.agent.poll(since)
+        self._json(payload if payload else {"error": "the agent is not answering"},
+                   200 if status == 200 else status)
+
+    def _agent_say(self, payload: dict) -> None:
+        """Ask, stop, or answer an approval.
+
+        **Approvals included, which is a decision rather than an oversight.**
+        Anyone who can touch this panel can now approve a settings or a source
+        change. That is consistent with what a touch already means here — the
+        screen reaches the settings page and a shutdown countdown — and the
+        alternative was a run started at the screen that stops halfway until
+        somebody finds a phone.
+
+        The type is passed through rather than reconstructed: the runtime
+        refuses one it does not know, and duplicating that list here would be
+        a second place for it to be wrong.
+        """
+        if self._agent_missing():
+            return
+        kind = str(payload.get("type", ""))
+        if kind not in AGENT_MESSAGES:
+            # Not the runtime's job to explain a message the *page* should
+            # never have sent. `agent.gesture` has its own route with its own
+            # bounds, and `agent.open` is the assistant's, not the page's.
+            self._json({"ok": False, "error": f"unknown message {kind!r}"}, 400)
+            return
+        status, answer = self.ui.agent.say(payload)
+        self._json(answer if answer else {"ok": False},
+                   200 if status == 200 else status)
+
+    def _dictate_post(self, payload: dict) -> None:
+        """Capture one utterance and answer with the words.
+
+        Blocks this HTTP thread for as long as somebody is speaking, which is
+        why the server is threaded and why the microphone is never touched
+        here: the voice loop does the work and fills the answer in. See
+        `aipi5/ui/dictation.py`.
+        """
+        dictation = getattr(self.ui, "dictation", None)
+        if dictation is None:
+            self._json({"ok": False,
+                        "error": "this build cannot listen for text"}, 503)
+            return
+        self._json(dictation.ask().as_dict())
+
+    def _agent_missing(self) -> bool:
+        if self.ui.agent is not None:
+            return False
+        self._json({"error": "the agent is not installed on this device"}, 503)
+        return True
 
     def _game_post(self, path: str, payload: dict) -> None:
         games = self._game()
@@ -958,6 +1059,13 @@ class _Handler(BaseHTTPRequestHandler):
         snapshot = agent.snapshot() if agent is not None else None
         payload["agent_browser"] = bool(snapshot and
                                         (snapshot.get("browser") or {}).get("open"))
+        # Two booleans for the dot on the Agent button: a run still going, and a
+        # question waiting for an answer. Off the same snapshot the line above
+        # reads, so the console being closed costs the agent nothing — and a
+        # question raised while somebody is looking at the weather is visible
+        # from the home screen rather than only on the phone.
+        payload["agent_busy"] = bool(snapshot and snapshot.get("busy"))
+        payload["agent_pending"] = bool(snapshot and snapshot.get("pending"))
         # Which acquisition of the camera the feed is on. The page reconnects
         # its video stream when this changes: a stream opened before the camera
         # was handed back is dead, and the element it is attached to goes on
@@ -1387,7 +1495,8 @@ class WebUI:
                  weather=None, news=None, camera=None, call=None,
                  on_call_change=lambda: None, countdown=None, files=None,
                  photos=None, screen=None, games=None, on_wake=lambda why: None,
-                 agent=None, hands=None, birthdays=None, volume=None):
+                 agent=None, hands=None, birthdays=None, volume=None,
+                 dictation=None):
         self.cfg = cfg
         self.state = state
         # Called the moment a `wake` arrives, before it is queued for the voice
@@ -1402,10 +1511,15 @@ class WebUI:
         self.games = games
         self.birthdays = birthdays
         # The agent, or None where it is not installed. The same `AgentProxy`
-        # the call server holds — one socket, not two — and this server uses
-        # exactly one thing on it: forwarding a hand gesture to the agent's
-        # browser. See `_gesture_post`.
+        # the call server holds — one socket, not two. This server forwards a
+        # hand gesture to the agent's browser (`_gesture_post`) and, since the
+        # console arrived on this screen too, the console's own three messages
+        # (`_agent_say`).
         self.agent = agent
+        # How the console gets text on a panel with no keyboard: the voice
+        # loop captures one utterance and hands back the words. Optional, so a
+        # test can build a server with no microphone anywhere near it.
+        self.dictation = dictation
         # The camera at speed while the agent's browser is up. Held by this
         # server only so `/api/hand/stream` can reach it; what decides whether
         # it runs is `Housekeeping`, once a second.

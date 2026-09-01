@@ -21,6 +21,7 @@ by 0.19 and nothing but a test would have found it.
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from aipi5.core import aia_bridge  # noqa: F401  — puts AIA on sys.path
 
@@ -30,8 +31,10 @@ from aia.plugins.kodama import KodamaLite
 from aia.plugins.system import System
 from aia.router.fast import FastRouter, normalise, similarity
 
-from aipi5.core.config import KodamaLaunchConfig
+from aipi5.browser.launcher import BrowserLauncher
+from aipi5.core.config import BrowserConfig, KodamaLaunchConfig
 from aipi5.games.voice import GameVoice
+from aipi5.kodama import launcher as launcher_mod
 from aipi5.kodama.launcher import KodamaLauncher
 
 
@@ -51,15 +54,17 @@ class StubPlayer(Plugin):
 def build_router() -> FastRouter:
     """The registry the assistant actually builds — see `main.py`.
 
-    `GameVoice` is in here because it is in production, and the whole point of
-    this file is that adding to a fuzzy phrase matcher breaks neighbours. A
-    router assembled from three of the four plugins would pass this suite while
-    the device failed it. Its own phrase measurements are in
-    `tests/test_game_voice.py`; what it must not do to *these* commands is
-    checked below with everything else.
+    `GameVoice` and `BrowserLauncher` are in here because they are in
+    production, and the whole point of this file is that adding to a fuzzy
+    phrase matcher breaks neighbours. A router assembled from four of the five
+    plugins would pass this suite while the device failed it. Their own phrase
+    measurements are in `tests/test_game_voice.py` and `tests/test_browser.py`;
+    what they must not do to *these* commands is checked below with everything
+    else.
     """
     launcher = KodamaLauncher(KodamaLaunchConfig(), StubPlayer())
     registry = Registry([KodamaLite(), System(), launcher,
+                         BrowserLauncher(BrowserConfig()),
                          GameVoice(lambda: None)])
     return FastRouter(registry, wake_words=CONFIG.wake.variants)
 
@@ -189,6 +194,27 @@ class TestTheLaunchCommand(unittest.TestCase):
 
 
 class TestTheLauncherItself(unittest.TestCase):
+    """The launcher, with nothing of the device underneath it.
+
+    **`setUp` patches the launch, and it is in `setUp` on purpose.** Every test
+    in this class that calls `open()` reaches `raise_window`, which runs
+    `/usr/bin/kodama-lite` — and on the Pi that binary exists. Four passing
+    tests here started the music player every time the suite ran on the device,
+    including the run the agent uses as its gate before any source change. That
+    is what "Kodama-Lite opens randomly" was.
+
+    The launcher refuses to run the binary now when no such process exists, so
+    this patch is the second of two locks rather than the only one. It stays
+    because a test that spawns an installed application is wrong even when the
+    application happens to be harmless, and because putting it in `setUp`
+    covers the next test somebody adds here without their having to know any
+    of the above.
+    """
+
+    def setUp(self):
+        patch = mock.patch("aipi5.kodama.launcher.subprocess.Popen")
+        self.popen = patch.start()
+        self.addCleanup(patch.stop)
 
     def test_it_is_available_even_when_the_player_is_not(self):
         # The point of the whole class. AIA's Kodama plugin reports itself
@@ -256,6 +282,51 @@ class TestTheLauncherItself(unittest.TestCase):
         # no sound, so silence is indistinguishable from being ignored.
         self.assertTrue(command.speaks)
         self.assertFalse(command.confirm)
+
+    def test_raising_a_window_does_not_start_a_player(self):
+        """The regression, stated as the property rather than as the incident.
+
+        `raise_window` is safe only because a second launch of the binary hands
+        its argv to the copy already running. With no copy running the same
+        line is a cold start of an app that resumes its last queue and begins
+        playing — so the question "is there such a process" is read from
+        `/proc` and cannot be answered by anything a caller passed in.
+
+        A stub player that says it is running is exactly what made the check
+        that used to be here say yes.
+        """
+        launcher = KodamaLauncher(KodamaLaunchConfig(), StubPlayer())
+        self.assertTrue(launcher.running(), "the stub is meant to lie")
+        with mock.patch("aipi5.kodama.launcher._binary_is_running",
+                        return_value=False):
+            with self.assertLogs("aipi5.kodama.launcher", level="INFO") as caught:
+                self.assertFalse(launcher.raise_window())
+        self.popen.assert_not_called()
+        self.assertTrue(any("would start the player" in line
+                            for line in caught.output), caught.output)
+
+    def test_it_does_raise_a_window_when_there_is_one(self):
+        # The other half: with the process there, the binary is run, because
+        # that is the only way to raise a window in a Wayland session where
+        # wmctrl and xdotool are both X11 clients.
+        launcher = KodamaLauncher(KodamaLaunchConfig(), StubPlayer())
+        with mock.patch("aipi5.kodama.launcher._binary_is_running",
+                        return_value=True):
+            self.assertTrue(launcher.raise_window())
+        self.popen.assert_called_once()
+        argv = self.popen.call_args.args[0]
+        self.assertEqual(argv, [launcher_mod.KODAMA_BINARY])
+
+    def test_the_process_check_reads_proc_and_not_a_command_line(self):
+        """`pgrep -f` matches the shell that ran it and reports a process that
+        is not there — the same trap `pkill -f` sets, which has already cost
+        this project an ssh session. So the check walks `/proc` itself, skips
+        its own pid, and matches argv[0] exactly.
+        """
+        self.assertFalse(launcher_mod._binary_is_running("/usr/bin/definitely-not-here"))
+        # Whatever is running this suite is running *something*, and matching
+        # on a substring rather than on argv[0] is how that becomes a hit.
+        self.assertFalse(launcher_mod._binary_is_running("kodama"))
 
 
 if __name__ == "__main__":

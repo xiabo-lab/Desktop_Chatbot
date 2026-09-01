@@ -3594,3 +3594,309 @@ which the API answers with a 404 and an empty body; and an unquoted
 `description:` in the skill's own frontmatter, which contained a colon-space,
 which YAML reads as a nested mapping — the skill would have failed to load and
 said nothing about why.
+
+### 65. The English voice reading Chinese, and a browser that opens by voice
+
+Reported from the room: the assistant does not answer in Chinese, and where a
+Chinese word appears it says the words "Chinese letter" once per character.
+Both halves came out of one turn in the journal.
+
+```
+07:29:17 aia.stt.sensevoice   stt <Transcript zh/yue 195ms '打开 youtu 。'>
+07:29:20 aipi5                llm 2135 ms: '我不能打开其他应用。请按屏幕上的 Music 按钮…'
+07:29:23 aia.tts.piper        tts[en] 3244 ms to audio: '我不能打开其他应用。…'
+```
+
+Three things are visible there. The recogniser heard Cantonese and was right.
+The model answered in Chinese and was right. And the reply was then read by the
+**English** voice, which is the fault.
+
+**Why the wrong voice.** `reply_language` asked `detect_script`, which counts
+characters: `打开 youtu 。` is two Han against five Latin, so it said English —
+over a recogniser that had listened to the audio and said `yue`. The counting
+is not fair inside one sentence, because one Han character is a word and one
+Latin character is a letter, and no threshold repairs it: "Play 周杰伦" is the
+same shape with the languages the other way round and the opposite right
+answer. So the counting is now *declined* rather than tuned. `mixed_script` in
+`aia/stt/base.py` reports a code-switched transcript, and `reply_language`
+hands those straight back to the recogniser's verdict; `detect_script` still
+decides where the text is all Han or all Latin, which is the case the function
+was written for — a confirmation that named the language of its question and
+got an answer in the other one.
+
+**Why it sounded like that.** espeak-ng has no pronunciation for an ideograph
+and names it instead. Measured on the device, the same text through both
+voices:
+
+| text | en_US-lessac | zh_CN-huayan |
+|---|---|---|
+| 请按屏幕上的 Music 按钮 | 5.97 s | 2.34 s |
+| Playing 周杰伦 | 2.72 s | 1.34 s |
+| Opening YouTube. | 1.31 s | 1.34 s |
+| a whole English sentence | 4.18 s | 3.25 s |
+
+The first two rows are the babble. The last two are the reason the fix is
+asymmetric: the Mandarin voice reads Latin as words, so it is safe to give it
+anything, while the English voice cannot be given Han at all. `Speaker.say` now
+plans an utterance by script — Han runs to the Chinese voice, everything else
+to the voice that was asked for — and concatenates. A Chinese reply plans to a
+single segment and is still one synthesis at one voice's prosody; only an
+English reply carrying Han is split, which is exactly where splitting is worth
+its ~250 ms. The log line reports the voices used rather than the language
+requested, `tts[en+zh]`, because `tts[en]` on a Chinese reply is how this was
+found and the next one should be as easy to see.
+
+After, on the device:
+
+```
+tts[zh]    '我不能打开其他应用。请按屏幕上的 Music 按钮。'   4.54 s of audio
+tts[en+zh] 'Playing 周杰伦'                              1.71 s of audio
+tts[en]    'Opening YouTube.'
+tts[zh]    '正在打开 YouTube。'
+```
+
+**And the thing that was actually being asked for.** The turn above was
+somebody saying "open YouTube", and the honest part of the model's refusal was
+that it could not. `aipi5/browser/launcher.py` adds it as a spoken command —
+not a tool. `aipi5/llm/tools.py` already argues that starting an application in
+somebody's living room has to be a person deciding rather than a model
+inferring, which is why there is no `open_kodama` tool; a browser is the same
+kind of act, so it is declared the same way and the model is told to tell
+people what to say instead of refusing flatly.
+
+Four decisions:
+
+**No `{site}` slot.** One command per entry in a table in source. A slot would
+put the address bar behind a mis-heard word.
+
+**A decorated window.** Not `--app`, not `--start-fullscreen`. The agent's
+browser carries the scar in its own docstring — the owner opened YouTube, met
+a consent wall, and had nothing to press — and this project has built a window
+with no way out of it twice. 1280×770 at 0,0 so the title bar fits on an 800 px
+panel.
+
+**Its own profile.** Sharing `~/.cache/aipi5-ui` would not open a second
+window: Chromium hands the command line to the instance already running, which
+would have put YouTube in a tab *inside the kiosk*, over the assistant's face,
+with no tab strip to get back from. That same forwarding is how the window is
+raised on a second ask, and what it does is open a tab — verified, and the
+reply says so rather than claiming only to have raised something.
+
+**Phrases measured, not chosen.** The transcript to plan for is the one the
+device produced: `打开 youtu 。`, the recogniser not reaching the end of an
+English word inside a Mandarin sentence. Folded to pinyin that is `dakaiyoutu`
+against the phrase's `dakaiyoutube` — 0.91, over a 0.78 floor — and 打开优兔
+and 打开有兔 score the same, because sound is what is compared. 打开油管 is a
+phrase of its own rather than a near-miss: `dakaiyouguan` scores 0.75, under
+the floor. Measured against every phrase of every other command, the nearest
+neighbour either of them has is the launcher sitting beside them — 打开YouTube
+against 打开音乐 at 0.70, and 打开油管 against 打开播放器 at 0.64. Eight and
+fourteen hundredths of headroom, pinned in `tests/test_browser.py` rather than
+asserted here, because this project has had a phrase comment quote a score that
+was wrong by 0.19 and nothing but a test found it. The music player keeps every
+phrase it had.
+
+### 66. One browser: the voice command, the phone, and the hand
+
+Reported the same day §65 shipped: "open YouTube" opened YouTube, and the hand
+tracker did not come on. The window was there, the page loaded, a finger
+worked — and waving at it did nothing.
+
+**Hand control is not a property of a window. It is a property of a pipe.**
+`aipi5/agent/pilot.py` reads wrists off the accelerator and posts gestures to
+the agent runtime, which calls the root helper, which drives Chromium over a
+CDP pipe *the helper holds*. `Housekeeping._agent_hands` only lends the camera
+to the pilot at all while the agent's `browser_state` says a page is open. A
+Chromium started by `subprocess.Popen` from the assistant satisfies none of
+that: nothing holds a pipe to it, so it is invisible to the pilot, to the
+camera hand-off, and to the kiosk's own "a hand is driving" notice.
+
+So the launcher no longer starts a browser when there is an agent to ask. It
+sends the URL to `AgentProxy.open_page` → `agent.open` → `AgentService.
+open_page` → the helper's `browser_open` — the same operation the phone's agent
+calls, into the same window. One browser: the one asked for out loud, the one
+the phone drives, and the one a hand drives.
+
+Four things that made this more than a redirect:
+
+**It is not an `agent.ask`.** A run would put a language model between "open
+YouTube" and a URL that was chosen in this repository's source. `open_page`
+takes no model, no approval and no run — it is a sibling of `gesture()`, which
+is the other message the *assistant* originates rather than forwards. The
+boundary is unchanged and checked: `open_page` names `browser_open` as a
+literal, and the address still goes through the helper's `_check_url`, which
+refuses `file:`, `javascript:`, localhost and RFC1918 whoever is asking.
+
+**It had to stop blocking the turn.** Measured on the device, `browser_open` is
+**5.3 s cold and 3.0 s warm** — most of it the 2.5 s settle and the
+accessibility-tree read that exist so a *model* can read the page, and which a
+spoken command has no use for. The voice loop's whole budget is 2.5 s. So the
+hand-off goes on a thread and the sentence is spoken at once: measured 0.00 s
+to the reply against 3.35 s to the page, with the window appearing about a
+second in. "Opening YouTube." is a statement about what is starting.
+
+**A failure after the reply has nowhere to go**, so it goes three places: the
+journal at ERROR with the reason in it, `last_error` on the settings page, and
+a fallback to a browser of our own rather than leaving somebody who asked for
+YouTube with nothing. The fallback is the worse window on purpose-built terms —
+no hand, no ad blocking — so taking it is logged as a warning that says which
+two things will not work, instead of leaving it to be discovered by waving.
+
+**The four-second cache had to be dropped, not waited out.** Hand control
+follows `browser.open` in the agent's snapshot, and `_browser_state` caches it
+for four seconds so a 1 Hz poll is not a socket round trip forever. Four
+seconds of a hand that does nothing is exactly the interval in which somebody
+decides the feature is broken, so `open_page` clears it.
+
+Verified on the device, closing the browser and opening it again through the
+launcher:
+
+```
+browser closed            agent_browser=False  hand_control=False
+"a spoken command asked for YouTube; handing it to the agent's browser"
+reply spoken              0.00 s
+page landed               3.35 s
+"YouTube is open in the agent's browser ('YouTube'); a hand can drive it"
+three seconds later       agent_browser=True   hand_control=True
+```
+
+and in the journal beneath it: `camera lent to hand control`, `capturing
+640x480 MJPG at 120.0 fps`, `hand control running on the accelerator`,
+`[screensaver] held off by hand control`. A screenshot of the panel shows the
+kiosk's own strip under the window reading "Hand control has the camera —
+pictures, calls and games come back when the browser closes", and the browser's
+status bar showing a link URL under a pointer nobody touched.
+
+**The bug this produced, and it was in the test.** `FakeHelper` took its
+canned answer as `answer or <a success>`. `OpResult.__bool__` is its `ok` flag,
+so a *refusal* handed to the fixture is falsey and was silently replaced by a
+success — the test for "a refused URL is reported" was asserting on an open
+page. Found because the refusal's log line never fired. `is None`, not `or`,
+for any object that defines truthiness.
+
+### 67. Kodama-Lite opening on its own, and it was the test suite
+
+Reported again, and the previous fix was still in place: no `open_kodama`
+tool, the launcher reached only by the Music button or by asking out loud, and
+every launch logging who asked for it. The unit was `disabled` and `inactive`
+and its journal was empty. And a `kodama-lite` process was running, twenty-two
+minutes old, reparented to init.
+
+**Started as a bare process, outside systemd**, which is only one line in this
+project: `raise_window`, which runs `/usr/bin/kodama-lite` directly. Its
+docstring explains at length why that is safe — Kodama-Lite is built with
+`tauri-plugin-single-instance`, so a second launch hands its argv to the copy
+already running and exits — and every word of it is true *while the player is
+running*. With nothing to forward to, the same line is a cold start of an app
+that resumes its previous queue and begins playing into the room.
+
+`open()` did guard it. The guard asked the `player` object it was handed, and
+
+```python
+class StubPlayer(Plugin):        # tests/test_routing.py
+    def available(self) -> bool:
+        return True
+```
+
+is a test fixture that says the player is running. Four tests in
+`TestTheLauncherItself` call `open()` on a launcher built with it, so four
+passing tests started the music player — every time the suite ran on the Pi.
+Including the run the *agent* makes: `_suite_passes()` is the gate before any
+source change, so asking the agent to fix a typo started the music. That is
+the "randomly".
+
+Reproduced to be sure, with nothing else running:
+
+```
+$ ps -eo pid,cmd | grep -c "[k]odama-lite"
+0
+$ .venv/bin/python -m unittest tests.test_routing.TestTheLauncherItself\
+      .test_already_open_is_not_a_restart
+Ran 1 test in 0.005s — OK
+$ ps -eo etime,cmd | grep "[k]odama-lite"
+      00:04 /usr/bin/kodama-lite
+```
+
+**The fix is to stop asking an object.** `_binary_is_running` reads `/proc`
+and matches argv[0] exactly, and `raise_window` returns without launching
+anything when it finds nothing. A stub can report whatever it likes about the
+session bus; it cannot invent a process. Not `pgrep -f`, which matches the
+command line of the shell that ran it — the same trap `pkill -f` sets, and one
+this project has already lost an ssh session to. On Windows there is no
+`/proc`, so it returns False and the laptop and the Pi take the same branch
+instead of one of them starting a music player.
+
+Second lock, in the tests: `setUp` patches `subprocess.Popen` for the whole
+class, so the next test somebody adds there is covered without their having to
+know any of this. Verified after: the full suite on the device, before and
+after, with no Kodama process either side.
+
+### 68. The agent console on the touchscreen
+
+Asked for, after the browser work: the console had been the phone's alone
+(`aipi5/call/web/phone.html`), and that was a decision rather than an accident
+— a chat surface on a panel with no keyboard is a chat surface nobody can use.
+
+**What changed the decision is dictation.** `squeekboard` is installed and
+running on this device, but a page that autofocuses a text field raised
+nothing — measured, on the compositor and the Chromium this device actually
+has — and even if it had, there is no pinyin IME on it, so half of what gets
+said in this house could not have been typed. The device has a bilingual
+recogniser three feet from the person's face, so the microphone button is the
+input and the box is what you correct by saying it again.
+
+`aipi5/ui/dictation.py` is a rendezvous, not a queue, and that is the whole
+design. `UiState` is a queue because a button press is fire-and-forget; this
+has an answer only the caller wants. It waits **without touching the
+microphone**: ALSA allows one open, a second reader is not a race but an
+assistant that stops hearing, so the HTTP thread leaves a request, the voice
+loop notices it on the next frame, and fills the answer in. Both sides can
+give up alone — a request carries a deadline, the caller clears its own slot,
+and the loop refuses one that has already expired rather than taking the
+microphone to answer nobody.
+
+`dictate()` in `main.py` is a turn's first half and none of its second: no
+router, no model, nothing spoken. Routing it would mean the assistant
+answering a question that was put to the agent.
+
+Three things this turned up:
+
+**It runs before the wake detector is fed.** The capture eats the frames the
+detector would have read, and a detector part-way through a phrase then acts
+on the half it kept — the same reason the call branch skips `detect` rather
+than discarding its answer.
+
+**No `begin_turn`.** The elapsed time here is somebody talking, which is not
+latency and is not bounded by anything this code does. Measured before it was
+taken out: a capture with nobody speaking logged `turn 4201ms to audio [OVER
+by 1701ms]`. A journal full of verdicts that mean nothing is a journal people
+stop reading, which is the failure `Turn.judged_ms` exists to prevent. Two
+honest numbers are logged instead — how long somebody spoke, and how long the
+recogniser took.
+
+**`hidden` loses to `display: flex`, silently.** The attribute's `display:
+none` is a user-agent rule and this page's own `button { display: flex }`
+beats it, so Stop sat in the header of a console with nothing running. Found
+by screenshotting the panel rather than by reading the page. One line —
+`button[hidden] { display: none; }` — and every hidden button on this page,
+now and later, depends on it.
+
+**Approvals are answerable here**, which is a decision and not an oversight:
+anyone who can touch the panel can now approve a settings or a source change.
+It is consistent with what a touch already means on this screen, which reaches
+the settings page and a shutdown countdown, and the alternative was a run
+started at the screen that stops halfway until somebody finds a phone.
+
+What the page may send is three messages — `agent.ask`, `agent.stop`,
+`agent.answer` — checked against a frozenset in `aipi5/ui/server.py`.
+`agent.gesture` is absent because it has its own route with its own bounds,
+and `agent.open` because it is the *assistant's* message about a page somebody
+asked for out loud; reachable from a text box it would be a URL bar with a
+language model in it.
+
+Verified on the panel: nine buttons still fit the home row, the console drew
+the real transcript out of the agent's mailbox (three runs, their tool calls
+and their `2 steps · 1 checks · 5s` summaries), and `POST
+/api/agent/dictate` came back in 4.1 s with "I didn't catch that." after
+nobody spoke, logging `dictation: no speech in the capture window (4056 ms)`
+and no budget verdict.

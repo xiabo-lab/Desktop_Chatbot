@@ -28,6 +28,7 @@ import logging
 import os
 import subprocess
 import time
+from pathlib import Path
 
 from aipi5.core import aia_bridge  # noqa: F401  — puts AIA on sys.path
 
@@ -43,6 +44,39 @@ POLL_INTERVAL_S = 0.5
 # Used only to raise an already-running window — never to start the player.
 # See `raise_window` for why running the binary is safe there and nowhere else.
 KODAMA_BINARY = "/usr/bin/kodama-lite"
+
+
+def _binary_is_running(binary: str = KODAMA_BINARY) -> bool:
+    """Is there a process of that binary on this machine right now?
+
+    Read out of `/proc` rather than asked of anything that was passed in, and
+    that is the entire point: this is the one fact `raise_window` must not be
+    able to be lied to about. See its docstring for what a lie cost.
+
+    Not `pgrep -f`, which matches the command line of the shell running it and
+    reports a process that is not there — the same trap `pkill -f` sets, and
+    one this project has already been bitten by. Matching argv[0] exactly
+    avoids it, and skipping our own pid makes it moot either way.
+
+    Returns False where there is no `/proc` at all, which is Windows, which is
+    where the tests run — so a test on the laptop and a test on the Pi take
+    the same branch instead of one of them starting a music player.
+    """
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return False
+    me = os.getpid()
+    for entry in proc.iterdir():
+        if not entry.name.isdigit() or int(entry.name) == me:
+            continue
+        try:
+            argv = (entry / "cmdline").read_bytes().split(b"\0")
+        except OSError:
+            # It exited between the listing and the read. Normal.
+            continue
+        if argv and argv[0].decode("utf-8", "replace") == binary:
+            return True
+    return False
 
 
 class KodamaLauncher(Plugin):
@@ -130,7 +164,32 @@ class KodamaLauncher(Plugin):
         button press waiting for it, so it is not waited on — which is also
         why the return value is "the request was made", not "the window is
         now in front". Nothing can honestly report the latter here.
+
+        **The guard below is the whole safety of the paragraph above, and it
+        is here rather than at the call site because the call site was where it
+        used to be.** Everything said above is true *while the player is
+        running* and is false otherwise: with nothing to forward argv to, this
+        line is a cold start of an app that resumes its previous queue and
+        begins playing into the room. `open()` did check, using the `player`
+        object it was handed — and on 2026-09-01 four passing unit tests
+        constructed a `KodamaLauncher` with a stub player that reported itself
+        running, which made the check say yes and started the music player on
+        the device. Every run of the suite on the Pi did it, including the one
+        the agent runs as its gate before any source change, which is what
+        "Kodama-Lite opens randomly" turned out to be.
+
+        So the fact is read from `/proc` instead of from anything passed in.
+        A stub can report whatever it likes about the session bus; it cannot
+        invent a process. See `_binary_is_running`.
         """
+        if not _binary_is_running():
+            # Not an error. The player closed, or this is a test, or a machine
+            # with no Kodama at all — and in every one of those cases the right
+            # thing is to raise no window rather than to start one.
+            log.info("not asking %s to raise a window: no such process is "
+                     "running, so this would start the player", KODAMA_BINARY)
+            return False
+
         try:
             subprocess.Popen(
                 [KODAMA_BINARY],

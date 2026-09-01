@@ -5,8 +5,8 @@ milliseconds **or** a conversation with GPT — plus weather, local news, bedtim
 stories, a camera that can describe the room, local person detection, and a
 1280×800 touchscreen that gives way to a clock when nobody is there.
 
-**Status: deployed and running on `aipi5.local`.** 1,463 tests pass off the
-device and 1,480 on it — the difference is the hardware-bound ones, which skip
+**Status: deployed and running on `aipi5.local`.** 1,511 tests pass off the
+device and 1,526 on it — the difference is the hardware-bound ones, which skip
 where there is no camera and no accelerator to bind to. Verified on the device: SenseVoice loads, both Piper voices
 speak, the wake model loads, the OpenAI model answers, live weather and local
 news reach the speaker, Kodama-Lite starts by command and answers over MPRIS,
@@ -55,7 +55,7 @@ out loud. `REPORT.md` §25 has the full list.
 
 The panel is 1280×800, and every destination is a **view in one document**
 rather than a window — on a kiosk with no title bars and no taskbar, a second
-window is a place nobody can get back from. Each of the eight buttons then
+window is a place nobody can get back from. Each of the nine buttons then
 ignores itself for ten seconds, because a finger on a capacitive panel produces
 repeats and every one of these actions takes seconds of real work.
 
@@ -154,6 +154,7 @@ Plus:
 | say | what happens |
 |---|---|
 | "open the music player" / "打开音乐播放器" | starts Kodama-Lite through its systemd unit and waits for it to reach the bus |
+| "open YouTube" / "打开YouTube" / "打开油管" | opens YouTube in the agent's browser — the same window the phone drives, so a hand drives it too |
 | "what's the weather" | live Open-Meteo for San Jose 95127, cached ten minutes |
 | "what's the local news" | San Jose / Santa Clara feeds, interleaved and de-duplicated, summarised to 3–5 stories |
 | "what time is it" | the device's clock — never the model's guess |
@@ -171,6 +172,7 @@ Plus:
 | **Weather** | the dashboard: now, hourly, seven days, sun, and whether to go out | the sky, the range, and at most one thing worth acting on |
 | **Music** | Kodama-Lite itself | whether it opened |
 | **Files** | the transfer folder, to send and fetch | nothing — it is a folder, not a turn |
+| **Agent** | the agent console — ask it about this device, watch it check, approve what it wants to change | nothing — it answers in writing. The microphone button dictates into it, because the panel has no keyboard |
 | **Settings** | the screensaver: the schedule, the Google account, which photos, how long each stays up | nothing — it configures, it does not ask |
 
 The news **page** was removed: it duplicated on a screen what the assistant
@@ -860,7 +862,7 @@ well as today's outcome.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests -t .    # 1,463 tests, no hardware needed
+python -m unittest discover -s tests -t .    # 1,511 tests, no hardware needed
 ```
 
 No microphone, no camera, no accelerator, no network, no API key. That

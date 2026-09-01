@@ -75,6 +75,7 @@ from aipi5.agent.proxy import AgentProxy
 from aipi5.call.signaling import SignalingHub
 from aipi5.call.tokens import TrustedDevices
 from aipi5.core import config as config_mod
+from aipi5.browser.launcher import BrowserLauncher
 from aipi5.core import earcon
 from aipi5.core import preflight
 from aipi5.core.audio_priority import AudioPriority
@@ -97,6 +98,7 @@ from aipi5.tools.news import NewsService
 from aipi5.tools.story import instructions as story_instructions
 from aipi5.tools.story import parse as parse_story
 from aipi5.tools.weather import WeatherService
+from aipi5.ui.dictation import Dictation, Heard
 from aipi5.ui.server import WebUI
 from aipi5.ui.state import UiState
 from aipi5.vision.camera import Camera
@@ -178,6 +180,11 @@ class Assistant:
         self.settings = settings
         self.aia = settings.aia_config()
         self.ui_state = UiState()
+        # Words for the agent console, which is on a panel with no keyboard.
+        # A rendezvous rather than a queue because it has an answer, and it
+        # sits beside `ui_state` because it is filled by the same loop for the
+        # same reason: there is exactly one reader of the microphone.
+        self.dictation = Dictation()
         # The visible delay in front of powering off. Owned here rather than by
         # the web server because the voice loop is what starts it and the
         # screen only answers it.
@@ -210,9 +217,23 @@ class Assistant:
         # ── the command set: AIA's, plus a launcher and the games ────
         self.player = KodamaLite()
         self.launcher = KodamaLauncher(settings.kodama, self.player)
+        # Opening a website is a spoken command and not a tool, for the reason
+        # `open_kodama` is: starting an application in somebody's living room
+        # has to be a person deciding. See `aipi5/browser/launcher.py`.
+        #
+        # **The agent is handed over late-bound**, because the proxy is built
+        # thirty lines below and the command set has to exist before the
+        # toolbox that reads it — the same reason `GameVoice` is given a
+        # `lambda` here. It matters more than tidiness: without a proxy the
+        # launcher starts a Chromium of its own, which is a window no hand can
+        # drive, and that failure is silent from the room.
+        self.browser = BrowserLauncher(
+            settings.browser, agent=lambda: getattr(self, "agent", None))
         plugins = [self.player, System()]
         if settings.kodama.enabled:
             plugins.append(self.launcher)
+        if settings.browser.enabled:
+            plugins.append(self.browser)
         if settings.games.enabled:
             # `lambda: self.games` rather than the manager itself, because the
             # manager needs a camera, a ducker and a screensaver manager and
@@ -376,6 +397,7 @@ class Assistant:
                          photos=self.photos, screen=self.screen,
                          volume=self.volume,
                          agent=self.agent,
+                         dictation=self.dictation,
                          hands=self.hands,
                          games=self.games,
                          birthdays=self.birthdays,
@@ -837,6 +859,7 @@ class Assistant:
             "conversation": self.conversation.describe(),
             "kodama": {"running": self.player.available(),
                        "service": self.settings.kodama.service},
+            "browser": self.browser.describe(),
             "call": self.call.describe(),
             "files": self.files.describe(),
             # None when the agent is not installed, which the settings page
@@ -1129,6 +1152,17 @@ def main() -> int:
                     assistant.detector_wake.reset()
                     mic.drain()
 
+                # Words for the agent console, and nothing else.
+                #
+                # Before the wake detector is fed rather than after, because
+                # the capture below eats the frames it would have been reading
+                # and a detector part-way through a phrase then acts on the
+                # half it kept. The same reason the call branch skips `detect`
+                # instead of discarding its answer.
+                if assistant.dictation.waiting():
+                    dictate(assistant, mic, frames)
+                    continue
+
                 woke = assistant.detector_wake.detect(frame)
 
                 if not woke and requested is None:
@@ -1400,6 +1434,82 @@ def confirm_and_run(assistant, mic, frames, intent, language):
     # Silence, "no", or anything unclear all cancel. For an irreversible
     # action "I could not tell" must mean no.
     return ("Cancelled." if language == "en" else "已取消。"), True, None
+
+
+def dictate(assistant, mic, frames) -> None:
+    """Capture one utterance for the agent console and hand back the words.
+
+    A turn's first half and none of its second. The router is not asked, the
+    model is not asked, and nothing is spoken — the person is dictating into a
+    box addressed to the agent. Answering here would mean the assistant
+    replying to a question that was not put to it.
+
+    Runs on the voice loop's thread, which is the only thread allowed near the
+    microphone. The HTTP request that asked for this is asleep in
+    `Dictation.ask` and wakes when the answer is filled in.
+
+    The chime plays, and that is not decoration: between pressing the button
+    and the words appearing there is nothing to see, and this device has
+    already learned once that silence is indistinguishable from being ignored.
+
+    **No `begin_turn`, deliberately.** A turn is judged against a 2500 ms
+    budget, and the elapsed time here is somebody talking — which is not
+    latency, and is not bounded by anything this code does. Measured on the
+    device before this was taken out: a capture with nobody speaking logged
+    `turn 4201ms to audio [OVER by 1701ms]`, and a real sentence would have
+    been worse. That line teaches people to stop reading the journal, which is
+    the failure `Turn.judged_ms` exists to prevent. The two numbers that are
+    worth having are logged below instead, and neither is a verdict.
+    """
+    request = assistant.dictation.take()
+    if request is None:
+        return
+
+    assistant.machine.to(State.LISTENING)
+    if assistant.settings.assistant.wake_chime:
+        earcon.play()
+
+    # The same reason the voice path does it: the microphone and the speaker
+    # share a room, so a sentence dictated over music is captured as the
+    # sentence plus the song.
+    assistant.audio.acquire()
+    if assistant.audio.ducked:
+        mic.drain()
+    assistant.publish(listening_text=LISTENING_TEXT.get(
+        assistant.aia.stt.default_language, LISTENING_TEXT["en"]))
+
+    heard = Heard(error="I didn't catch that.")
+    started = time.monotonic()
+    try:
+        audio = assistant.endpointer.collect(frames)
+        spoke_ms = (time.monotonic() - started) * 1000
+        if audio is not None:
+            result = assistant.stt.listen(audio)
+            text = result.text.strip()
+            if text:
+                heard = Heard(ok=True, text=text, language=result.language)
+                log.info("dictation: %r (%s) — %.0f ms of speech, %.0f ms to "
+                         "transcribe", text, result.language, spoke_ms, result.ms)
+            else:
+                log.info("dictation: nothing was said in %.0f ms", spoke_ms)
+        else:
+            log.info("dictation: no speech in the capture window (%.0f ms)",
+                     spoke_ms)
+    except Exception:
+        # Never leave the caller waiting out its deadline for a failure that
+        # has already happened and is already in the journal.
+        log.exception("dictation failed")
+        heard = Heard(error="Something went wrong while listening.")
+    finally:
+        request.answer(heard)
+        assistant.audio.release()
+        # The detector has been starved for the length of the utterance and
+        # the buffer holds all of it. Both have to go, or the first thing the
+        # assistant does afterwards is act on a fragment of what was dictated.
+        assistant.detector_wake.reset()
+        mic.drain()
+        assistant.machine.to(State.IDLE)
+        assistant.publish(listening_text="")
 
 
 def handle_button(assistant, action: str, language: str, turn=None) -> None:

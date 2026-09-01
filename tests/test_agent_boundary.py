@@ -30,6 +30,8 @@ if str(HELPER) not in sys.path:
 
 import ops        # noqa: E402
 from aipi5.agent.tools import AgentToolBox  # noqa: E402
+from aipi5.browser.launcher import SITES, BrowserLauncher  # noqa: E402
+from aipi5.core.config import BrowserConfig  # noqa: E402
 from aipi5.llm.tools import ToolBox  # noqa: E402
 
 STDLIB = set(sys.stdlib_module_names)
@@ -328,6 +330,69 @@ class TestTheTablesAreDisjoint(unittest.TestCase):
                 answer = box.call(name, "{}")
                 self.assertIn("error", answer,
                               f"{name} must not be callable from the assistant")
+
+
+class TestTheAssistantsOwnRouteToTheBrowser(unittest.TestCase):
+    """`agent.open` — the assistant asking for a page, not the model.
+
+    Added so a spoken "open YouTube" lands in the browser a hand can drive
+    rather than in a Chromium the helper knows nothing about. It is a new way
+    into the helper from outside the agent, so it is worth being explicit about
+    what it does and does not widen.
+    """
+
+    def test_it_reaches_exactly_one_operation(self):
+        """Named in source and read from source.
+
+        The runtime holds a `HelperClient` that can call anything the helper
+        offers, so what bounds this is that `open_page` names one operation as
+        a literal. A parameter here would make the assistant's message the
+        thing that chooses.
+        """
+        source = (Path(__file__).resolve().parent.parent
+                  / "aipi5" / "agent" / "runtime.py").read_text(encoding="utf-8")
+        body = source[source.index("def open_page"):source.index("def gesture")]
+        self.assertIn('helper.call("browser_open"', body)
+        for privileged in ("apply_config", "propose_config", "restart_service",
+                           "patch_file", "rollback_change", "browser_close",
+                           "read_source", "read_config_file"):
+            with self.subTest(operation=privileged):
+                self.assertNotIn(privileged, body)
+
+    def test_the_address_is_still_checked_by_root(self):
+        """The caller changed; the gate did not.
+
+        `_check_url` is what refuses `file://` and this device's own services,
+        and it runs in the helper — code neither the assistant nor the agent
+        can edit. Called rather than read, for the reason the test above this
+        one in the file records: an earlier version grepped for a string and
+        passed on a comment.
+        """
+        import browser as browser_module
+        for site in SITES:
+            with self.subTest(site=site.name):
+                self.assertEqual(site.url, browser_module._check_url(site.url))
+        for blocked in ("file:///etc/shadow", "http://127.0.0.1:8092/",
+                        "http://localhost/api/system", "https://aipi5.local/",
+                        "javascript:alert(1)", "chrome://settings"):
+            with self.subTest(url=blocked):
+                with self.assertRaises(ops.Refused):
+                    browser_module._check_url(blocked)
+
+    def test_the_spoken_sites_are_a_table_and_not_a_slot(self):
+        """The assistant may send a URL, so what it may send matters.
+
+        Every one comes from `SITES`, which is source with no free-text path
+        into it — checked here as well as in `tests/test_browser.py`, because
+        this is the file about what crosses the boundary.
+        """
+        for site in SITES:
+            with self.subTest(site=site.name):
+                self.assertTrue(site.url.startswith("https://"))
+                self.assertNotIn("{", site.url)
+        for command in BrowserLauncher(BrowserConfig()).commands():
+            with self.subTest(command=command.name):
+                self.assertEqual(command.params, {})
 
 
 class TestTheAgentDoesNotReachIntoTheAssistant(unittest.TestCase):

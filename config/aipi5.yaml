@@ -506,6 +506,21 @@ kodama:
   # Tauri plus a webview on this Pi is several seconds cold.
   start_timeout_s: 20.0
 
+# Opening a website by voice — "open YouTube", "打开YouTube", "打开油管".
+#
+# **Which sites can be opened is not here.** It is a table in
+# aipi5/browser/launcher.py, in source, because a configuration key naming URLs
+# is one a routine deploy — or the agent's own write_config — could widen
+# without anybody deciding to. This block is the switch and the profile.
+browser:
+  enabled: true
+  # Chromium's profile for these windows. Its own, and never the kiosk's
+  # (~/.cache/aipi5-ui): sharing a profile does not open a second window,
+  # it hands the URL to the running instance, which would put YouTube in a
+  # tab inside the kiosk — over the assistant's own page, with no tab strip
+  # to get back from. Left unset it is ~/.cache/aipi5-browser.
+  # profile: ~/.cache/aipi5-browser
+
 # The remote video call — a phone calling this device over WebRTC.
 #
 # **OFF in the committed file, and on the device — that difference is deliberate

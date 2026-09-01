@@ -249,6 +249,50 @@ class AgentService:
     #: between the camera and the page stay well ahead of it.
     MOVE_INTERVAL_S = 0.11
 
+    #: How long the assistant's "open YouTube" may take before it is told to
+    #: stop waiting. `browser_open` navigates, waits for the page to settle,
+    #: and then reads it — the read is for the agent and the voice command has
+    #: no use for it, but it is the same op and one op is better than two that
+    #: can drift. Generous, because the assistant does not block on this: see
+    #: `aipi5/browser/launcher.py`.
+    OPEN_TIMEOUT_S = 45.0
+
+    def open_page(self, url: str) -> dict:
+        """Open a page in the agent's browser. No run, no model, no approval.
+
+        The assistant's spoken "open YouTube" arrives here rather than as an
+        `agent.ask`, because there is nothing for a model to decide: the site
+        was chosen in AIPI5's source (`aipi5/browser/launcher.py`) and the
+        person said four words. A planning loop would cost seconds and money
+        to arrive at the URL it was given.
+
+        **This is the point of the whole detour.** The assistant can start a
+        Chromium by itself and did — but a browser the helper did not start is
+        one nothing holds a CDP pipe to, so the hand pilot has nothing to drive
+        and `browser_state` never says a page is open. Routing the command
+        through here means the window somebody asked for out loud, the window
+        the phone drives, and the window a hand drives are all one window.
+
+        Hand control needs no telling: it follows `browser.open` in the
+        snapshot, which is why the cache below is dropped rather than left to
+        expire — up to four seconds of a hand that does nothing is exactly the
+        interval in which somebody decides the feature is broken.
+        """
+        answer = self.toolbox.helper.call("browser_open", {"url": url},
+                                          timeout=self.OPEN_TIMEOUT_S)
+        if not answer.ok:
+            log.warning("could not open %s: %s", url, answer.why)
+            return {"ok": False, "error": answer.why or "the browser refused"}
+        with self._gesture_lock:
+            self._browser_seen = None
+        log.info("opened %s in the agent's browser, asked for by voice", url)
+        # Deliberately not the page. `browser_open` answers with the AX tree
+        # and up to six thousand characters of text, which is what a model
+        # reads and is nothing but weight on a Unix socket to an assistant that
+        # is about to say four words.
+        return {"ok": True, "url": url,
+                "title": str((answer.result or {}).get("title") or "")[:200]}
+
     def gesture(self, name: str, where: dict | None = None) -> dict:
         action = self.GESTURES.get(name)
         if action is None:
@@ -478,6 +522,13 @@ class _Handler(http_server.BaseHTTPRequestHandler):
         if kind == "agent.gesture":
             return self._json(200, self.service.gesture(
                 str(body.get("gesture", ""))[:32], body.get("at")))
+        if kind == "agent.open":
+            # Bounded here and validated in the helper, which is where every
+            # other URL this device visits is checked — `_check_url` refuses
+            # anything but http/https and refuses this machine's own services.
+            # Nothing about that changes because the caller is the assistant.
+            return self._json(200, self.service.open_page(
+                str(body.get("url", ""))[:2000]))
         if kind == "agent.answer":
             return self._json(200, self.service.answer(
                 str(body.get("token", "")), bool(body.get("allow"))))

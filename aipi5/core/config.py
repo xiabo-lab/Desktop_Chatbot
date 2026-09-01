@@ -370,6 +370,25 @@ class KodamaLaunchConfig:
 
 
 @dataclass(frozen=True)
+class BrowserConfig:
+    """Opening a website by voice. What may be opened is not in here.
+
+    The sites are a table in `aipi5/browser/launcher.py`, in source, and
+    deliberately not a list in this file — a configuration key naming URLs is
+    one the agent's `write_config` could widen, which is the same argument
+    `AgentConfig` makes about its own allowlists. This block is the switch and
+    the profile directory, and nothing that decides where the device may go.
+    """
+
+    enabled: bool = True
+    #: Chromium's profile for these windows, expanded when the launcher is
+    #: built so the same configuration works for whichever user runs the
+    #: service. Never the kiosk's `~/.cache/aipi5-ui`: a shared profile makes
+    #: a second launch open a tab inside the kiosk instead of a window.
+    profile: Path = Path.home() / ".cache" / "aipi5-browser"
+
+
+@dataclass(frozen=True)
 class CallConfig:
     """The remote video call. Off by default, and that is deliberate.
 
@@ -537,6 +556,7 @@ class Settings:
     screensaver: ScreensaverConfig = field(default_factory=ScreensaverConfig)
     photos: PhotosConfig = field(default_factory=PhotosConfig)
     kodama: KodamaLaunchConfig = field(default_factory=KodamaLaunchConfig)
+    browser: BrowserConfig = field(default_factory=BrowserConfig)
     call: CallConfig = field(default_factory=CallConfig)
     files: FilesConfig = field(default_factory=FilesConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
@@ -736,6 +756,7 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
     screensaver = _require_mapping(raw.get("screensaver"), "screensaver")
     photos = _require_mapping(raw.get("photos"), "photos")
     kodama = _require_mapping(raw.get("kodama"), "kodama")
+    browser = _require_mapping(raw.get("browser"), "browser")
     call = _require_mapping(raw.get("call"), "call")
     files = _require_mapping(raw.get("files"), "files")
     agent = _require_mapping(raw.get("agent"), "agent")
@@ -914,6 +935,12 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
             service=str(kodama.get("service", "kodama-lite.service")),
             start_timeout_s=_positive(kodama.get("start_timeout_s", 20.0), 20.0,
                                       "kodama.start_timeout_s"),
+        ),
+        browser=BrowserConfig(
+            enabled=bool(browser.get("enabled", True)),
+            profile=(Path(str(browser["profile"])).expanduser()
+                     if browser.get("profile")
+                     else Path.home() / ".cache" / "aipi5-browser"),
         ),
         call=CallConfig(
             enabled=bool(call.get("enabled", False)),
