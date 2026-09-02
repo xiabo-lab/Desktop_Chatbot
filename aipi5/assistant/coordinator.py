@@ -281,7 +281,7 @@ class Coordinator:
 
     def __init__(self, *, events: EventLog | None = None, respond=None,
                  agent=None, speak=None, turn_wait_s: float = TURN_WAIT_S,
-                 bridge=None):
+                 bridge=None, consent=None):
         self.events = events if events is not None else EventLog()
         #: `respond(text, language) -> str`. The short tool loop, in the voice
         #: process. None where conversation is disabled.
@@ -291,6 +291,13 @@ class Coordinator:
         #: `speak(text, language)`, for a delegated answer worth saying out
         #: loud. None where nothing is listening.
         self.speak = speak
+        #: Where an everyday action that rings, sends or cannot be taken
+        #: back waits for a person. Separate from the agent's approval desk
+        #: and deliberately so — that one gates `patch_file` and lives in
+        #: another process under another user, and putting "ring my phone"
+        #: through it would mean spending a maintenance run to make a phone
+        #: buzz. Both answer through `answer_approval` below.
+        self.consent = consent
         self.turn_wait_s = turn_wait_s
         self.bridge = bridge if bridge is not None else (
             AgentBridge(agent, self.events) if agent is not None else None)
@@ -413,11 +420,19 @@ class Coordinator:
         the token it issued. Anything else — a timeout, a stale token, an empty
         answer — is a no over there, not something to interpret here.
         """
-        if self.agent is None:
-            return {"ok": False, "error": "there is nothing waiting to be approved"}
         token = str(token or "")[:128]
         if not token:
             return {"ok": False, "error": "that approval is no longer waiting"}
+        # The local desk first, and by token rather than by asking both. The
+        # two issue different tokens and neither will recognise the other's, so
+        # forwarding a local one to the agent would turn "no" into "the agent
+        # is not answering" — a refusal that reads like a fault.
+        if self.consent is not None:
+            pending = self.consent.waiting()
+            if pending is not None and pending.token == token:
+                return self.consent.answer(token, allow is True)
+        if self.agent is None:
+            return {"ok": False, "error": "there is nothing waiting to be approved"}
         status, answer = self.agent.say({"type": "agent.answer", "token": token,
                                          "allow": bool(allow)})
         if status != 200:
@@ -448,6 +463,13 @@ class Coordinator:
                  "agent": self.agent is not None,
                  "conversation": self.respond is not None,
                  "pending": None}
+        if self.consent is not None:
+            # Read first, so a local question is what the page draws while one
+            # is open. They cannot both be waiting in practice — a delegated
+            # run and a spoken confirmation are different moments — and if they
+            # ever are, the one this process is holding is the one whose action
+            # is sitting in memory waiting to be run or dropped.
+            state["pending"] = self.consent.snapshot()
         if self.agent is not None:
             live = self.agent.snapshot()
             if isinstance(live, dict):

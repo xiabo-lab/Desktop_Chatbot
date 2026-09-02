@@ -72,7 +72,7 @@ from aipi5.call.server import CallServer
 from aipi5.agent.pilot import HandPilot
 from aipi5.core import volume as volume_control
 from aipi5.agent.proxy import AgentProxy
-from aipi5.assistant import Coordinator, EventLog
+from aipi5.assistant import ConsentDesk, Coordinator, EventLog
 from aipi5.call.signaling import SignalingHub
 from aipi5.call.tokens import TrustedDevices
 from aipi5.core import config as config_mod
@@ -131,6 +131,14 @@ NEWS_BRIEF = {
 
 LISTENING_TEXT = {"en": "Listening…", "zh": "我在听…"}
 CONFIRM_LISTEN = {"en": "Say yes or no…", "zh": "请回答“确定”或“取消”…"}
+
+# What is said once a parked action has been answered. Short on purpose: the
+# person has just heard the question and given their answer, and a paragraph
+# explaining what they already know is a paragraph they cannot interrupt.
+CONSENT_CANCELLED = {"en": "All right, I have left it alone.",
+                     "zh": "好的，我没有做。"}
+CONSENT_DONE = {"en": "Done.", "zh": "好了。"}
+CONSENT_FAILED = {"en": "I could not do that.", "zh": "我没能完成。"}
 THINKING_TEXT = {"en": "Thinking…", "zh": "让我想想…"}
 
 # What a request that could not be answered sounds like. One sentence, because
@@ -267,21 +275,6 @@ class Assistant:
         self.vision = VisionDescriber(self.llm) if self.llm else None
         self.conversation = Conversation(settings.openai.context_turns,
                                          settings.openai.context_idle_s)
-        self.toolbox = ToolBox(
-            weather=self.weather, news=self.news, clock=self.clock,
-            camera=self.camera if settings.camera.enabled else None,
-            vision=self.vision,
-            registry=self.registry,
-            # The API's own web search, for a current fact with no local
-            # provider. Off unless the YAML says otherwise — see
-            # `OpenAIConfig.web_search`.
-            web_search=settings.openai.web_search,
-            # No launcher. The model may drive the player and may not start it
-            # — see the rule in `aipi5/llm/tools.py`. `self.launcher` is reached
-            # by the Music button (`action == "kodama"` below) and by the spoken
-            # command the launcher itself declares, both of which are a person.
-            settings=settings,
-        )
 
         # ── the remote video call ────────────────────────────────────
         #
@@ -312,6 +305,51 @@ class Assistant:
         # do. See aipi5/agent/runtime.py.
         self.agent = (AgentProxy(settings.agent.socket)
                       if settings.agent.enabled else None)
+        # Where an everyday action that rings, sends, or cannot be taken back
+        # waits for a person. Built before the toolbox, which holds it.
+        #
+        # Separate from the agent's approval desk, deliberately: that one gates
+        # `patch_file` and `restart_service`, lives in another process under
+        # another user, and costs one of the day's maintenance runs to reach.
+        # Putting "ring my phone" through it would spend a run to make a phone
+        # buzz. Both are answered the same way from the page, and the rule is
+        # the same for both — the model asks the question and never decides
+        # the answer. See `aipi5/assistant/consent.py`.
+        self.consent = ConsentDesk()
+
+        # The toolbox is built *here*, after the volume control, the calendar,
+        # the consent desk and the agent proxy, rather than up beside the model
+        # client where it used to sit. Everything in it is injected and half of
+        # those objects did not exist thirty lines ago — a `ToolBox`
+        # constructed early and patched afterwards is a toolbox that is briefly
+        # wrong, during the startup sequence, which is exactly where a failure
+        # is hardest to see.
+        self.toolbox = ToolBox(
+            weather=self.weather, news=self.news, clock=self.clock,
+            camera=self.camera if settings.camera.enabled else None,
+            vision=self.vision,
+            registry=self.registry,
+            # The API's own web search, for a current fact with no local
+            # provider. Off unless the YAML says otherwise — see
+            # `OpenAIConfig.web_search`.
+            web_search=settings.openai.web_search,
+            # Built above, and injected rather than reached for. The tool calls
+            # `VolumeControl.set()` and `BirthdayStore.save()` directly, which
+            # is what keeps "there is no path from model output to a shell or a
+            # filesystem path" true of `aipi5/llm/tools.py`.
+            volume=self.volume,
+            birthdays=self.birthdays,
+            # Where deleting a birthday — and, later, ringing a phone — waits
+            # for a person. The model asks the question; it never decides the
+            # answer. See `aipi5/assistant/consent.py`.
+            consent=self.consent,
+            # No launcher. The model may drive the player and may not start it
+            # — see the rule in `aipi5/llm/tools.py`. `self.launcher` is reached
+            # by the Music button (`action == "kodama"` below) and by the spoken
+            # command the launcher itself declares, both of which are a person.
+            settings=settings,
+        )
+
         # One door in, for all four ways of asking. The wake word and the
         # Listen button reach it through `submit_voice`, the compose box and
         # the phone through `submit_text`, and every one of them ends up in
@@ -321,13 +359,13 @@ class Assistant:
         # call — and there was no way for anybody to know which of the two
         # they had reached.
         #
-        # It is a presentation index and not a second transcript: the 24-hour
-        # audible record is `self.history`, the agent's own record is its
-        # mailbox, and both outlive `self.events`. See
-        # `aipi5/assistant/events.py`.
+        # `self.events` is a presentation index and not a second transcript:
+        # the 24-hour audible record is `self.history`, the agent's own record
+        # is its mailbox, and both outlive it. See `aipi5/assistant/events.py`.
         self.events = EventLog()
         self.coordinator = Coordinator(events=self.events, respond=self.answer,
-                                       agent=self.agent)
+                                       agent=self.agent, consent=self.consent)
+
         self.call = CallServer(settings.call, hub=self.call_hub,
                                devices=self.call_devices,
                                on_change=self.on_call_change,
@@ -1380,15 +1418,26 @@ def main() -> int:
                     machine.to(State.SPEAKING)
                     assistant.publish(listening_text="")
                     assistant.history.record("aia", reply, language)
-                    if speak:
-                        speaker.say(reply, language, blocking=False)
+                    # A tool that parked something behind a question needs the
+                    # question spoken and the answer heard, so this one is
+                    # blocking whatever the command list said. Read before the
+                    # speaking rather than after it, so the floor is never
+                    # given up between the two.
+                    awaiting = assistant.consent.waiting()
+                    if speak or awaiting is not None:
+                        speaker.say(reply, language,
+                                    blocking=awaiting is not None)
                         turn.mark("audio_out")
-                        speaker.wait()
+                        if awaiting is None:
+                            speaker.wait()
                     else:
                         turn.mark("audio_out")
                         log.info("reply not spoken (%s): %r",
                                  f"{intent.plugin.name}.{intent.command.name}"
                                  if intent is not None else "no command", reply)
+
+                    if awaiting is not None:
+                        hear_consent(assistant, mic, frames, awaiting, language)
 
                 except Exception:
                     log.exception("turn failed")
@@ -1429,6 +1478,62 @@ def say(assistant, text: str, language: str) -> None:
     if assistant.speaker is not None:
         with assistant.audio.priority():
             assistant.speaker.say(text, language)
+
+
+def hear_consent(assistant, mic, frames, pending, language) -> None:
+    """Hold the floor for a yes or a no, and never ask the model which it was.
+
+    This is the second half of every everyday tool that rings, sends or cannot
+    be taken back. The tool parked a closure on `assistant.consent` and
+    answered the model with a question; the model spoke it; and what happens
+    now is decided by `is_affirmative` over the raw transcript. **The model is
+    not consulted.** It is the thing that might have misheard the request in
+    the first place, and a model reporting "they said yes" is reporting rather
+    than deciding — which is exactly the distinction that keeps a phone from
+    ringing because a half-heard sentence sounded like a request.
+
+    AIA's shape, for AIA's reason: asking and then returning to idle would make
+    the answer a separate request needing the wake word again, so "确定" arrives
+    as "小艾同学，确定" and the confirmation is silently dropped. A question you
+    have to be re-summoned to answer is not a question.
+
+    Silence, "no", and anything unclear all cancel. Nothing is spoken about a
+    cancellation beyond one short line, because the person who said nothing has
+    already made their decision.
+    """
+    log.info("holding the floor for %r", pending.what)
+    mic.drain()
+    assistant.machine.to(State.LISTENING)
+    assistant.publish(listening_text=CONFIRM_LISTEN.get(language,
+                                                        CONFIRM_LISTEN["en"]))
+
+    decision = None
+    answer_audio = assistant.confirm_endpointer.collect(frames)
+    if answer_audio is not None:
+        heard = assistant.stt.listen(answer_audio, language=language)
+        if heard.text.strip():
+            assistant.history.record("user", heard.text, language)
+            decision = is_affirmative(heard.text)
+        log.info("consent answer %r -> %s", heard.text, decision)
+    else:
+        log.info("nobody answered about %r", pending.what)
+
+    assistant.machine.to(State.ACTING)
+    outcome = assistant.consent.answer(pending.token, decision is True)
+    assistant.publish(listening_text="")
+
+    if decision is not True:
+        say(assistant, CONSENT_CANCELLED.get(language, CONSENT_CANCELLED["en"]),
+            language)
+        return
+
+    result = outcome.get("result") or {}
+    if outcome.get("ok") and result.get("ok", True):
+        spoken = CONSENT_DONE.get(language, CONSENT_DONE["en"])
+    else:
+        spoken = str(result.get("error") or outcome.get("error")
+                     or CONSENT_FAILED.get(language, CONSENT_FAILED["en"]))
+    say(assistant, spoken, language)
 
 
 def confirm_and_run(assistant, mic, frames, intent, language):

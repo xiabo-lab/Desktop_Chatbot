@@ -85,7 +85,8 @@ class ToolBox:
     """
 
     def __init__(self, *, weather=None, news=None, clock=None, camera=None,
-                 vision=None, registry=None, settings=None, web_search=False):
+                 vision=None, registry=None, settings=None, web_search=False,
+                 volume=None, birthdays=None, consent=None):
         self.weather = weather
         self.news = news
         self.clock = clock
@@ -93,6 +94,20 @@ class ToolBox:
         self.vision = vision
         self.registry = registry
         self.settings = settings
+        #: The master PipeWire sink, already built. Injected rather than
+        #: reached for: the tool calls `VolumeControl.set()` and never shells
+        #: out, which is what keeps "there is no path from model output to a
+        #: command line" true of this file.
+        self.volume = volume
+        #: The family calendar's own store. Local, atomic, and **not** Google
+        #: Calendar — the tool descriptions say so, because a model told it can
+        #: "add to the calendar" will happily tell somebody their partner will
+        #: see it.
+        self.birthdays = birthdays
+        #: Where an action that cannot be taken back waits for a person. See
+        #: `aipi5/assistant/consent.py`; the rule that matters is that a model
+        #: reporting "they said yes" is reporting, not deciding.
+        self.consent = consent
         #: Whether the API's own web search is offered. Off by default and
         #: last in the list on purpose: it is the fallback for a current fact
         #: with no narrow provider, and a model given both will sometimes
@@ -106,6 +121,11 @@ class ToolBox:
             "get_current_time": self._get_current_time,
             "describe_camera_image": self._describe_camera_image,
             "execute_kodama_command": self._execute_kodama_command,
+            "get_master_volume": self._get_master_volume,
+            "set_master_volume": self._set_master_volume,
+            "list_birthdays": self._list_birthdays,
+            "save_birthday": self._save_birthday,
+            "delete_birthday": self._delete_birthday,
         }
 
     # ── what the model is told exists ────────────────────────────────
@@ -204,6 +224,87 @@ class ToolBox:
                 required=["command"],
             ))
 
+        if self.volume is not None:
+            tools.append(_schema(
+                "get_master_volume",
+                "How loud this device is set, 0 to 100. This is the one master "
+                "level for everything that makes a sound here — the assistant's "
+                "own voice, the music player, games, calls and the browser.",
+                {},
+            ))
+            tools.append(_schema(
+                "set_master_volume",
+                "Set how loud this device is, 0 to 100. This is the master "
+                "level for everything: the assistant's voice, the music player, "
+                "games, calls and the browser. Use it for 'turn it up', 'quieter', "
+                "'mute' (0) and any specific level. Read the level back from the "
+                "result rather than repeating the number you asked for — the "
+                "device may not have accepted it.",
+                {"percent": {
+                    "type": "integer", "minimum": 0, "maximum": 100,
+                    "description": "The level to set, 0 to 100. 0 is silent.",
+                }},
+                required=["percent"],
+            ))
+
+        if self.birthdays is not None:
+            tools.append(_schema(
+                "list_birthdays",
+                "Every birthday saved in this device's own family calendar. "
+                "This is the local calendar shown on the Calendar screen; it is "
+                "not Google Calendar and nobody else can see it.",
+                {},
+            ))
+            tools.append(_schema(
+                "save_birthday",
+                "Add a birthday to this device's own family calendar, or change "
+                "one by passing its id. This is the local calendar shown on the "
+                "Calendar screen; it is not Google Calendar, it is not shared, "
+                "and you must not say that anybody else will see it.\n"
+                "Ask a short follow-up question instead of guessing when you do "
+                "not know the month and day, whether the date is solar (the "
+                "ordinary calendar) or lunar (农历), or which person is meant. "
+                "A date like 'the fifth' with no month is not enough.",
+                {
+                    "name": {"type": "string", "maxLength": 80,
+                             "description": "Whose birthday it is, as the person "
+                                            "said it."},
+                    "calendar": {"type": "string", "enum": ["solar", "lunar"],
+                                 "description": "'solar' for an ordinary date, "
+                                                "'lunar' for a 农历 date. Ask if "
+                                                "you are not sure."},
+                    "month": {"type": "integer", "minimum": 1, "maximum": 12},
+                    "day": {"type": "integer", "minimum": 1, "maximum": 31,
+                            "description": "1-31 for solar, 1-30 for lunar."},
+                    "year": {"type": "integer", "minimum": 1800, "maximum": 2100,
+                             "description": "The year of birth, if it was given. "
+                                            "Null otherwise — it is optional and "
+                                            "must not be invented."},
+                    "leap": {"type": "boolean",
+                             "description": "A lunar leap month (闰月). Null "
+                                            "unless the person said so."},
+                    "note": {"type": "string", "maxLength": 400,
+                             "description": "Anything else they said about it. "
+                                            "Null if nothing."},
+                    "id": {"type": "string", "maxLength": 64,
+                           "description": "Only when changing an existing entry, "
+                                          "using an id from list_birthdays. Null "
+                                          "when adding a new one."},
+                },
+                required=["name", "calendar", "month", "day"],
+            ))
+            tools.append(_schema(
+                "delete_birthday",
+                "Remove a birthday from the local family calendar. Call "
+                "list_birthdays first and pass the exact id of the one meant. "
+                "The person is asked to confirm out loud before anything is "
+                "removed, so do not say it has been deleted — say what you are "
+                "about to remove and wait.",
+                {"id": {"type": "string", "maxLength": 64,
+                        "description": "The id from list_birthdays."}},
+                required=["id"],
+            ))
+
         if self.web_search:
             # The API runs this one itself; there is no handler here and
             # nothing comes back through `call()`. Offered only for current
@@ -286,6 +387,121 @@ class ToolBox:
             return _error("the picture was taken but could not be described")
         return _ok(description=description, taken_at=capture.taken_at)
 
+    # ── the device's own state ───────────────────────────────────────
+
+    def _get_master_volume(self, args: dict) -> str:
+        state = self.volume.describe()
+        return _ok(percent=state["level"], available=state["available"],
+                   error=state.get("error", ""))
+
+    def _set_master_volume(self, args: dict) -> str:
+        """Set the one sink every application on this device meets at.
+
+        The number is clamped rather than refused. Strict mode already bounds
+        it 0-100 in the schema, and a model that sends 150 anyway means "as
+        loud as it goes" — refusing that to be pedantic about a number nobody
+        said out loud helps nobody in the room.
+
+        What is **read back** is what the device actually has, not what was
+        asked for. `VolumeControl.set()` rolls back when it cannot persist, so
+        a reply that repeated the requested number would be the assistant
+        confidently announcing a change that had already been undone.
+        """
+        try:
+            percent = int(args.get("percent"))
+        except (TypeError, ValueError):
+            return _error("a volume needs to be a number from 0 to 100")
+        percent = max(0, min(100, percent))
+
+        if not self.volume.set(percent):
+            state = self.volume.describe()
+            return _error(state.get("error")
+                          or "this device would not accept a new volume")
+        state = self.volume.describe()
+        return _ok(percent=state["level"], requested=percent,
+                   muted=state["level"] == 0)
+
+    # ── the family calendar ──────────────────────────────────────────
+
+    def _list_birthdays(self, args: dict) -> str:
+        entries = [{"id": item["id"], "name": item["name"],
+                    "calendar": item["calendar"], "month": item["month"],
+                    "day": item["day"], "year": item.get("year"),
+                    "leap": item.get("leap", False), "note": item.get("note", "")}
+                   for item in self.birthdays.list()]
+        return _ok(birthdays=entries, count=len(entries),
+                   calendar="this device's local family calendar")
+
+    def _save_birthday(self, args: dict) -> str:
+        """Add or change one entry, through the store's own validation.
+
+        Nothing is re-checked here. `BirthdayStore.save()` decides what a valid
+        month, day, year and lunar leap month are, and it writes atomically —
+        a second copy of those rules in this file is a second copy to get out
+        of step, and the one that would drift is this one.
+        """
+        from aipi5.calendar.store import BirthdayError
+
+        payload = {
+            "name": args.get("name"),
+            "calendar": args.get("calendar"),
+            "month": args.get("month"),
+            "day": args.get("day"),
+            "year": args.get("year"),
+            "leap": bool(args.get("leap")),
+            "note": args.get("note") or "",
+        }
+        # Only when changing an existing entry. An empty string is what strict
+        # mode's `null` becomes, and passing it as an id would make the store
+        # look for an entry called "".
+        entry_id = str(args.get("id") or "").strip()
+        if entry_id:
+            payload["id"] = entry_id
+
+        try:
+            saved = self.birthdays.save(payload)
+        except BirthdayError as exc:
+            return _error(str(exc))
+        return _ok(saved=saved, updated=bool(entry_id),
+                   calendar="this device's local family calendar, not Google "
+                            "Calendar")
+
+    def _delete_birthday(self, args: dict) -> str:
+        """Ask first, delete second, and never in one call.
+
+        Deleting is the one thing in this file that cannot be undone by saying
+        the opposite — the entry and its note are gone. So the id is resolved
+        to a real person's name *here*, out of the store, and the question the
+        device asks out loud names that person rather than an id. A model that
+        misread which entry was meant is then caught by somebody hearing the
+        wrong name, which is the only check that actually works.
+        """
+        if self.consent is None:
+            return _error("this device cannot ask for confirmation right now, "
+                          "so nothing was removed")
+        entry_id = str(args.get("id") or "").strip()
+        found = next((item for item in self.birthdays.list()
+                      if item["id"] == entry_id), None)
+        if found is None:
+            return _error("there is no birthday with that id; call "
+                          "list_birthdays and use an id from it")
+
+        when = f"{found['month']}/{found['day']}"
+        label = f"{found['name']} ({found['calendar']} {when})"
+        pending = self.consent.ask(
+            what=f"delete the birthday for {found['name']}",
+            question=f"Do you want me to remove {label} from the calendar?",
+            detail=label,
+            action=lambda: _delete_now(self.birthdays, entry_id),
+        )
+        if pending is None:
+            return _error("there is already a question waiting for an answer")
+        return _ok(asked=True, question=pending.question,
+                   removed=False,
+                   instruction="Ask the person exactly this and stop. Nothing "
+                               "has been removed yet and you must not say it "
+                               "has.")
+
     def _execute_kodama_command(self, args: dict) -> str:
         """Run one named Kodama command.
 
@@ -323,6 +539,17 @@ class ToolBox:
         outcome = command.handler(**call_args)
         return _ok(command=command.name, succeeded=outcome.ok,
                    detail=outcome.say("en"))
+
+
+def _delete_now(store, entry_id: str) -> dict:
+    """What runs if — and only if — a person says yes. See `ConsentDesk`."""
+    from aipi5.calendar.store import BirthdayError
+
+    try:
+        store.delete(entry_id)
+    except BirthdayError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "deleted": entry_id}
 
 
 def _schema(name: str, description: str, properties: dict,

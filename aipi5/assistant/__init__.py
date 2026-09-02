@@ -16,9 +16,10 @@ different policy — with no way for anybody to know which they had reached.
 wake word, the Listen button, the compose box on the panel, or the phone.
 """
 
+from aipi5.assistant.consent import ConsentDesk, Pending
 from aipi5.assistant.coordinator import Coordinator
 from aipi5.assistant.events import (AssistantEvent, EventLog, EventSink, KINDS,
                                     SOURCES)
 
-__all__ = ["AssistantEvent", "Coordinator", "EventLog", "EventSink", "KINDS",
-           "SOURCES"]
+__all__ = ["AssistantEvent", "ConsentDesk", "Coordinator", "EventLog",
+           "EventSink", "KINDS", "Pending", "SOURCES"]
