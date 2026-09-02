@@ -70,6 +70,43 @@ log = logging.getLogger(__name__)
 RESULT_LIMIT = 6000
 
 
+#: What each tool says it did, for one row of the shared transcript. Past
+#: tense, no arguments, no result -- "wrote to the family calendar", never
+#: "saved Rollout Test, August 15th". The agent writes its own summaries per
+#: call and can afford to; these are static, because a phrase built from a
+#: tool's arguments is a phrase that eventually contains somebody's data, on a
+#: panel in a living room that anybody walking past can read.
+#:
+#: A tool missing from this table shows its own name, which is ugly and
+#: correct. It is not worth a test: the failure is a legible row nobody wrote,
+#: and the alternative -- a row that must exist before a tool can ship -- is
+#: how tools end up not shipping.
+SAID = {
+    "get_weather": "checked the weather",
+    "get_local_news": "checked the local news",
+    "get_current_time": "checked the time",
+    "describe_camera_image": "looked through the camera",
+    "execute_kodama_command": "used the music player",
+    "get_master_volume": "checked the volume",
+    "set_master_volume": "set the volume",
+    "list_birthdays": "read the family calendar",
+    "save_birthday": "wrote to the family calendar",
+    # These two return ok when the *question* was asked. What happens after
+    # somebody answers is published by the consent desk, from `said` below --
+    # a row reading "removed a birthday" the moment the model asked whether to
+    # is a transcript saying a thing happened that has not.
+    "delete_birthday": "asked about removing a birthday",
+    "create_reminder": "set a reminder",
+    "read_reminders": "read the reminders",
+    "delete_reminder": "cancelled a reminder",
+    "call_phone": "asked about ringing a phone",
+    "take_photo": "took a photograph",
+    "get_asset_price": "looked up a price",
+    "open_known_app": "opened an application",
+    "delegate_agent_task": "handed the work to the agent",
+}
+
+
 def _ok(**payload) -> str:
     return json.dumps({"ok": True, **payload}, ensure_ascii=False)[:RESULT_LIMIT]
 
@@ -98,7 +135,26 @@ class ToolBox:
                  vision=None, registry=None, settings=None, web_search=False,
                  volume=None, birthdays=None, consent=None, agent=None,
                  calls=None, photos=None, on_capture=None, prices=None,
-                 browser=None, launcher=None, delegate=None):
+                 browser=None, launcher=None, delegate=None,
+                 on_tool=None):
+        #: `on_tool(name, ok, source, said)` — one row in the transcript
+        #: per local tool call: the name, whether it worked, and nothing else.
+        #:
+        #: The agent's tools have appeared in that transcript since the
+        #: coordinator existed and the short loop's did not, so a page that
+        #: rendered "checked the disk" for a maintenance run showed a bare
+        #: sentence for a volume change — on a device whose faults are reported
+        #: as "it did something strange yesterday", which is a question about
+        #: what it *did*.
+        #:
+        #: Deliberately not the arguments and not the result. `AssistantEvent`
+        #: refuses both, and the reason is in `aipi5/assistant/events.py`: this
+        #: transcript is a presentation index, and a tool result is where the
+        #: contents of somebody's calendar would arrive in it.
+        self.on_tool = on_tool
+        #: Which way in the current turn arrived by, for the row above. Set by
+        #: `begin_turn`, which the coordinator calls for every turn.
+        self._source = "voice"
         self.weather = weather
         self.news = news
         self.clock = clock
@@ -220,6 +276,7 @@ class ToolBox:
         arrives without it leaves the flag False, which refuses.
         """
         self._explicit_launch = asks_to_open(text)
+        self._source = source or "voice"
 
     def end_turn(self) -> None:
         """Drop the turn's permission. Belt and braces beside `begin_turn`."""
@@ -610,6 +667,32 @@ class ToolBox:
         out of it is either matched against an enum or passed to something that
         takes it as data.
         """
+        answer = self._dispatch(name, arguments)
+        self._published(name, answer)
+        return answer
+
+    def _published(self, name: str, answer: str) -> str:
+        """Put the name and the outcome in the transcript. Never raises.
+
+        Reads `ok` back out of the JSON rather than being told by each handler,
+        so a tool added later is in the transcript without anybody remembering
+        to add it — the failure mode being fixed is a row that is missing, and
+        that is not a thing anybody notices.
+        """
+        if self.on_tool is None:
+            return answer
+        try:
+            ok = bool(json.loads(answer).get("ok"))
+        except (ValueError, AttributeError):
+            ok = False
+        try:
+            self.on_tool(name, ok, self._source, SAID.get(name, ""))
+        except Exception:                            # noqa: BLE001
+            # A transcript row must not be able to end a turn.
+            log.exception("could not put %s in the transcript", name)
+        return answer
+
+    def _dispatch(self, name: str, arguments: str) -> str:
         handler = self._handlers.get(name)
         if handler is None:
             # Reachable when a model invents a tool name, which they do.
@@ -823,6 +906,7 @@ class ToolBox:
         label = f"{found['name']} ({found['calendar']} {when})"
         pending = self.consent.ask(
             what=f"delete the birthday for {found['name']}",
+            said="removed a birthday",
             question=f"Do you want me to remove {label} from the calendar?",
             detail=label,
             action=lambda: _delete_now(self.birthdays, entry_id),
@@ -1057,6 +1141,7 @@ class ToolBox:
 
         pending = self.consent.ask(
             what=f"ring {device}",
+            said="rang a phone",
             question=f"Shall I ring {device}?",
             detail=device,
             action=lambda: self.calls.call_out(device).as_dict(),

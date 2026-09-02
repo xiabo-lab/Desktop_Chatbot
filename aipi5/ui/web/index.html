@@ -6221,6 +6221,19 @@ el("agent-compose").addEventListener("submit", (event) => {
   assistantPost("/api/assistant/ask", { text: text, source: "touch" });
 });
 
+// Enter sends; Shift+Enter starts a new line. A <textarea> inside a <form>
+// does neither on its own -- Enter inserts a newline and the form is only
+// submitted by the button. That is the ordinary web default and it is wrong
+// here twice over: `enterkeyhint="send"` above puts a key labelled *send* on
+// the on-screen keyboard, which is the only keyboard this panel has, and
+// pressing it silently added a blank line instead. Nothing on the screen said
+// so; the sentence just sat there.
+el("agent-text").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+  event.preventDefault();
+  el("agent-compose").requestSubmit();
+});
+
 // ── speaking into it ────────────────────────────────────────────────
 //
 // The whole reason this console can exist on this screen. `POST

@@ -158,6 +158,67 @@ class TestTheCursor(unittest.TestCase):
         self.assertEqual(1, len(got[0][0]))
 
 
+
+class TestAPageThatOutLivedTheProcess(unittest.TestCase):
+    """The kiosk does not reload, and the ids start at 1 again when the
+    service does.
+
+    So a panel that had reached 16 asks a restarted assistant for rows after
+    16, is handed back its own 16, and goes deaf -- permanently, because
+    nothing in the reply could ever bring the number down. That is every
+    `systemctl --user restart aipi5.service`, which is the deploy step, on a
+    screen with no keyboard to reload with.
+
+    Found on the device. Every test in this file used one log for the whole
+    test, which is the one arrangement where it cannot happen.
+    """
+
+    def test_a_cursor_from_before_the_restart_is_sent_everything(self):
+        after = EventLog()
+        after.publish("user", "voice", text="a")
+        after.publish("assistant", "voice", text="b")
+        rows, cursor = after.collect(16)
+        self.assertEqual(["a", "b"], [r["text"] for r in rows])
+        self.assertEqual(2, cursor)
+
+    def test_it_does_not_wait_out_the_long_poll_first(self):
+        """A page holding a stale cursor would otherwise sit blank for the
+        whole poll interval on every pass, which on a kiosk is forever."""
+        after = EventLog()
+        after.publish("user", "voice", text="a")
+        started = time.monotonic()
+        rows, _ = after.collect(16, timeout=5.0)
+        self.assertEqual(1, len(rows))
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_an_empty_restarted_log_still_reports_a_cursor_of_zero(self):
+        """Nothing to send yet, and the page must come down off 16 anyway --
+        the next row is id 1 and it would otherwise never be asked for."""
+        self.assertEqual(([], 0), EventLog().collect(16, timeout=0.1))
+
+    def test_a_cursor_orphaned_by_clear_is_left_alone(self):
+        """The other side of the same coin, and the reason this is not simply
+        `since > cursor()`. `clear()` promises that an old cursor asks for
+        something that never arrives rather than being handed the next
+        session's rows as the tail of its own -- so the counter it is measured
+        against is the highest id ever issued, not the newest row still held.
+        """
+        log = EventLog()
+        for n in range(5):
+            log.publish("user", "voice", text=str(n))
+        log.clear()
+        self.assertEqual(([], 3), log.collect(3, timeout=0.1))
+        log.publish("assistant", "voice", text="new")
+        rows, _ = log.collect(3)
+        self.assertEqual(["new"], [r["text"] for r in rows])
+
+    def test_a_cursor_at_exactly_the_high_water_mark_is_not_a_restart(self):
+        log = EventLog()
+        for n in range(3):
+            log.publish("user", "voice", text=str(n))
+        self.assertEqual(([], 3), log.collect(3, timeout=0.1))
+
+
 class TestTheWireShape(unittest.TestCase):
     """What a page actually receives. Absent rather than empty, so a row is
     small: this is polled continuously by a browser on a Pi."""

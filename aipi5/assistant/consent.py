@@ -62,6 +62,11 @@ class Pending:
     detail: str
     created: float
     ttl: float
+    #: What the transcript says once this has actually happened -- "removed a
+    #: birthday", not "asked about removing a birthday". Fixed text from the
+    #: handler, carrying none of the arguments, for the same reason `SAID` in
+    #: `aipi5/llm/tools.py` is fixed text.
+    said: str = ""
     action: Callable[[], dict] = field(repr=False, default=lambda: {"ok": True})
 
     def expired(self, now: float) -> bool:
@@ -76,20 +81,29 @@ class Pending:
 class ConsentDesk:
     """The one pending question, and the two ways it can be answered."""
 
-    def __init__(self, clock=time.time, ttl_s: float = TTL_S, on_change=None):
+    def __init__(self, clock=time.time, ttl_s: float = TTL_S, on_change=None,
+                 on_done=None):
         self.clock = clock
         self.ttl_s = ttl_s
         #: Called with the `Pending` when one appears and with None when one
         #: goes, so a page can draw and clear a card without polling for it.
         #: Never called with the lock held.
         self.on_change = on_change
+        #: `on_done(said, allowed, ok)` — called once a question has been
+        #: resolved, with what actually happened.
+        #:
+        #: Separate from `on_change` because the two answer different
+        #: questions. `on_change(None)` fires for a yes, a no and a timeout
+        #: alike; the transcript needs to distinguish them, and a row saying
+        #: "removed a birthday" after somebody said no is worse than no row.
+        self.on_done = on_done
         self._lock = threading.Lock()
         self._pending: Pending | None = None
 
     # ── asking ──────────────────────────────────────────────────────
 
     def ask(self, what: str, question: str, action: Callable[[], dict],
-            detail: str = "") -> Pending | None:
+            detail: str = "", said: str = "") -> Pending | None:
         """Park an action behind a question. None if one is already waiting."""
         now = self.clock()
         with self._lock:
@@ -102,7 +116,8 @@ class ConsentDesk:
                 what=str(what)[:80],
                 question=str(question)[:MAX_QUESTION],
                 detail=str(detail)[:MAX_DETAIL],
-                created=now, ttl=self.ttl_s, action=action)
+                created=now, ttl=self.ttl_s, action=action,
+                said=str(said)[:80])
             self._pending = pending
         self._announce(pending)
         return pending
@@ -157,14 +172,17 @@ class ConsentDesk:
         # rings a phone has to be a no rather than a coin toss.
         if allow is not True:
             log.info("%r was declined", pending.what)
+            self._finished(pending, allowed=False, ok=True)
             return {"ok": True, "allowed": False, "what": pending.what}
         log.info("%r was approved", pending.what)
         try:
             outcome = pending.action()
         except Exception as exc:                     # noqa: BLE001
             log.exception("%r failed after it was approved", pending.what)
+            self._finished(pending, allowed=True, ok=False)
             return {"ok": False, "allowed": True, "what": pending.what,
                     "error": f"it was approved but did not work ({exc})"}
+        self._finished(pending, allowed=True, ok=True)
         answer = {"ok": True, "allowed": True, "what": pending.what}
         if isinstance(outcome, dict):
             answer["result"] = outcome
@@ -184,6 +202,15 @@ class ConsentDesk:
     def snapshot(self) -> dict | None:
         pending = self.waiting()
         return pending.as_dict() if pending is not None else None
+
+    def _finished(self, pending: Pending, allowed: bool, ok: bool) -> None:
+        """Say what actually happened, once it has. Never raises."""
+        if self.on_done is None:
+            return
+        try:
+            self.on_done(pending.said, allowed, ok)
+        except Exception:                            # noqa: BLE001
+            log.exception("the consent listener failed")
 
     def _announce(self, pending: Pending | None) -> None:
         if self.on_change is None:

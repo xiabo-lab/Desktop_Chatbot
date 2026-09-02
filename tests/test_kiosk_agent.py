@@ -171,6 +171,41 @@ class TestThePageIsWholeAndAddressable(unittest.TestCase):
         self.assertIn('el("agent-hint").textContent = heard.error', block)
 
 
+
+class TestTheOnlyKeyboardThisPanelHas(unittest.TestCase):
+    """The compose box is a `<textarea>` in a `<form>`, and the web's default
+    for that pair is that Enter inserts a newline and only the button submits.
+
+    Wrong here twice. `enterkeyhint="send"` puts a key labelled *send* on the
+    on-screen keyboard, which is the only keyboard a kiosk has; and pressing it
+    added a blank line, silently, with the sentence still sitting in the box.
+    Found on the device by typing into it.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.page = PAGE.read_text(encoding="utf-8")
+        start = cls.page.index('el("agent-text").addEventListener("keydown"')
+        cls.handler = cls.page[start:start + 400]
+
+    def test_enter_submits_the_form(self):
+        self.assertIn("requestSubmit()", self.handler)
+
+    def test_shift_enter_still_starts_a_line(self):
+        """Two sentences to the agent is a reasonable thing to type."""
+        self.assertIn("event.shiftKey", self.handler)
+
+    def test_an_ime_confirmation_is_not_a_send(self):
+        """The one that matters most here and has no visible symptom in
+        English. Choosing a Chinese character ends with Enter, and without
+        this guard 把音量 would be sent the moment somebody picked 把 --
+        `isComposing` is the only thing that tells the two Enters apart."""
+        self.assertIn("event.isComposing", self.handler)
+
+    def test_the_keyboard_is_still_told_what_the_key_does(self):
+        self.assertIn('enterkeyhint="send"', self.page)
+
+
 class TestTheWireMatches(unittest.TestCase):
 
     @classmethod

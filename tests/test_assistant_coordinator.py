@@ -16,6 +16,7 @@ import threading
 import time
 import unittest
 
+from aipi5.assistant.consent import ConsentDesk
 from aipi5.assistant.coordinator import AgentBridge, Coordinator, translate
 from aipi5.assistant.events import EventLog
 
@@ -105,6 +106,63 @@ class TestOneRequestTakesOnePath(unittest.TestCase):
     def test_an_empty_request_is_refused_without_a_row(self):
         self.assertFalse(self.coordinator.submit_text("   ")["ok"])
         self.assertEqual(([], 0), self.coordinator.collect(0))
+
+
+
+class TestWhatLanguageToAnswerIn(unittest.TestCase):
+    """Found on the device, and not findable here before it was.
+
+    `音量调到二十` was carried out correctly and then answered in English,
+    because only the spoken paths know their language for free -- the
+    recogniser heard the audio and reported it. A sentence typed into the
+    compose box or sent from a phone arrives with nothing, and the default was
+    English. Every test in this file passes a language explicitly, so the
+    suite could not see it.
+    """
+
+    def setUp(self):
+        self.asked: list[tuple[str, str]] = []
+        self.coordinator = Coordinator(
+            events=EventLog(),
+            respond=lambda text, language: self.asked.append(
+                (text, language)) or "好的",
+            # AIA's `reply_language`, in one line. The real one refines a
+            # recogniser's answer from the script of the text.
+            detect=lambda text: "zh" if any("一" <= c <= "鿿"
+                                            for c in text) else "en")
+
+    def test_a_typed_mandarin_sentence_is_answered_in_mandarin(self):
+        self.coordinator.submit_text("音量调到二十")
+        self.assertEqual([("音量调到二十", "zh")], self.asked)
+
+    def test_a_typed_english_sentence_is_answered_in_english(self):
+        self.coordinator.submit_text("turn the volume down")
+        self.assertEqual("en", self.asked[0][1])
+
+    def test_a_named_language_wins_over_the_text(self):
+        """The spoken paths name one, and the recogniser that named it heard
+        the audio -- a better source than the script of a transcript. This is
+        also the code-switch case: "打开 youtube" is Mandarin said out loud and
+        counts more Latin characters than Han."""
+        self.coordinator.submit_voice("打开 youtube", "zh")
+        self.coordinator.submit_voice("open youtube", "en")
+        self.assertEqual(["zh", "en"], [a[1] for a in self.asked])
+
+    def test_a_detector_that_raises_does_not_lose_the_sentence(self):
+        def broken(text):
+            raise RuntimeError("no")
+
+        self.coordinator.detect = broken
+        self.assertTrue(self.coordinator.submit_text("音量调到二十")["ok"])
+        self.assertEqual("en", self.asked[0][1])
+
+    def test_without_a_detector_it_is_english(self):
+        """A coordinator built by a unit test, or a build with no AIA."""
+        made = Coordinator(events=EventLog(),
+                           respond=lambda text, language: self.asked.append(
+                               (text, language)) or "ok")
+        made.submit_text("音量调到二十")
+        self.assertEqual("en", self.asked[0][1])
 
 
 class TestWithNothingBehindIt(unittest.TestCase):
@@ -427,6 +485,52 @@ class TestApprovalIsNeverInferred(unittest.TestCase):
 
     def test_cancelling_with_no_agent_is_a_sentence(self):
         self.assertFalse(Coordinator(events=EventLog()).cancel("r-1")["ok"])
+
+
+class TestBothDesksAtOnce(unittest.TestCase):
+    """A device has the agent installed, so the agent's snapshot is always
+    read. It reports `pending: None` while it is idle, which is nearly always
+    -- and that None used to overwrite the question this process was holding.
+
+    So a spoken "shall I remove it?" reached the room and the panel showed
+    nothing to answer it with. Every test here passed: one covered a desk with
+    no agent, another an agent with no desk, and the device is the only
+    configuration with both.
+    """
+
+    def setUp(self):
+        self.desk = ConsentDesk()
+        self.proxy = FakeProxy()
+        self.coordinator = Coordinator(events=EventLog(), agent=self.proxy,
+                                       consent=self.desk)
+
+    def test_the_local_question_survives_an_idle_agent(self):
+        self.desk.ask("ring the phone", "Shall I ring your phone?",
+                      action=lambda: {"ok": True})
+        pending = self.coordinator.snapshot()["pending"]
+        self.assertEqual("Shall I ring your phone?", pending["question"])
+
+    def test_the_agents_question_is_drawn_when_there_is_no_local_one(self):
+        self.proxy.state["pending"] = {"token": "t-9", "what": "patch a file"}
+        self.assertEqual("t-9",
+                         self.coordinator.snapshot()["pending"]["token"])
+
+    def test_the_local_one_wins_when_both_are_waiting(self):
+        """They cannot both be waiting in practice -- a delegated run and a
+        spoken confirmation are different moments. If they ever are, the one
+        this process is holding has an action sitting in memory."""
+        self.proxy.state["pending"] = {"token": "t-9", "what": "patch a file"}
+        self.desk.ask("ring the phone", "Shall I ring your phone?",
+                      action=lambda: {"ok": True})
+        self.assertNotEqual("t-9",
+                            self.coordinator.snapshot()["pending"]["token"])
+
+    def test_the_desk_is_answered_by_its_own_token_and_the_agent_hears_nothing(self):
+        pending = self.desk.ask("ring the phone", "Shall I?",
+                                action=lambda: {"ok": True})
+        self.assertTrue(
+            self.coordinator.answer_approval(pending.token, True)["allowed"])
+        self.assertEqual([], self.proxy.said)
 
 
 if __name__ == "__main__":

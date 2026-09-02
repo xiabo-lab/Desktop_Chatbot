@@ -72,7 +72,7 @@ from aipi5.call.server import CallServer
 from aipi5.agent.pilot import HandPilot
 from aipi5.core import volume as volume_control
 from aipi5.agent.proxy import AgentProxy
-from aipi5.assistant import ConsentDesk, Coordinator, EventLog
+from aipi5.assistant import SOURCES, ConsentDesk, Coordinator, EventLog
 from aipi5.call.signaling import SignalingHub
 from aipi5.call.tokens import TrustedDevices
 from aipi5.core import config as config_mod
@@ -322,7 +322,14 @@ class Assistant:
         # buzz. Both are answered the same way from the page, and the rule is
         # the same for both — the model asks the question and never decides
         # the answer. See `aipi5/assistant/consent.py`.
-        self.consent = ConsentDesk()
+        # Both listeners put the question, and then its outcome, on the
+        # Assistant page. Without them the desk was reachable only by voice:
+        # the assistant asked "shall I ring it?" out loud and the panel showed
+        # nothing to answer with, because the card is drawn from an `approval`
+        # row and nothing published one. The agent's approvals have arrived
+        # that way since the console existed; these are the local half.
+        self.consent = ConsentDesk(on_change=self.publish_consent,
+                                   on_done=self.publish_consent_outcome)
 
         #: Which everyday tools this deployment offers. A rollout order rather
         #: than a security boundary — see `TOOL_SWITCHES`.
@@ -356,6 +363,9 @@ class Assistant:
             # expressed as which objects the toolbox is handed. It is *not* a
             # security boundary: what bounds a tool is the validation in its
             # handler. See `TOOL_SWITCHES` in `aipi5/core/config.py`.
+            # Every local tool call becomes a row on the Assistant page.
+            # See `publish_tool` and `SAID` in `aipi5/llm/tools.py`.
+            on_tool=self.publish_tool,
             volume=self.volume if tool("volume") else None,
             birthdays=self.birthdays if tool("calendar") else None,
             # Where deleting a birthday — and, later, ringing a phone — waits
@@ -416,7 +426,8 @@ class Assistant:
                                        agent=self.agent, consent=self.consent,
                                        speak=self.speak_delegated_answer,
                                        on_turn=self.toolbox.begin_turn,
-                                       after_turn=self.finish_turn)
+                                       after_turn=self.finish_turn,
+                                       detect=reply_language)
         # Late, because the coordinator needs the toolbox and the tool needs
         # the coordinator. The alternative is a `lambda` reaching for an
         # attribute that does not exist yet, which is the pattern used three
@@ -1116,6 +1127,62 @@ class Assistant:
         log.info("speaking the answer to run %s", run_id or "?")
         self.history.record("aia", text, language)
         say(self, text, language)
+
+    def publish_consent(self, pending) -> None:
+        """Draw the card, or take it away. Never raises.
+
+        The same two rows the agent's approvals use, so the page has one
+        renderer and one Yes/No control for both -- see `translate` in
+        `aipi5/assistant/coordinator.py`. Which desk a token belongs to is
+        decided by the token itself, in `answer_approval`.
+        """
+        try:
+            if pending is None:
+                self.events.publish("approval", "system", text="",
+                                    meta={"gone": True, "outcome": ""})
+                return
+            self.events.publish("approval", "system", text=pending.question,
+                                meta={"token": pending.token,
+                                      "detail": pending.detail})
+        except Exception:                            # noqa: BLE001
+            log.exception("could not put the question on the page")
+
+    def publish_consent_outcome(self, said: str, allowed: bool,
+                                ok: bool) -> None:
+        """What came of it, once it has actually come of it.
+
+        Nothing for a no: the row for that is the card disappearing, and a
+        transcript line about something that did not happen is noise on a
+        panel that is read from across a room.
+        """
+        if not allowed or not said:
+            return
+        # "system", not the way the answer arrived. The desk does not know
+        # whether somebody said yes or pressed it, and this row is about the
+        # action rather than about who authorised it.
+        self.publish_tool("consent", ok, "system", said)
+
+    def publish_tool(self, name: str, ok: bool, source: str,
+                     said: str = "") -> None:
+        """One row of the shared transcript per local tool call.
+
+        The name, whether it worked, and a fixed phrase — never the arguments
+        and never the result. `AssistantEvent` refuses both anyway; the reason
+        it refuses them is that this transcript is a presentation index shown
+        on a panel in a living room, and a tool result is where the contents of
+        somebody's calendar would arrive in it.
+
+        The agent's tools have appeared here since the coordinator existed and
+        the short loop's had not, so the page showed "checked the disk" for a
+        maintenance run and a bare sentence for a volume change. On a device
+        whose faults are reported as "it did something strange yesterday", what
+        it *did* is the question being asked.
+        """
+        try:
+            self.events.publish("tool", source if source in SOURCES else "system",
+                                tool=name, ok=bool(ok), text=said)
+        except Exception:                            # noqa: BLE001
+            log.exception("could not put %s in the transcript", name)
 
     def publish_photo(self, saved: dict) -> None:
         """Put a photograph that was kept into the conversation.

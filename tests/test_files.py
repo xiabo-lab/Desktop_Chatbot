@@ -21,6 +21,7 @@ or never finds the end of the part at all. It is tested at every offset.
 
 from __future__ import annotations
 
+import http.client
 import io
 import json
 import os
@@ -527,11 +528,28 @@ class TestTheRoutesOnThePhoneServer(unittest.TestCase):
         self.assertTrue((self.store.root / "photo.jpg").is_file())
 
     def test_an_upload_without_a_token_is_refused_and_the_socket_closed(self):
+        """No file is written, and the body is never read.
+
+        The status is allowed to go missing, and that is the point rather than
+        a weakening. The server answers 401 and closes with 4 KB still in the
+        receive queue -- deliberately, because reading an unbounded upload from
+        an unauthenticated caller is the thing being refused -- and on Windows
+        closing a socket with unread data sends an RST, which loses the
+        response that was already written. So the client sees either the 401 or
+        a reset connection, both of which are this server refusing.
+
+        Asserting only on the 401 made this fail about one run in six, always
+        somewhere else in a two-and-a-half-minute suite, which reads as an
+        unrelated flake. What must never vary is the file.
+        """
         body, content_type = multipart_body("sneaky.txt", b"x" * 4096)
-        response, _ = self.request("POST", "/call/v1/files/upload", body,
-                                   token=False,
-                                   headers={"Content-Type": content_type})
-        self.assertEqual(response.status, 401)
+        try:
+            response, _ = self.request("POST", "/call/v1/files/upload", body,
+                                       token=False,
+                                       headers={"Content-Type": content_type})
+            self.assertEqual(response.status, 401)
+        except (ConnectionError, http.client.HTTPException):
+            pass
         self.assertEqual(self.store.listing()[0].name, "photo.jpg")
         self.assertEqual(len(self.store.listing()), 1)
 

@@ -160,6 +160,74 @@ class TestWhatThePageIsTold(unittest.TestCase):
         self.assertIsNotNone(desk.waiting())
 
 
+
+class TestWhatTheTranscriptSaysHappened(unittest.TestCase):
+    """A row once it has happened, and not a moment before.
+
+    `delete_birthday` returns ok when the *question* was asked, so the row the
+    toolbox publishes says it asked. What actually happened is known here,
+    after somebody answered, and is published from here -- found on the device,
+    where the page read "removed a birthday" while the assistant was still
+    saying "shall I?" and the entry was still in the calendar.
+    """
+
+    def setUp(self):
+        self.done: list[tuple] = []
+        self.desk = ConsentDesk(on_done=lambda *row: self.done.append(row))
+
+    def ask(self, action=lambda: {"ok": True}):
+        return self.desk.ask("delete the birthday for Ann",
+                             "Shall I remove it?", action=action,
+                             said="removed a birthday")
+
+    def test_a_yes_is_reported_after_the_action_ran(self):
+        ran: list = []
+        pending = self.ask(action=lambda: ran.append(1) or {"ok": True})
+        self.desk.answer(pending.token, True)
+        self.assertEqual([1], ran)
+        self.assertEqual([("removed a birthday", True, True)], self.done)
+
+    def test_a_no_is_reported_as_not_allowed(self):
+        pending = self.ask()
+        self.desk.answer(pending.token, False)
+        self.assertEqual([("removed a birthday", False, True)], self.done)
+
+    def test_an_unclear_answer_is_reported_as_not_allowed(self):
+        """None means the matcher could not tell, which is a no."""
+        pending = self.ask()
+        self.desk.answer(pending.token, None)
+        self.assertEqual(False, self.done[0][1])
+
+    def test_an_action_that_threw_is_reported_as_not_ok(self):
+        def boom():
+            raise RuntimeError("the calendar is read-only")
+
+        pending = self.ask(action=boom)
+        self.desk.answer(pending.token, True)
+        self.assertEqual([("removed a birthday", True, False)], self.done)
+
+    def test_a_question_nobody_answered_reports_nothing(self):
+        """`on_change(None)` fires for a timeout too. Nothing happened, so
+        there is nothing to say happened."""
+        clock = Clock()
+        desk = ConsentDesk(clock=lambda: clock.now,
+                           on_done=lambda *row: self.done.append(row))
+        desk.ask("x", "Shall I?", action=lambda: {"ok": True},
+                 said="removed a birthday")
+        clock.now += 3600
+        self.assertIsNone(desk.waiting())
+        self.assertEqual([], self.done)
+
+    def test_a_listener_that_throws_does_not_break_the_answer(self):
+        def boom(*row):
+            raise RuntimeError("the page is gone")
+
+        desk = ConsentDesk(on_done=boom)
+        pending = desk.ask("x", "Shall I?", action=lambda: {"ok": True},
+                           said="removed a birthday")
+        self.assertTrue(desk.answer(pending.token, True)["allowed"])
+
+
 class TestTheVoiceLoopDecidesItAndNotTheModel(unittest.TestCase):
     """Asserted over the source, because what it guards is an absence.
 

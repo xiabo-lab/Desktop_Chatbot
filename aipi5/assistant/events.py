@@ -24,6 +24,7 @@ that shows less than happened and one that knows it did.
 from __future__ import annotations
 
 import itertools
+import logging
 import threading
 import time
 from collections import deque
@@ -40,6 +41,8 @@ from dataclasses import dataclass, field
 #: `capture`   a photograph that belongs in the transcript
 #: `done`      a delegated run finished, and what it cost
 #: `error`     something failed in a way the person should see
+log = logging.getLogger(__name__)
+
 KINDS = frozenset({"user", "assistant", "tool", "approval", "capture", "done",
                    "error"})
 
@@ -213,6 +216,12 @@ class EventLog(EventSink):
         self._lock = threading.Condition()
         self._rows: deque[AssistantEvent] = deque()
         self._ids = itertools.count(1)
+        #: The highest id ever issued, which is not the same as the cursor.
+        #: The cursor is the newest row still held; this keeps rising when
+        #: rows are evicted and does not fall when `clear()` empties the ring.
+        #: The difference is what tells a cursor from a previous *process* from
+        #: a cursor that was orphaned by a `clear()` — see `collect`.
+        self._issued = 0
         self._dropped = 0
 
     # ── writing ─────────────────────────────────────────────────────
@@ -220,7 +229,8 @@ class EventLog(EventSink):
     def publish(self, kind: str, source: str, **fields) -> AssistantEvent:
         checked = _validate(kind, source, fields)
         with self._lock:
-            event = AssistantEvent(id=next(self._ids), at=self.clock(),
+            self._issued = next(self._ids)
+            event = AssistantEvent(id=self._issued, at=self.clock(),
                                    kind=kind, source=source, **checked)
             self._rows.append(event)
             while len(self._rows) > self.depth:
@@ -237,9 +247,32 @@ class EventLog(EventSink):
 
         Returns (rows, cursor). The cursor is what to ask for next; it does not
         move when the batch is empty, because nothing was consumed.
+
+        **A cursor from before a restart is treated as a fresh start**, and
+        that is the one case where an empty batch does move it. `since` beyond
+        anything this process ever issued cannot be a cursor this process gave
+        out: the ids begin at 1 again when the service does, so a page holding
+        16 asks a ring that has reached 12 for rows after 16, is told 16, and
+        goes deaf. Forever — the reply carried the page's own number back, so
+        nothing brought it down again.
+
+        That is not a rare case. It is every `systemctl --user restart
+        aipi5.service`, which is the deploy step, on a kiosk with no keyboard
+        to reload the page with. Found on the device by restarting and watching
+        the panel stay silent while `/api/assistant/events` had the rows.
+
+        A cursor orphaned by `clear()` is a different thing and is left alone:
+        `_issued` does not fall, so the old cursor is still in range and still
+        asks for something that will never arrive, which is what `clear()`
+        promises. What must not happen is being handed the next session's rows
+        as though they were the tail of your own.
         """
         deadline = None if not timeout else time.monotonic() + timeout
         with self._lock:
+            if since > self._issued:
+                log.info("a cursor of %d from before this process started; "
+                         "sending the transcript from the beginning", since)
+                since = 0
             while True:
                 pending = [e for e in self._rows if e.id > since]
                 if pending:

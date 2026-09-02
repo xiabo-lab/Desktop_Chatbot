@@ -301,3 +301,75 @@ class TestDeletingABirthday(BirthdayCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWhatReachesTheTranscript(unittest.TestCase):
+    """Every local tool call becomes one row on the Assistant page.
+
+    The agent's tools have been in that transcript since the coordinator
+    existed and the short loop's had not, so a maintenance run showed "checked
+    the disk" and a volume change showed a bare sentence. On a device whose
+    faults arrive as "it did something strange yesterday", what it *did* is the
+    question.
+
+    What must **not** reach it is the other half, and it is the half with a
+    cost: the arguments and the result. `AssistantEvent` refuses both, so this
+    asserts the caller never offers them -- a row carrying a result is where
+    the contents of somebody's calendar arrives on a panel in a living room.
+    """
+
+    def setUp(self):
+        self.rows: list[tuple] = []
+        self.volume = FakeVolume()
+        self.box = ToolBox(volume=self.volume,
+                           on_tool=lambda *row: self.rows.append(row))
+
+    def test_a_tool_that_worked(self):
+        self.box.begin_turn("turn it down", "voice")
+        self.box.call("set_master_volume", json.dumps({"percent": 30}))
+        self.assertEqual([("set_master_volume", True, "voice",
+                           "set the volume")], self.rows)
+
+    def test_a_tool_that_failed(self):
+        self.volume.accepts = False
+        self.box.call("set_master_volume", json.dumps({"percent": 30}))
+        self.assertEqual(False, self.rows[0][1])
+
+    def test_a_tool_that_is_switched_off_still_leaves_a_row(self):
+        """The most useful row of the lot. "It ignored me" and "it could not"
+        are different faults and look identical from across the room."""
+        ToolBox(on_tool=lambda *row: self.rows.append(row)).call(
+            "set_master_volume", json.dumps({"percent": 30}))
+        self.assertEqual(("set_master_volume", False), self.rows[0][:2])
+
+    def test_an_invented_tool_name_leaves_a_row(self):
+        self.box.call("start_the_car", "{}")
+        self.assertEqual(("start_the_car", False, "voice", ""), self.rows[0])
+
+    def test_the_source_is_the_one_the_turn_arrived_by(self):
+        self.box.begin_turn("turn it down", "text")
+        self.box.call("get_master_volume", "{}")
+        self.assertEqual("text", self.rows[0][2])
+
+    def test_a_turn_that_never_began_is_attributed_to_the_microphone(self):
+        self.box.call("get_master_volume", "{}")
+        self.assertEqual("voice", self.rows[0][2])
+
+    def test_neither_the_arguments_nor_the_result_are_offered(self):
+        self.box.begin_turn("turn it down", "voice")
+        self.box.call("set_master_volume", json.dumps({"percent": 37}))
+        flat = " ".join(str(part) for part in self.rows[0])
+        self.assertNotIn("37", flat)
+        self.assertNotIn("percent", flat)
+
+    def test_a_transcript_that_raises_does_not_end_the_turn(self):
+        def broken(*row):
+            raise RuntimeError("no")
+
+        self.box.on_tool = broken
+        self.assertTrue(parse(self.box.call("get_master_volume", "{}"))["ok"])
+
+    def test_a_toolbox_with_no_transcript_still_works(self):
+        """A unit test's, and a build with no coordinator."""
+        box = ToolBox(volume=FakeVolume())
+        self.assertTrue(parse(box.call("get_master_volume", "{}"))["ok"])

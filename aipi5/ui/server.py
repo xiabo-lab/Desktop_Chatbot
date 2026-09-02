@@ -756,7 +756,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(coordinator.submit_text(
                 str(payload.get("text", ""))[:MAX_ASK],
                 str(payload.get("source", "text")),
-                str(payload.get("language", "en"))[:8]))
+                # None rather than "en" when the caller did not say. The panel
+                # does not know what somebody typed, and guessing English
+                # answers 音量调到二十 in English after carrying it out.
+                (str(payload.get("language"))[:8]
+                 if payload.get("language") else None)))
         elif path == "/api/assistant/cancel":
             self._json(coordinator.cancel(str(payload.get("run", ""))[:64]))
         elif path == "/api/assistant/approval":

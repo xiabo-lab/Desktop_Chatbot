@@ -306,7 +306,8 @@ class Coordinator:
 
     def __init__(self, *, events: EventLog | None = None, respond=None,
                  agent=None, speak=None, turn_wait_s: float = TURN_WAIT_S,
-                 bridge=None, consent=None, on_turn=None, after_turn=None):
+                 bridge=None, consent=None, on_turn=None, after_turn=None,
+                 detect=None):
         self.events = events if events is not None else EventLog()
         #: `respond(text, language) -> str`. The short tool loop, in the voice
         #: process. None where conversation is disabled.
@@ -339,6 +340,17 @@ class Coordinator:
         #: but a permission that outlives its turn is the kind of thing nobody
         #: notices until it matters.
         self.after_turn = after_turn
+        #: `detect(text) -> "en" | "zh"`, for a turn that arrived without a
+        #: language. AIA's `reply_language` in the voice process.
+        #:
+        #: Only the spoken paths know their language for free: the recogniser
+        #: heard the audio and said which of its five languages it was. A
+        #: sentence typed into the compose box or sent from a phone has no
+        #: recogniser behind it, and defaulting those to English meant
+        #: 音量调到二十 was carried out correctly and then answered in English
+        #: -- found on the device, not in the suite, because every test here
+        #: passes a language.
+        self.detect = detect
         self.turn_wait_s = turn_wait_s
         self.bridge = bridge if bridge is not None else (
             AgentBridge(agent, self.events, on_answer=self._delegated_answer)
@@ -350,7 +362,7 @@ class Coordinator:
 
     # ── the one door ────────────────────────────────────────────────
 
-    def submit_voice(self, text: str, language: str = "en") -> dict:
+    def submit_voice(self, text: str, language: str | None = "en") -> dict:
         """Something said out loud that the fast router declined.
 
         The router still matches first, in `main.py`, in about nine
@@ -359,7 +371,7 @@ class Coordinator:
         return self._turn_for(text, "voice", language)
 
     def submit_text(self, text: str, source: str = "text",
-                    language: str = "en") -> dict:
+                    language: str | None = None) -> dict:
         """Typed on the panel, dictated into the compose box, or sent by phone.
 
         The same path as `submit_voice` on purpose. It used to be `agent.ask`
@@ -372,10 +384,29 @@ class Coordinator:
             source = "text"
         return self._turn_for(text, source, language)
 
-    def _turn_for(self, text: str, source: str, language: str) -> dict:
+    def _language_of(self, text: str, named: str | None) -> str:
+        """What to answer in. A named language wins; otherwise read the text.
+
+        Named wins because the only callers that name one are the spoken
+        paths, where the recogniser heard the audio -- a better source than
+        the script of a transcript, and `reply_language` is written to refine
+        it rather than override it.
+        """
+        if named:
+            return named
+        if self.detect is None:
+            return "en"
+        try:
+            return str(self.detect(text)) or "en"
+        except Exception:                            # noqa: BLE001
+            log.exception("could not tell what language that was")
+            return "en"
+
+    def _turn_for(self, text: str, source: str, language: str | None) -> dict:
         text = (text or "").strip()
         if not text:
             return {"ok": False, "error": "there was nothing in that message"}
+        language = self._language_of(text, language)
 
         if not self._turn.acquire(timeout=self.turn_wait_s):
             # Not queued. Whoever is waiting on this has been waiting half a
@@ -543,7 +574,15 @@ class Coordinator:
         if self.agent is not None:
             live = self.agent.snapshot()
             if isinstance(live, dict):
-                state["pending"] = live.get("pending")
+                # Only when this process is not holding one. The line above
+                # says a local question wins and this one used to overwrite it
+                # unconditionally, so with the agent installed and idle —
+                # which is every device — `live["pending"]` was None and the
+                # spoken confirmation never reached the page. Found on the
+                # device: "shall I remove it?" was said out loud and the panel
+                # showed no card to answer it with.
+                if state["pending"] is None:
+                    state["pending"] = live.get("pending")
                 state["busy"] = bool(live.get("busy")) or state["busy"]
                 state["run"] = str(live.get("run", "") or state["run"])[:64]
                 state["state"] = str(live.get("state", "idle"))
