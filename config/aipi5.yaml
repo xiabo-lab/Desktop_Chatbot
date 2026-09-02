@@ -734,3 +734,42 @@ assistant:
   # game — and the only way to find out whether the wake word fired is to say
   # the whole command and see.
   wake_chime: true
+
+  # Which everyday tools the model is offered.
+  #
+  # A **rollout order**, not a security boundary. What bounds a tool is the
+  # validation in its handler and the object it was injected with; this decides
+  # which of those objects the toolbox is handed at all, so a tool that is off
+  # is not in the list the model is shown and cannot be called by name either.
+  #
+  # Comment lines out and restart to enable one at a time, in roughly this
+  # order -- deploy, use the device for a day, then the next. Shipping every
+  # persistent or outward-facing side effect in one release means that when
+  # something is wrong there is no way to tell which of six new things did it,
+  # on a device whose failures are reported as "it did something strange
+  # yesterday".
+  #
+  # Remove the key entirely for all of them, which is what a finished rollout
+  # looks like.
+  #
+  #   volume     the master output level. Local, and reversible by saying the
+  #              opposite.
+  #   calendar   the local family calendar. Persistent; deleting asks out loud
+  #              first and names the person.
+  #   reminders  survive a reboot and are delivered to a paired phone.
+  #   photos     a still kept in the transfer folder. On disk, nowhere else.
+  #   prices     the network, and a fact somebody may act on. Never answered
+  #              from the model's memory -- see aipi5/tools/prices.py.
+  #   call       rings a phone in somebody's pocket. Asks out loud first.
+  #   launch     starts an application in the room. Refused on any turn whose
+  #              utterance did not ask for one.
+  #   delegate   spends one of the day's maintenance runs, for minutes.
+  tools:
+    - volume
+    - calendar
+    - reminders
+    - photos
+    - prices
+    - call
+    - launch
+    - delegate

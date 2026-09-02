@@ -324,6 +324,10 @@ class Assistant:
         # the answer. See `aipi5/assistant/consent.py`.
         self.consent = ConsentDesk()
 
+        #: Which everyday tools this deployment offers. A rollout order rather
+        #: than a security boundary — see `TOOL_SWITCHES`.
+        tool = settings.assistant.tool
+
         # The toolbox is built *here*, after the volume control, the calendar,
         # the consent desk and the agent proxy, rather than up beside the model
         # client where it used to sit. Everything in it is injected and half of
@@ -344,8 +348,16 @@ class Assistant:
             # `VolumeControl.set()` and `BirthdayStore.save()` directly, which
             # is what keeps "there is no path from model output to a shell or a
             # filesystem path" true of `aipi5/llm/tools.py`.
-            volume=self.volume,
-            birthdays=self.birthdays,
+            #
+            # Every one of these is `X if enabled else None`, and `ToolBox`
+            # leaves a tool out of `schemas()` when the thing behind it is
+            # None. So `assistant.tools` in the YAML is a rollout order — one
+            # tool at a time, deployed and used for a day before the next —
+            # expressed as which objects the toolbox is handed. It is *not* a
+            # security boundary: what bounds a tool is the validation in its
+            # handler. See `TOOL_SWITCHES` in `aipi5/core/config.py`.
+            volume=self.volume if tool("volume") else None,
+            birthdays=self.birthdays if tool("calendar") else None,
             # Where deleting a birthday — and, later, ringing a phone — waits
             # for a person. The model asks the question; it never decides the
             # answer. See `aipi5/assistant/consent.py`.
@@ -355,7 +367,7 @@ class Assistant:
             # survival, retry and the delivery handshake with `Housekeeping`
             # all belong to one owner; a second copy here would be a second
             # file of reminders the phone never hears about.
-            agent=self.agent,
+            agent=self.agent if tool("reminders") else None,
             # Taking a picture and keeping it, which is not what the camera
             # already does. `describe_camera_image` borrows the camera for a
             # moment and lets tmpfs reclaim the file; this copies it into the
@@ -363,21 +375,23 @@ class Assistant:
             # are two requests. See `aipi5/photos/capture.py`.
             photos=PhotoCapture(
                 camera=self.camera if settings.camera.enabled else None,
-                files=self.files),
+                files=self.files) if tool("photos") else None,
             on_capture=self.publish_photo,
             # A price, or nothing. Never the model's memory: a remembered
             # price is months out of date and sounds exactly like a current
             # one to somebody standing in a kitchen. See
             # `aipi5/tools/prices.py`.
-            prices=self.prices,
+            prices=self.prices if tool("prices") else None,
             # The launchers, for `open_known_app` and nothing else. Both take
             # a value from an enum built in code — never a URL, a command or a
             # path — and the tool is refused outright on any turn whose
             # utterance did not ask for something to be opened or played. See
             # `asks_to_open`, and the rule at the top of `aipi5/llm/tools.py`
             # about the player starting on its own. The model may drive the player and may not start it
-            browser=self.browser if settings.browser.enabled else None,
-            launcher=self.launcher if settings.kodama.enabled else None,
+            browser=(self.browser if settings.browser.enabled
+                     and tool("launch") else None),
+            launcher=(self.launcher if settings.kodama.enabled
+                      and tool("launch") else None),
             settings=settings,
         )
 
@@ -407,7 +421,8 @@ class Assistant:
         # the coordinator. The alternative is a `lambda` reaching for an
         # attribute that does not exist yet, which is the pattern used three
         # times above and is one indirection more than this needs.
-        self.toolbox.delegate = self.coordinator.delegate
+        self.toolbox.delegate = (self.coordinator.delegate
+                                 if settings.assistant.tool("delegate") else None)
 
         self.call = CallServer(settings.call, hub=self.call_hub,
                                devices=self.call_devices,
@@ -418,7 +433,8 @@ class Assistant:
         # rather than at construction. It is the *same object* the panel's
         # button reaches, which is the whole point of extracting it: one
         # implementation of start-the-session, tell-the-page, send-the-push.
-        self.toolbox.calls = self.call.controller
+        self.toolbox.calls = (self.call.controller
+                              if settings.assistant.tool("call") else None)
         #: What the call was doing last time we looked, so a transition can be
         #: acted on once rather than on every poll.
         self._call_live = False

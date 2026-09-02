@@ -92,6 +92,64 @@ The blurred rectangle on Music is the signed-in account. Nothing else is
 retouched — the weather, the scores, the free space and the lunar dates are
 what the device was showing when the shutter went.*
 
+## One assistant, two processes
+
+There is one thing to talk to and one place to talk to it. Underneath there are
+still two Linux services and a root boundary between them, and none of that
+moved:
+
+```text
+microphone / Assistant page / phone
+                    |
+                    v
+          Coordinator  (aipi5/assistant/)
+                    |
+       +------------+--------------------+
+       |                                 |
+exact safe command              the model, with typed tools
+(AIA fast router, ~9 ms)                 |
+       |             +-------------------+-------------------+
+       |             |            |                          |
+       v             v            v                          v
+ local action   current facts  persistent data      delegate_agent_task
+ volume/Kodama  weather/news/  reminder/calendar             |
+ games/browser  price/search   camera photo                  v
+       |             |            |                  aipi5-agent.service
+       +-------------+------------+                          |
+                     |                                       v
+                     +---------> one transcript <--- approvals / root helper
+                                       |
+                                       v
+                              Assistant page + TTS
+```
+
+The coordinator is not a second agent loop. It owns presentation,
+cancellation and the decision to hand long work over; which tool to use stays
+with the model, and what a tool may do stays in the handler beside it.
+
+The reason it exists is a failure with no error message. There used to be two
+surfaces — *Talk* and *Agent* — and the same sentence reached different tools
+and different policy depending on which somebody had opened, with nothing on
+screen to say which. Typed, "set the volume to thirty" spent one of the day's
+maintenance runs and up to 24 model steps doing what the voice loop does in one
+call; said out loud, it took the short path. Now all four ways in — the wake
+word, the Listen button, the compose box, the phone — go through one door.
+
+What did **not** merge is as deliberate. `aipi5-agent.service` still runs as a
+different user behind a Unix socket, the root helper still owns its own
+allowlists, restarting the assistant still costs an active run nothing, and the
+voice process still holds no client for the helper — asserted statically over
+every module it loads, because a `HelperClient` imported into `main.py` would
+start, run, pass every other test, and quietly put a root-owned operation table
+one attribute lookup away from a microphone.
+
+The four records stayed four, too. The 24-hour audible log is on disk,
+role-filtered and swept; the model's context is a handful of turns forgotten
+after a silence; the agent's reminders and notes are durable and written only
+when asked; and the page's transcript is a bounded ring that writes nothing
+anywhere. Merging them would have been fewer moving parts and a permanent
+unfiltered record of a living room.
+
 ## It is AIA with a conversational layer, not a fork of it
 
 This is the single most important thing to understand about the repository, and
@@ -168,7 +226,20 @@ Plus:
 | "what time is it" | the device's clock — never the model's guess |
 | "what do you see" | one fresh frame from the Logitech BRIO, described by the vision model |
 | "tell me a bedtime story about a dragon" | a child-safe story of a length you can ask for |
+| "turn it down" / "把音量调到百分之三十" | sets the one master level every application on the device meets at, and reads back what it actually took |
+| "put Mum's birthday in, the fifteenth of the eighth lunar month" | writes to **this device's** family calendar — the one on the Calendar screen, not Google's. Deleting one asks out loud first, by name |
+| "remind me tomorrow at nine to call Mum" | a reminder that survives a reboot and arrives on the paired phone. Straight to the schedule: no maintenance run, no model, no budget |
+| "take a picture" | one still, kept in the transfer folder the Files screen shows — as distinct from "what do you see", which takes one to answer a question and does not keep it |
+| "what's Bitcoin worth?" | a real quote with a timestamp, or "I could not check". Never a number from the model's memory |
+| "call my phone" | asks out loud first, then rings a paired phone. There is no way to give it a number |
+| "why did the screen go blank last night?" | handed to the maintenance agent, which spends minutes on it while the checks stream into the same transcript |
 | anything else | a conversation, in about 60 words, in the language you asked in |
+
+None of those needs the exact words. The fast router still matches the phrases
+above in about nine milliseconds without a network — say them and the model is
+never asked — and everything it declines goes to the model with typed tools, so
+"turn it down a bit", "把生日加上" and "can you bring YouTube up" reach the same
+place. **Nobody has to read a command list.** That was the point of the work.
 
 …and seven buttons, each of which opens its own page:
 
@@ -854,22 +925,56 @@ tuned on the actual Pi.
 
 ## What the model may and may not do
 
-`aipi5/llm/tools.py` is the security boundary and is worth reading in full — it
-is one screen. The model never executes anything: it emits a tool name and a
-JSON blob, the name is looked up in a fixed dictionary, the arguments are
-validated, and a Python function is called. There is no path from model output
-to a shell, a filesystem path, a URL, or an argument interpolated into a
-command line.
+`aipi5/llm/tools.py` is the security boundary and is worth reading in full. The
+model never executes anything: it emits a tool name and a JSON blob, the name
+is looked up in a fixed dictionary, the arguments are validated, and a Python
+function is called. There is no path from model output to a shell, a filesystem
+path, a URL, or an argument interpolated into a command line — every tool that
+touches the world takes a value from an enum built in code or an id that was
+looked up and found.
 
 The Kodama commands it may reach are filtered on AIA's `confirm` flag rather
 than on a deny list, so a destructive command added to AIA tomorrow is excluded
 the moment it is declared. `tests/test_tool_safety.py` asserts the mechanism as
 well as today's outcome.
 
+**Three things it may ask for and never decide.**
+
+*Ringing a phone, and deleting from the calendar.* The tool does not do it. It
+parks a closure on the consent desk and hands the model a question to say out
+loud; what comes back is decided by a phrase matcher over the raw transcript,
+or by a button. A model reporting "they said yes" is reporting, not deciding.
+Silence, "hang on", an expired token and a token already answered are all a no,
+because for something that cannot be taken back "I could not tell" has to mean
+no.
+
+*Starting an application.* This used to be structural — a `ToolBox` could not
+be given a launcher — and the reason was a real failure: any music request at
+all, including one the model inferred from a half-heard sentence, started a
+player that resumes its previous queue and begins playing into the room. It was
+reported as the player "starting on its own". What replaced it is not the
+model's restraint: `begin_turn` reads the raw utterance for a word meaning open
+or play, before the model sees the sentence, and the tool is refused for the
+whole turn when there is none.
+
+*A current fact.* A model asked what Bitcoin is worth produces a confident
+number in the right currency with the right number of digits, and it is
+whatever was true when the model was trained. Nothing about it looks wrong from
+a kitchen. So `get_asset_price` either has a quote with a timestamp or it
+returns an error, and a cached one carries its age out loud.
+
+**Turning them on one at a time.** `assistant.tools` in the YAML is a rollout
+order rather than a security boundary — what bounds a tool is the validation in
+its handler; this decides which objects the toolbox is handed at all. Six of
+these tools have a persistent or outward-facing effect, and shipping all six in
+one release means that when something is wrong there is no way to tell which
+did it, on a device whose failures are reported as "it did something strange
+yesterday".
+
 ## Tests
 
 ```bash
-python -m unittest discover -s tests -t .    # 1,511 tests, no hardware needed
+python -m unittest discover -s tests -t .    # 1,904 tests, no hardware needed
 ```
 
 No microphone, no camera, no accelerator, no network, no API key. That

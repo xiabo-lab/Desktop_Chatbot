@@ -3900,3 +3900,141 @@ and their `2 steps · 1 checks · 5s` summaries), and `POST
 /api/agent/dictate` came back in 4.1 s with "I didn't catch that." after
 nobody spoke, logging `dictation: no speech in the capture window (4056 ms)`
 and no budget verdict.
+
+### 69. One assistant: Talk and Agent become one page, one door, one policy
+
+The home screen had *Talk* and *Agent* on it, and the person standing in front
+of the panel had to decide which of two assistants their sentence was for.
+Nobody did, and there was no honest answer to give them. "Why did the screen go
+blank last night" and "set the volume to thirty" are the same request made of
+the same thing; only the machinery behind them differs.
+
+The cost was not cosmetic. Typing a sentence sent `agent.ask` unconditionally,
+so "set the volume to thirty" spent one of the day's six maintenance runs and
+up to 24 model steps doing what the voice loop does in one call — and saying it
+out loud took the short path, with different tools and different policy, and
+nothing on screen to say which you had reached.
+
+**What merged, and what deliberately did not.** The page merged: `#page-agent`
+is gone and its transcript, compose box, Dictate button, Stop, run state and
+approval card are on the renamed Assistant page. The *processes* did not.
+`aipi5-agent.service` still runs as a different user behind a Unix socket, the
+root helper still owns its own allowlists, restarting the assistant still costs
+an active run nothing, and the voice process still holds no client for the
+helper. That last one is asserted statically over every module the voice
+service loads, because it is the property with no symptom: a `HelperClient`
+imported into `main.py` starts, runs, passes every other test in the suite, and
+quietly puts a root-owned operation table one attribute lookup away from a
+microphone anybody in the room can talk to through a window.
+
+The four records stayed four, too — the 24-hour audible log on disk and swept,
+the model's short context forgotten after a silence, the agent's durable notes,
+and the page's bounded ring that writes nothing anywhere. Merging them would
+have been fewer moving parts and a permanent unfiltered record of a living
+room, kept beside one that was deliberately filtered.
+
+**`/v1/chat/completions` → `/v1/responses`, for the conversation only.** Not a
+preference. `gpt-5.6-luna` carries a default reasoning effort and answers a
+Chat Completions request that offers it tools with
+
+    400 — Function tools with reasoning_effort are not supported for
+    gpt-5.6-luna in /v1/chat/completions. To use function tools, use
+    /v1/responses or set reasoning_effort to 'none'.
+
+The agent's `step()` did **not** move with it. Its history is a list of chat
+messages that `aipi5/agent/loop.py` builds, appends to and compacts, and the
+two endpoints disagree about the shape of exactly the parts that matter — a
+tool call and its result. Moving both at once would have left no working
+version to compare against on the one path where a bug is a maintenance run
+quietly doing the wrong thing.
+
+That split forced a smaller one: `aipi5/agent/tools.py` imported `_schema` from
+the voice toolbox, so reshaping the voice schemas silently reshaped every tool
+the *agent* offers, and the agent has no test that renders a schema against a
+real API. Two files with twenty similar lines is the cheaper mistake.
+
+#### The rule that runs through all of it
+
+The model asks. Something that is not the model decides.
+
+*Consent.* Ringing a phone and deleting a birthday do not happen in the tool
+call. The tool parks a closure and hands back a question to say out loud; the
+answer comes from `is_affirmative` over the raw transcript, or from a button.
+Silence, "hang on", an expired token and a token already answered are all a no.
+The token comes off the desk *before* the action runs, which is the difference
+between one phone ringing and two.
+
+*Launching.* `open_known_app` can start the music player, which the model could
+not do at all before — because of a real failure: `execute_kodama_command` used
+to answer "call open_kodama first" whenever the player was down, so any music
+request, including one inferred from a half-heard sentence, started a player
+that resumes its previous queue and begins playing into the room. Reported as
+the player "starting on its own". What replaced the old structural guarantee is
+`begin_turn`, which reads the raw utterance for a word meaning open or play
+before the model sees the sentence.
+
+*Facts.* A model asked what Bitcoin is worth produces a confident number in the
+right currency with the right number of digits, and it is whatever was true at
+training time. Nothing about it looks wrong from a kitchen. So there is a quote
+with a timestamp or there is an error, and a cached one carries its age.
+
+#### Eight things this shook out
+
+**The bridge spun a Pi core.** `pump` hands its timeout to the proxy, and the
+poll loop assumed a poll with nothing to report blocks out there for twenty
+seconds. That assumption belongs to `aipi5-agent.service`, not to the file
+making it. When it failed — a socket that is gone, a stub — two bridges took a
+core each, and the damage surfaced as an unrelated socket test three files
+later timing out. There is a floor under a pass now.
+
+**One error row, not one per poll.** An unreachable agent filled the whole
+400-row ring with the same sentence inside a second, so the transcript somebody
+came back to read was replaced by the news that it was gone.
+
+**Strict mode admits no optional argument.** Every property must be in
+`required`, so an optional one is declared nullable and listed anyway — and the
+model then sends an explicit `null`, which is why `args.get("question", "")`
+was wrong in three handlers: it returns None, not `""`, and None reached
+`.strip()`.
+
+**An unknown POST path was not draining its body.** Answering and closing with
+a body still in the receive queue is an RST on Windows, so the caller sees a
+reset connection instead of the 404 — a page posting to a renamed route reports
+"the assistant is not answering" and sends whoever is debugging it to the wrong
+service. `aipi5/call/server.py` had learned this already.
+
+**English separates its particles.** "Put *some music* on" is what people say,
+and a contiguous "put on" matches almost nothing anybody utters. `\b` on the
+verbs matters for the opposite reason: without it "what's playing" contains
+"play", and that is a question about the player rather than a request to start
+one.
+
+**The page nearly drew every line twice.** `/api/feed` and
+`/api/assistant/events` carry the same spoken turns at different levels, so
+migrating the compose box without also stopping `addMessage` writing to both
+feeds would have doubled the transcript, a second apart, with nothing to say
+which was which.
+
+**Ordering, again, from the other side.** Publishing a photograph inside
+`answer()` puts the picture above the sentence that introduces it. `finish_turn`
+drains a queue after the reply, which makes it "here is what I can see", then
+the photograph, every time rather than most times — the same problem the home
+screen solves with `await drainFeed()`, solved on the server for the page that
+no longer reads that feed.
+
+**Two tests had to become import checks.** `events.py` and `coordinator.py`
+both name `ConversationLog` and `Conversation` in prose, explaining what they
+are *not*. A substring check calls that a dependency. This project's oldest
+testing trap, and it caught both on their first run.
+
+#### Not verified on the device
+
+Everything here is asserted off-device. The suite is **1,904 tests, 25 skipped,
+no failures**, with no microphone, camera, accelerator, network or API key. The
+hardware ownership matrix in §8 of the plan — camera → call → camera, camera →
+game → camera, browser hand control → close → camera — has not been re-run
+since the merge, the screenshots still show the old Talk page and the
+nine-button grid, and the fourteen end-to-end phrases have not been said out
+loud. `assistant.tools` in the YAML is the rollout order for doing that: one
+tool, deployed and used for a day, then the next.
+

@@ -519,9 +519,48 @@ class FilesConfig:
     max_concurrent: int = 2
 
 
+#: Every tool that can be turned off from the YAML, and what it is off by
+#: default *for*. Nothing here is a security control — a tool's real bounds are
+#: the validation in its handler and the object it was or was not injected
+#: with. This is a rollout order.
+#:
+#: The order matters and is the one in the plan: deploy, use the device for a
+#: day, then enable the next. Shipping every persistent or outward-facing side
+#: effect in one release means that when something is wrong there is no way to
+#: tell which of six new things did it, on a device whose failures are reported
+#: as "it did something strange yesterday".
+#:
+#: A name absent from the YAML is on. New tools default to available, so this
+#: is a list of things somebody has deliberately switched off rather than a
+#: list that has to be kept complete.
+TOOL_SWITCHES = (
+    "volume",        # local, reversible by saying the opposite
+    "calendar",      # local and persistent; deleting asks first
+    "reminders",     # persistent, and delivered to a phone
+    "photos",        # persistent, on disk, nowhere else
+    "prices",        # the network, and a fact somebody may act on
+    "call",          # rings a phone in somebody's pocket
+    "launch",        # starts an application in a room
+    "delegate",      # spends one of the day's maintenance runs
+)
+
+
 @dataclass(frozen=True)
 class AssistantConfig:
     llm_enabled: bool = True
+    #: Which everyday tools the model is offered. See `TOOL_SWITCHES` — this
+    #: is a rollout order, not a security boundary.
+    tools: frozenset = frozenset(TOOL_SWITCHES)
+
+    def tool(self, name: str) -> bool:
+        """Whether `name` may be offered. Unknown names are on.
+
+        Unknown-is-on rather than unknown-is-off, because the alternative is a
+        tool that was added, tested, deployed and then silently not offered
+        because nobody thought to add a line to a file — which presents as the
+        model refusing to do something it plainly can.
+        """
+        return name not in TOOL_SWITCHES or name in self.tools
     retention_hours: float = 24.0
     #: Play a short rising chime the instant the wake word fires.
     #:
@@ -531,6 +570,27 @@ class AssistantConfig:
     #: rather than a constant because it is the one thing here that plays a
     #: sound into a room where somebody might be asleep.
     wake_chime: bool = True
+
+
+def _tool_switches(raw) -> frozenset:
+    """Which everyday tools are offered, from `assistant.tools` in the YAML.
+
+    Absent means all of them, which is what an installation that has finished
+    its rollout looks like and what every test wants. A list names exactly the
+    ones to offer; a name that is not a switch is a mistake worth complaining
+    about at startup rather than a tool that silently never appears.
+    """
+    if raw is None:
+        return frozenset(TOOL_SWITCHES)
+    if not isinstance(raw, (list, tuple)):
+        raise ConfigError("assistant.tools must be a list of tool names")
+    wanted = {str(name).strip().lower() for name in raw}
+    unknown = wanted - set(TOOL_SWITCHES)
+    if unknown:
+        raise ConfigError(
+            f"assistant.tools names {sorted(unknown)}, which is not a tool. "
+            f"The switches are: {', '.join(TOOL_SWITCHES)}.")
+    return frozenset(wanted)
 
 
 @dataclass(frozen=True)
@@ -1013,6 +1073,7 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
             retention_hours=_positive(assistant.get("retention_hours", 24.0), 24.0,
                                       "assistant.retention_hours"),
             wake_chime=bool(assistant.get("wake_chime", True)),
+            tools=_tool_switches(assistant.get("tools")),
         ),
         source=source,
     )
