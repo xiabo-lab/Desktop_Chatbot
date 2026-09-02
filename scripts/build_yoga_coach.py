@@ -39,8 +39,8 @@ from PIL import Image, ImageChops, ImageDraw
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from aipi5.games.yoga import rig  # noqa: E402
-from aipi5.games.yoga.poses import AUTHORED, POSES  # noqa: E402
+from aipi5.games.yoga import rig
+from aipi5.games.yoga.poses import AUTHORED, POSES
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ARTWORK = ROOT / "artwork" / "yoga"

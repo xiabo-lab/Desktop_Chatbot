@@ -28,9 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from design.yoga_v2 import catalog, courses                      # noqa: E402
-from design.yoga_v2.catalog import BANDS                          # noqa: E402
-from design.yoga_v2.courses import (ARRIVAL, COURSES, LEVELS, RELAX,  # noqa: E402
+from design.yoga_v2 import catalog, courses
+from design.yoga_v2.courses import (ARRIVAL, COURSES, LEVELS, RELAX,
                                     WARMUP, transition_between)
 
 #: **15-20 minutes is the requirement. 17-19 is a preference, and nothing

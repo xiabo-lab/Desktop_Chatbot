@@ -132,7 +132,7 @@ def send(request, timeout: float) -> dict:
         detail = exc.read().decode("utf-8", "replace")
         try:
             message = json.loads(detail)["error"]["message"]
-        except Exception:
+        except Exception:  # noqa: BLE001
             message = detail.strip()[:800]
         raise SystemExit(f"the API refused this ({exc.code}): {message}")
     except urllib.error.URLError as exc:

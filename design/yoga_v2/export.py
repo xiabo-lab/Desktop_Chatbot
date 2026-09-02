@@ -24,10 +24,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from design.yoga_v2 import catalog, courses                       # noqa: E402
-from design.yoga_v2.catalog import BANDS, breaths_for             # noqa: E402
-from design.yoga_v2.courses import COURSES, HEIGHT, transition_between  # noqa: E402
-from design.yoga_v2.freeze import fingerprint as _fp  # noqa: E402
+from design.yoga_v2 import catalog
+from design.yoga_v2.catalog import breaths_for
+from design.yoga_v2.courses import COURSES, HEIGHT, transition_between
+from design.yoga_v2.freeze import fingerprint as _fp
 
 FINGERPRINT = _fp()
 

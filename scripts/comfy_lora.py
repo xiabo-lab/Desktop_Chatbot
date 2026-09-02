@@ -26,8 +26,8 @@ from PIL import Image
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from scripts.build_yoga_coach import ARTWORK, clean, sources  # noqa: E402
-from scripts.comfy_coach import Comfy  # noqa: E402
+from scripts.build_yoga_coach import ARTWORK, clean, sources
+from scripts.comfy_coach import Comfy
 
 #: Where the images land inside ComfyUI's `input/`, and the word that will mean
 #: "this character" in a prompt.

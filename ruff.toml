@@ -17,6 +17,15 @@
 # less readable folded than left alone.
 line-length = 110
 
+# **Ruff is this project's linter, and that choice has a consequence worth
+# writing down.** Thirty-six `# noqa: E402` comments were removed as unused,
+# and they were not meaningless: they sat on the `aipi5` imports that follow a
+# `sys.path.insert` in the scripts, which pycodestyle and flake8 do flag and
+# ruff deliberately does not. So a flake8 run over this tree would now report
+# them. Nobody runs one -- there is no flake8 config here and never was -- and
+# the alternative was thirty-six comments that `RUF100` will offer to delete on
+# every run forever. The `sys.path` line above each of them says what they said.
+
 extend-exclude = [
     # Timestamped copies of source made before a deploy, kept on the device to
     # answer "is this new code slower?". They are old code by definition and

@@ -19,7 +19,6 @@ knows they are changing something a human signed off.
 from __future__ import annotations
 
 import hashlib
-import sys
 
 from design.yoga_v2 import catalog
 from design.yoga_v2.courses import COURSES

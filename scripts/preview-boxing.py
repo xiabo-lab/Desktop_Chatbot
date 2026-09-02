@@ -269,7 +269,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self):  # noqa: N802
+    def do_GET(self):
         path = urlparse(self.path).path
         if path == "/api/games":
             self._json({"games": catalogue()})
@@ -303,7 +303,7 @@ class Handler(SimpleHTTPRequestHandler):
         else:
             super().do_GET()
 
-    def do_POST(self):  # noqa: N802
+    def do_POST(self):
         length = int(self.headers.get("Content-Length", "0") or 0)
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")

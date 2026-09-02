@@ -42,7 +42,7 @@ asked to breathe fast, which is the opposite of the point.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # ── posture families ─────────────────────────────────────────────────────────
 #

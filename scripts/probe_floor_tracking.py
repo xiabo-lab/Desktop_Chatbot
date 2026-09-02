@@ -78,13 +78,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from aipi5.core import config as config_mod                      # noqa: E402
-from aipi5.games.yoga import rig                                 # noqa: E402
-from aipi5.games.yoga.poses import POSES                         # noqa: E402
-from aipi5.motion import hailo_pose                              # noqa: E402
-from aipi5.motion.camera_lease import CameraLease, CameraLeaseError  # noqa: E402
-from aipi5.motion.pose_types import KEYPOINT_NAMES               # noqa: E402
-from aipi5.vision.camera import Camera                           # noqa: E402
+from aipi5.core import config as config_mod
+from aipi5.games.yoga import rig
+from aipi5.games.yoga.poses import POSES
+from aipi5.motion import hailo_pose
+from aipi5.motion.camera_lease import CameraLease, CameraLeaseError
+from aipi5.motion.pose_types import KEYPOINT_NAMES
+from aipi5.vision.camera import Camera
 
 #: The candidate capture modes, and why each is on the list.
 #:
@@ -698,7 +698,7 @@ def framing(lease, engine, seconds: float, confidence: float,
             cv2.namedWindow(window, cv2.WINDOW_NORMAL)
             cv2.setWindowProperty(window, cv2.WND_PROP_FULLSCREEN,
                                   cv2.WINDOW_FULLSCREEN)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             print(f"  (no live window: {exc})")
             window = ""
 
@@ -1028,7 +1028,7 @@ def beep(count: int = 1, hertz: int = 880, ms: int = 140) -> None:
         for _ in range(count):
             subprocess.run(["aplay", "-q", str(path)], timeout=3,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -1187,7 +1187,7 @@ def main() -> int:
                     cv2.namedWindow(run_window, cv2.WINDOW_NORMAL)
                     cv2.setWindowProperty(run_window, cv2.WND_PROP_FULLSCREEN,
                                           cv2.WINDOW_FULLSCREEN)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001
                     print(f"  (no live window: {exc})")
                     run_window = ""
             if args.framing:

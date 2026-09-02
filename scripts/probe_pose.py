@@ -25,11 +25,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from aipi5.core import config as config_mod          # noqa: E402
-from aipi5.motion import hailo_pose                  # noqa: E402
-from aipi5.motion.camera_lease import CameraLease, CameraLeaseError  # noqa: E402
-from aipi5.motion.pose_types import KEYPOINT_NAMES, WRISTS   # noqa: E402
-from aipi5.vision.camera import Camera               # noqa: E402
+from aipi5.core import config as config_mod
+from aipi5.motion import hailo_pose
+from aipi5.motion.camera_lease import CameraLease, CameraLeaseError
+from aipi5.motion.pose_types import KEYPOINT_NAMES, WRISTS
+from aipi5.vision.camera import Camera
 
 
 def main() -> int:

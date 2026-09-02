@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import pathlib
 import sys
 
@@ -29,8 +28,8 @@ from PIL import Image, ImageChops
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from scripts.build_yoga_coach import ARTWORK  # noqa: E402
-from scripts.comfy_video import CHROMA, STAGE_H, STAGE_W  # noqa: E402
+from scripts.build_yoga_coach import ARTWORK
+from scripts.comfy_video import STAGE_H, STAGE_W
 
 SERVED = (pathlib.Path(__file__).resolve().parents[1] / "aipi5" / "ui" / "web"
           / "assets" / "yoga" / "clips")

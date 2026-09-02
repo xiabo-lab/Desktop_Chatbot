@@ -46,7 +46,7 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from scripts.build_yoga_coach import ARTWORK, BONES, CARD_H, CARD_W  # noqa: E402
+from scripts.build_yoga_coach import ARTWORK, BONES, CARD_H, CARD_W
 
 REFERENCE_DEFAULT = ARTWORK / "coach-reference-anime.png"
 
