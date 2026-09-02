@@ -24,20 +24,29 @@ milliseconds and the turn was over. The Kodama tool exists for the cases the
 phrase matcher legitimately cannot reach: "put on something quiet", "skip this,
 I don't like it".
 
-**The model cannot start the music player.** There is no `open_kodama` tool and
-this class holds no reference to `KodamaLauncher`, so there is no object here
-to call `open()` on — which is a stronger guarantee than a tool that was
-removed and could be added back without anybody noticing what it costs.
+**Nothing is launched unless the person asked for it in this sentence.**
+`open_known_app` can start the music player and open a known site, which the
+model could not do at all until now — and the reason it could not is worth
+restating, because the tool has to not reintroduce it. `execute_kodama_command`
+used to answer "call open_kodama first" whenever the player was down, so any
+music request at all, including one the model inferred from a half-heard
+sentence, launched an app that resumes its previous queue on startup and begins
+playing into the room. Reported as the player "starting on its own", which is
+exactly what it was.
 
-The player is opened by the Music button, or by asking for it out loud
-(`aipi5/kodama/launcher.py` declares the phrases). Both are a person deciding.
-The model used to be a third way, and it was the only one that could fire
-without anybody asking for the player by name: `execute_kodama_command`
-answered "call open_kodama first" whenever the player was down, so any music
-request at all — including one the model inferred from a half-heard sentence —
-launched an app that resumes its previous queue on startup and begins playing
-into the room. Reported as the player "starting on its own", which is exactly
-what it was. It now says what it cannot do and who can.
+So the guard is not the prompt. `begin_turn` looks at the raw utterance for a
+word that means *open* or *play* — "open", "put on", "打开", "放" — and the
+launch tool is refused for the whole turn when there is none. That is a phrase
+check on what the person actually said, decided before the model sees the
+sentence and unchanged by anything it does with it, which is the same shape as
+every other consent decision in this project: the model may ask, and something
+that is not the model decides.
+
+The tool is also not the only way, or even the usual one. The Music button, the
+fast router's exact phrases, and `aipi5/kodama/launcher.py`'s own declarations
+all still work in about nine milliseconds without a network. What this adds is
+the sentence the phrase matcher legitimately cannot reach — "put some music on",
+"can you bring up YouTube" — and nothing else.
 
 **Every tool answers, and none of them raises.** A tool that throws leaves the
 model with a dangling call and the turn with an exception; a tool that returns
@@ -49,6 +58,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Callable
 
 log = logging.getLogger(__name__)
@@ -87,7 +97,8 @@ class ToolBox:
     def __init__(self, *, weather=None, news=None, clock=None, camera=None,
                  vision=None, registry=None, settings=None, web_search=False,
                  volume=None, birthdays=None, consent=None, agent=None,
-                 calls=None, photos=None, on_capture=None):
+                 calls=None, photos=None, on_capture=None, prices=None,
+                 browser=None, launcher=None):
         self.weather = weather
         self.news = news
         self.clock = clock
@@ -143,6 +154,22 @@ class ToolBox:
         #: optional so a test can take a picture with no screen anywhere near
         #: it.
         self.on_capture = on_capture
+        #: `PriceService`, or None. The rule it exists for is that **a price is
+        #: never answered from the model's memory**: a model asked what Bitcoin
+        #: is worth produces a confident number in the right currency with the
+        #: right number of digits, and it is whatever was true when the model
+        #: was trained. Nothing about it looks wrong from a kitchen.
+        self.prices = prices
+        #: `BrowserLauncher` and `KodamaLauncher`, for `open_known_app` and
+        #: nothing else. Both take a *value from an enum built in code* — see
+        #: `_known_apps` — never a URL, a command or a path.
+        self.browser = browser
+        self.launcher = launcher
+        #: Whether the utterance this turn is answering asked for something to
+        #: be opened or played. Set by `begin_turn` from the raw transcript,
+        #: before the model sees it. False between turns, so a toolbox that is
+        #: somehow called without one refuses rather than allows.
+        self._explicit_launch = False
         #: Whether the API's own web search is offered. Off by default and
         #: last in the list on purpose: it is the fallback for a current fact
         #: with no narrow provider, and a model given both will sometimes
@@ -166,7 +193,48 @@ class ToolBox:
             "delete_reminder": self._delete_reminder,
             "call_phone": self._call_phone,
             "take_photo": self._take_photo,
+            "get_asset_price": self._get_asset_price,
+            "open_known_app": self._open_known_app,
         }
+
+    # ── the turn's own facts ─────────────────────────────────────────
+
+    def begin_turn(self, text: str = "", source: str = "voice") -> None:
+        """Told what the person actually said, before the model sees it.
+
+        One flag comes out of this and it gates one tool. It is here rather
+        than in the prompt because a prompt rule is a request and this is a
+        control: the failure it prevents is an application starting in
+        somebody's living room off a sentence that never asked for one, and
+        that failure has already happened once on this device.
+
+        Called by the coordinator, which is the single door every request goes
+        through — see `aipi5/assistant/coordinator.py`. A turn that somehow
+        arrives without it leaves the flag False, which refuses.
+        """
+        self._explicit_launch = asks_to_open(text)
+
+    def end_turn(self) -> None:
+        """Drop the turn's permission. Belt and braces beside `begin_turn`."""
+        self._explicit_launch = False
+
+    def _known_apps(self) -> dict:
+        """What may be opened, by name. Built from code, never from YAML.
+
+        A configuration file is editable by anything that can write to it, and
+        an "apps" list in one is a list of things a model may launch that is
+        one careless edit from being a list of arbitrary commands. These come
+        from `SITES` and from the launcher this object was handed.
+        """
+        apps: dict[str, tuple[str, str]] = {}
+        if self.launcher is not None:
+            apps["music"] = ("kodama", "the Kodama-Lite music player")
+        if self.browser is not None:
+            from aipi5.browser.launcher import SITES
+
+            for site in SITES:
+                apps[site.name] = ("site", site.label)
+        return apps
 
     # ── what the model is told exists ────────────────────────────────
 
@@ -392,6 +460,52 @@ class ToolBox:
                 {"id": {"type": "string", "maxLength": 64,
                         "description": "The id from read_reminders."}},
                 required=["id"],
+            ))
+
+        apps = self._known_apps()
+        if apps:
+            tools.append(_schema(
+                "open_known_app",
+                "Open one of the applications or websites on this device: "
+                + "; ".join(f"{name} — {label}" for name, (_, label)
+                            in sorted(apps.items()))
+                + ".\n"
+                "**Only when the person has just asked for it to be opened or "
+                "played.** Not because it would be useful, not because they "
+                "mentioned it, and not as a step towards something else. "
+                "Starting an application in somebody's living room is a person "
+                "deciding, and the device refuses this tool outright on any "
+                "turn where the request did not ask for one — so calling it "
+                "otherwise wastes the turn and says so.",
+                {"app": {"type": "string", "enum": sorted(apps),
+                         "description": "Which one. There is nothing else this "
+                                        "tool can open, and no way to give it "
+                                        "a web address."}},
+                required=["app"],
+            ))
+
+        if self.prices is not None:
+            known = self.prices.describe()
+            tools.append(_schema(
+                "get_asset_price",
+                "The current price of a cryptocurrency, from a price service. "
+                "**Always use this and never answer a price from memory** — a "
+                "remembered price is months out of date and sounds exactly like "
+                "a current one.\n"
+                "Say the price, the currency and how recent it is. If the "
+                "result carries a note, say that too: a price the device could "
+                "not refresh is worth giving with its age attached, and worth "
+                "nothing without it.",
+                {
+                    "asset": {"type": "string", "enum": known["assets"],
+                              "description": "Which one. Only these are "
+                                             "available; say so plainly if the "
+                                             "person asked about something else."},
+                    "currency": {"type": "string", "enum": known["currencies"],
+                                 "description": "Which currency to quote in. "
+                                                "Null for US dollars."},
+                },
+                required=["asset"],
             ))
 
         if self.photos is not None and self.photos.available():
@@ -689,6 +803,68 @@ class ToolBox:
                           or "this device could not cancel that reminder")
         return _ok(cancelled=answer.get("cancelled", {}))
 
+    # ── opening something ────────────────────────────────────────────
+
+    def _open_known_app(self, args: dict) -> str:
+        """Start a named application. Refused unless the person asked.
+
+        Two gates, and they are not redundant. The **enum** decides what can be
+        opened at all: a value not in `_known_apps` reaches no launcher, so
+        there is no URL, command or path a model can compose. The **flag**
+        decides whether anything may be opened on this turn, from the raw
+        transcript rather than from the model's account of it.
+
+        Losing either one is the failure this device has already had: a music
+        request the model inferred from a half-heard sentence starting a player
+        that resumes its previous queue and begins playing into the room.
+        """
+        if not self._explicit_launch:
+            log.info("refusing to open %r: the utterance did not ask for it",
+                     args.get("app"))
+            return _error("I only open things when the person has just asked "
+                          "me to. Tell them what to say — 'open YouTube', or "
+                          "'put some music on' — rather than opening it.")
+
+        wanted = str(args.get("app") or "").strip().lower()
+        apps = self._known_apps()
+        found = apps.get(wanted)
+        if found is None:
+            return _error(f"there is nothing called {wanted!r} on this device")
+
+        kind, label = found
+        if kind == "kodama":
+            outcome = self.launcher.open(who="the assistant, asked out loud")
+            return _ok(opened=wanted, label=label, succeeded=outcome.ok,
+                       detail=outcome.say("en"))
+
+        from aipi5.browser.launcher import SITES
+
+        site = next((s for s in SITES if s.name == wanted), None)
+        if site is None:
+            return _error(f"there is nothing called {wanted!r} on this device")
+        outcome = self.browser.open(site, who="the assistant, asked out loud")
+        return _ok(opened=wanted, label=label, succeeded=outcome.ok,
+                   detail=outcome.say("en"))
+
+    # ── a price, or nothing ──────────────────────────────────────────
+
+    def _get_asset_price(self, args: dict) -> str:
+        """A real quote with a timestamp, or an error. There is no third case.
+
+        Both arguments are looked up in tables inside
+        `aipi5/tools/prices.py`, so what reaches the provider's query string is
+        a literal from that file whatever the model wrote — the same rule the
+        Kodama command follows, and for the same reason.
+        """
+        from aipi5.tools.prices import PriceError
+
+        try:
+            quote = self.prices.quote(str(args.get("asset") or ""),
+                                      str(args.get("currency") or "usd"))
+        except PriceError as exc:
+            return _error(str(exc))
+        return _ok(**quote.as_dict())
+
     # ── taking a picture and keeping it ──────────────────────────────
 
     def _take_photo(self, args: dict) -> str:
@@ -812,6 +988,43 @@ class ToolBox:
         outcome = command.handler(**call_args)
         return _ok(command=command.name, succeeded=outcome.ok,
                    detail=outcome.say("en"))
+
+
+#: What "open this" or "play this" looks like in the two languages spoken to
+#: this device. Patterns rather than substrings, because English separates its
+#: particles — "put **some music** on", "turn the record **on**" — and a
+#: contiguous "put on" misses every sentence anybody actually says. Mandarin
+#: has no spaces to find a boundary with, so those stay plain substrings.
+#:
+#: Erring towards *not* matching is the safe direction. A miss means somebody
+#: says "open YouTube" again and the fast router catches it in about nine
+#: milliseconds; a false match means an application starting in a living room.
+#:
+#: `\b` on the English verbs matters more than it looks. Without it "what's
+#: playing" contains "play", and "what's playing" is a question about the
+#: player rather than a request to start one.
+_OPEN_PATTERNS = (
+    r"\b(open|play|launch|start|resume|watch|stream)\b",
+    r"\b(put|turn|switch)\b.{0,24}?\bon\b",
+    r"\b(bring|pull)\b.{0,24}?\bup\b",
+    r"\b(go to|fire up|listen to|show me)\b",
+    # Mandarin. 打开 and 播放 are the plain forms; the 放… ones are how a
+    # request for music is actually phrased, and 上 alone is deliberately not
+    # here — it is a preposition far more often than it is a verb.
+    r"打开|播放|放一|放点|放首|放个|放歌|来点|来首|启动|开一下|开个|听一|听点",
+)
+
+
+def asks_to_open(text: str) -> bool:
+    """Did this sentence ask for something to be opened or played?
+
+    Decided from the transcript, before the model reads it, and never revisited
+    afterwards. The point is that it is not the model's opinion: a model that
+    has decided somebody wants music will say so convincingly, and what this
+    guards is an application starting in a room where nobody asked.
+    """
+    lowered = str(text or "").lower()
+    return any(re.search(pattern, lowered) for pattern in _OPEN_PATTERNS)
 
 
 def _delete_now(store, entry_id: str) -> dict:

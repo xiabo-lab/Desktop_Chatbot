@@ -77,6 +77,18 @@ def parse(result: str) -> dict:
     return json.loads(result)
 
 
+class FakeLauncher:
+    """`KodamaLauncher.open`, and a record of whether it was reached."""
+
+    def __init__(self, ok=True):
+        self.ok = ok
+        self.opened: list[str] = []
+
+    def open(self, who="something unnamed"):
+        self.opened.append(who)
+        return Result.done("Opening the music player.", "正在打开音乐播放器。")
+
+
 class TestWhatIsOffered(unittest.TestCase):
     """Against AIA's real declarations."""
 
@@ -126,20 +138,59 @@ class TestWhatIsOffered(unittest.TestCase):
         self.assertNotIn("get_weather", names)
         self.assertNotIn("describe_camera_image", names)
 
-    def test_the_model_is_never_offered_a_way_to_start_the_player(self):
-        # Property 4. Not "with this configuration": there is no argument that
-        # puts a launcher into a ToolBox any more, so there is no arrangement of
-        # services that brings this tool back by accident.
+    def test_a_toolbox_with_no_launcher_offers_no_way_to_start_anything(self):
+        # The default, and what most of this file runs against.
         names = {t["name"] for t in self.tools}
         self.assertNotIn("open_kodama", names)
+        self.assertNotIn("open_known_app", names)
         self.assertNotIn("open_kodama", ToolBox()._handlers)
 
-    def test_a_toolbox_cannot_be_given_a_launcher(self):
-        # The structural half, and the reason this is a guarantee rather than a
-        # removed line somebody could put back without weighing it. A ToolBox
-        # holds no launcher, so no tool has an object to call `open()` on.
-        with self.assertRaises(TypeError):
-            ToolBox(launcher=object())
+    def test_starting_the_player_is_gated_on_the_utterance_and_not_the_model(self):
+        """This used to be structural: a `ToolBox` could not be *given* a
+        launcher, so no tool had an object to call `open()` on.
+
+        That guarantee is deliberately gone, and it is worth saying what
+        replaced it rather than letting the assertion quietly weaken. The
+        reason it existed was a real failure — `execute_kodama_command`
+        answered "call open_kodama first" whenever the player was down, so any
+        music request at all, including one the model inferred from a
+        half-heard sentence, started a player that resumes its previous queue
+        and begins playing into the room. It was reported as the player
+        "starting on its own".
+
+        What stops that now is not the model's restraint. `begin_turn` reads
+        the *raw transcript* for a word meaning open or play, before the model
+        sees the sentence, and the tool is refused for the whole turn when
+        there is none. A model that has decided somebody wants music cannot
+        argue its way past a substring check on what they actually said.
+        """
+        launcher = FakeLauncher()
+        box = ToolBox(registry=self.registry, launcher=launcher)
+        self.assertIn("open_known_app", {t["name"] for t in box.schemas()})
+
+        # No turn prepared at all: refused. A toolbox reached without
+        # `begin_turn` must not be a toolbox with a standing permission.
+        answer = parse(box.call("open_known_app", '{"app": "music"}'))
+        self.assertFalse(answer["ok"])
+        self.assertEqual([], launcher.opened)
+
+        # A sentence that mentions music without asking for it: refused.
+        box.begin_turn("do you like music?")
+        self.assertFalse(parse(box.call("open_known_app",
+                                        '{"app": "music"}'))["ok"])
+        self.assertEqual([], launcher.opened)
+
+        # A sentence that asks: allowed.
+        box.begin_turn("put some music on")
+        self.assertTrue(parse(box.call("open_known_app",
+                                       '{"app": "music"}'))["ok"])
+        self.assertEqual(1, len(launcher.opened))
+
+        # And the permission does not outlive its turn.
+        box.end_turn()
+        self.assertFalse(parse(box.call("open_known_app",
+                                        '{"app": "music"}'))["ok"])
+        self.assertEqual(1, len(launcher.opened))
 
     def test_every_schema_refuses_extra_properties(self):
         for tool in self.tools:

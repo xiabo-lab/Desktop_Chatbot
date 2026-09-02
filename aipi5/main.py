@@ -85,6 +85,7 @@ from aipi5.core.presence import Presence, PresenceTracker, ScreensaverPolicy
 from aipi5.core.shutdown import ShutdownCountdown, countdown_and_run
 from aipi5.files import FileStore, human_size
 from aipi5.photos.capture import PhotoCapture
+from aipi5.tools.prices import PriceService
 from aipi5.games.manager import GameManager
 from aipi5.games.voice import GameVoice
 from aipi5.kodama.launcher import KodamaLauncher
@@ -267,6 +268,11 @@ class Assistant:
         self.clock = Clock(settings.location.timezone)
         self.weather = WeatherService(settings.location, settings.weather)
         self.news = NewsService(settings.news)
+        # Current prices, from a provider with a timestamp. Built
+        # unconditionally: it needs no key and no configuration, and a device
+        # that cannot reach the network says "I could not check" rather than
+        # not offering the tool at all.
+        self.prices = PriceService()
         self.camera = Camera(settings.camera)
 
         llm_off = (os.environ.get("AIPI5_NO_LLM") == "1"
@@ -359,10 +365,19 @@ class Assistant:
                 camera=self.camera if settings.camera.enabled else None,
                 files=self.files),
             on_capture=self.publish_photo,
-            # No launcher. The model may drive the player and may not start it
-            # — see the rule in `aipi5/llm/tools.py`. `self.launcher` is reached
-            # by the Music button (`action == "kodama"` below) and by the spoken
-            # command the launcher itself declares, both of which are a person.
+            # A price, or nothing. Never the model's memory: a remembered
+            # price is months out of date and sounds exactly like a current
+            # one to somebody standing in a kitchen. See
+            # `aipi5/tools/prices.py`.
+            prices=self.prices,
+            # The launchers, for `open_known_app` and nothing else. Both take
+            # a value from an enum built in code — never a URL, a command or a
+            # path — and the tool is refused outright on any turn whose
+            # utterance did not ask for something to be opened or played. See
+            # `asks_to_open`, and the rule at the top of `aipi5/llm/tools.py`
+            # about the player starting on its own. The model may drive the player and may not start it
+            browser=self.browser if settings.browser.enabled else None,
+            launcher=self.launcher if settings.kodama.enabled else None,
             settings=settings,
         )
 
@@ -380,7 +395,9 @@ class Assistant:
         # is its mailbox, and both outlive it. See `aipi5/assistant/events.py`.
         self.events = EventLog()
         self.coordinator = Coordinator(events=self.events, respond=self.answer,
-                                       agent=self.agent, consent=self.consent)
+                                       agent=self.agent, consent=self.consent,
+                                       on_turn=self.toolbox.begin_turn,
+                                       after_turn=self.toolbox.end_turn)
 
         self.call = CallServer(settings.call, hub=self.call_hub,
                                devices=self.call_devices,
@@ -1085,6 +1102,7 @@ class Assistant:
             # Before the model client, so the bridge thread is not left
             # long-polling the agent while everything under it is torn down.
             ("coordinator", self.coordinator.close),
+            ("prices", self.prices.close),
             ("llm", lambda: self.llm and self.llm.close()),
             ("weather", self.weather.close),
             ("news", self.news.close),

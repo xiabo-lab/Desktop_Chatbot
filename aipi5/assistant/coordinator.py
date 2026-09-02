@@ -281,7 +281,7 @@ class Coordinator:
 
     def __init__(self, *, events: EventLog | None = None, respond=None,
                  agent=None, speak=None, turn_wait_s: float = TURN_WAIT_S,
-                 bridge=None, consent=None):
+                 bridge=None, consent=None, on_turn=None, after_turn=None):
         self.events = events if events is not None else EventLog()
         #: `respond(text, language) -> str`. The short tool loop, in the voice
         #: process. None where conversation is disabled.
@@ -298,6 +298,22 @@ class Coordinator:
         #: through it would mean spending a maintenance run to make a phone
         #: buzz. Both answer through `answer_approval` below.
         self.consent = consent
+        #: `on_turn(text, source)` — told what was actually said, before the
+        #: model sees it. One thing depends on it: `ToolBox.begin_turn` reads
+        #: the raw utterance for a word that means *open* or *play*, and the
+        #: launch tool is refused for the whole turn when there is none.
+        #:
+        #: It hangs off the coordinator rather than off `respond` because this
+        #: is the single door — the wake word, the Listen button, the compose
+        #: box and the phone all pass through here, so a permission set here is
+        #: set the same way for all four. A rule that lived in the voice loop
+        #: would be a rule the compose box did not have.
+        self.on_turn = on_turn
+        #: `after_turn()` — drop whatever `on_turn` granted. Belt and braces:
+        #: the flag is set per turn and would be re-set by the next one anyway,
+        #: but a permission that outlives its turn is the kind of thing nobody
+        #: notices until it matters.
+        self.after_turn = after_turn
         self.turn_wait_s = turn_wait_s
         self.bridge = bridge if bridge is not None else (
             AgentBridge(agent, self.events) if agent is not None else None)
@@ -354,12 +370,24 @@ class Coordinator:
             # which returns a sentence — but it is injected, it is the one
             # thing here that runs somebody else's code, and a `TypeError` on
             # this line is a voice loop that stops answering.
+            if self.on_turn is not None:
+                # Before `respond`, and from `text` rather than from anything
+                # the model produces. See `ToolBox.begin_turn`.
+                try:
+                    self.on_turn(text, source)
+                except Exception:                    # noqa: BLE001
+                    log.exception("preparing the turn failed")
             reply = self.respond(text, language)
             reply = str(reply or "").strip()
             if reply:
                 self.events.publish("assistant", source, text=reply)
             return {"ok": True, "text": reply, "run": self.run()}
         finally:
+            if self.after_turn is not None:
+                try:
+                    self.after_turn()
+                except Exception:                    # noqa: BLE001
+                    log.exception("finishing the turn failed")
             self._turn.release()
 
     # ── delegating, and following what was delegated ────────────────
