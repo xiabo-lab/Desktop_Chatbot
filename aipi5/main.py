@@ -72,6 +72,7 @@ from aipi5.call.server import CallServer
 from aipi5.agent.pilot import HandPilot
 from aipi5.core import volume as volume_control
 from aipi5.agent.proxy import AgentProxy
+from aipi5.assistant import Coordinator, EventLog
 from aipi5.call.signaling import SignalingHub
 from aipi5.call.tokens import TrustedDevices
 from aipi5.core import config as config_mod
@@ -307,6 +308,22 @@ class Assistant:
         # do. See aipi5/agent/runtime.py.
         self.agent = (AgentProxy(settings.agent.socket)
                       if settings.agent.enabled else None)
+        # One door in, for all four ways of asking. The wake word and the
+        # Listen button reach it through `submit_voice`, the compose box and
+        # the phone through `submit_text`, and every one of them ends up in
+        # `self.answer` with the same tools and the same policy. Before this,
+        # typing a sentence made it `agent.ask` and started a maintenance run
+        # with a 24-step budget to do something the voice loop does in one
+        # call — and there was no way for anybody to know which of the two
+        # they had reached.
+        #
+        # It is a presentation index and not a second transcript: the 24-hour
+        # audible record is `self.history`, the agent's own record is its
+        # mailbox, and both outlive `self.events`. See
+        # `aipi5/assistant/events.py`.
+        self.events = EventLog()
+        self.coordinator = Coordinator(events=self.events, respond=self.answer,
+                                       agent=self.agent)
         self.call = CallServer(settings.call, hub=self.call_hub,
                                devices=self.call_devices,
                                on_change=self.on_call_change,
@@ -397,6 +414,7 @@ class Assistant:
                          photos=self.photos, screen=self.screen,
                          volume=self.volume,
                          agent=self.agent,
+                         coordinator=self.coordinator,
                          dictation=self.dictation,
                          hands=self.hands,
                          games=self.games,
@@ -977,6 +995,9 @@ class Assistant:
             ("wake", lambda: self.detector_wake and self.detector_wake.close()),
             ("stt", lambda: self.stt and self.stt.close()),
             ("speaker", lambda: self.speaker and self.speaker.close()),
+            # Before the model client, so the bridge thread is not left
+            # long-polling the agent while everything under it is torn down.
+            ("coordinator", self.coordinator.close),
             ("llm", lambda: self.llm and self.llm.close()),
             ("weather", self.weather.close),
             ("news", self.news.close),
@@ -1330,10 +1351,25 @@ def main() -> int:
                     else:
                         # The fork this whole project exists for. AIA repeats
                         # the utterance back here; AIPI5 answers it.
+                        #
+                        # Through the coordinator rather than straight into
+                        # `answer`, so that this — the wake word — and the
+                        # compose box and the phone are all one path. The fast
+                        # router above is untouched and still matched first, in
+                        # about nine milliseconds and without a network; what
+                        # changed is only what happens when it declines.
                         machine.to(State.THINKING)
                         assistant.publish(listening_text=THINKING_TEXT.get(
                             language, THINKING_TEXT["en"]))
-                        reply = assistant.answer(text, language)
+                        outcome = assistant.coordinator.submit_voice(text, language)
+                        # `answer` returns a sentence on every path, including
+                        # its failures, so `text` is normally what to say. The
+                        # fallback is for the two cases the coordinator itself
+                        # refuses on — no conversation configured, and a turn
+                        # already in flight — where there is no reply to read.
+                        reply = (outcome.get("text")
+                                 or outcome.get("error")
+                                 or TROUBLE.get(language, TROUBLE["en"]))
                         turn.mark("llm")
                         speak = True
 

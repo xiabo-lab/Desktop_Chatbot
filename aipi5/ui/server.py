@@ -145,6 +145,14 @@ CAMERA_ACTIONS = frozenset({"camera", "call"})
 #: be a URL bar with a language model in it.
 AGENT_MESSAGES = frozenset({"agent.ask", "agent.stop", "agent.answer"})
 
+#: How long `/api/assistant/events` holds a GET open. Matched to the agent's
+#: own long poll and comfortably inside `_Handler.timeout`.
+ASSISTANT_POLL_S = 20.0
+
+#: The longest request the compose box may send. The agent enforces its own
+#: bound on the far side; this one stops a body being parsed at all.
+MAX_ASK = 4000
+
 PREVIEW_FPS = 6
 
 #: As fast as `/api/camera/stream` may be asked to go. Hand tracking wants
@@ -230,6 +238,23 @@ class _Handler(BaseHTTPRequestHandler):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self._send(code, body, "application/json; charset=utf-8")
 
+    def _drain(self) -> None:
+        """Read a request body that is about to be refused, and discard it.
+
+        In bounded chunks, so a caller announcing a gigabyte cannot make this
+        allocate one — the point is to leave the connection synchronised, not
+        to keep what was sent.
+        """
+        try:
+            remaining = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return
+        while remaining > 0:
+            chunk = self.rfile.read(min(remaining, 8192))
+            if not chunk:
+                return
+            remaining -= len(chunk)
+
     # ── routes ───────────────────────────────────────────────────────
 
     def do_GET(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler's spelling
@@ -260,6 +285,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._hand_stream(params)
         elif route.path == "/api/camera/capture":
             self._camera_capture()
+        elif route.path == "/api/assistant/events":
+            self._assistant_events(params)
         elif route.path == "/api/agent/poll":
             self._agent_poll(params)
         elif route.path == "/api/call/poll":
@@ -327,8 +354,19 @@ class _Handler(BaseHTTPRequestHandler):
                         "/api/game/command", "/api/game/debug",
                         "/api/game/settings", "/api/agent/gesture",
                         "/api/agent/say", "/api/agent/dictate",
+                        "/api/assistant/ask", "/api/assistant/cancel",
+                        "/api/assistant/approval",
                         "/api/hand/debug", "/api/hand/pause",
                         "/api/calendar/birthdays", "/api/volume"):
+            # Drained before it is refused. The 404 is written and the socket
+            # closed, and a body still sitting in the kernel's receive queue at
+            # that moment is an RST on Windows and a reset connection on the
+            # caller — so a page posting to a route that has been renamed sees
+            # "the assistant is not answering" instead of "not found", which
+            # sends whoever is debugging it to look at the wrong thing
+            # entirely. `aipi5/call/server.py` learned this first; see
+            # `_read_body` there.
+            self._drain()
             self._json({"error": "not found"}, 404)
             return
 
@@ -372,6 +410,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/game/"):
             self._game_post(path, payload)
+            return
+
+        if path.startswith("/api/assistant/"):
+            self._assistant_post(path, payload)
             return
 
         if path == "/api/agent/gesture":
@@ -646,6 +688,87 @@ class _Handler(BaseHTTPRequestHandler):
     # These three forward and nothing more, the way `_gesture_post` does. What
     # a caller may ask the agent for is bounded by the message types the
     # runtime knows, which is why that list lives there and not here.
+
+    # ── the unified assistant contract ───────────────────────────────
+    #
+    # Four routes, one coordinator, and the same tools and the same policy
+    # behind all of them — which is the whole point. What used to happen is
+    # that a sentence typed here became `agent.ask` and started a maintenance
+    # run with a 24-step budget, while the same sentence said out loud went to
+    # the short tool loop. Two answers to one question, and no way for anybody
+    # to know which they were going to get.
+    #
+    # **`/api/agent/poll` and `/api/agent/say` stay** as compatibility
+    # wrappers, because the phone (`aipi5/call/web/phone.html`) is still on
+    # them. They are the same mailbox seen at a different level, so a page must
+    # read one or the other: a page that polls both draws every delegated row
+    # twice. The same is true of `/api/feed`, which carries spoken turns that
+    # `/api/assistant/events` also carries.
+
+    def _assistant_events(self, params: dict) -> None:
+        """Hold a GET until the transcript has something new, or ~20 s passes.
+
+        Long-polled for the reason the agent's own poll is: a delegated run
+        posts a dozen rows in a few seconds, and a timer either shows them late
+        or asks constantly while nothing is happening.
+        """
+        coordinator = getattr(self.ui, "coordinator", None)
+        if coordinator is None:
+            self._json({"error": "this build has no assistant coordinator"}, 503)
+            return
+        try:
+            since = int(params.get("since", ["0"])[0])
+        except (TypeError, ValueError):
+            since = 0
+        # `wait=0` asks for whatever is there and the snapshot, without
+        # holding. A page opening wants both at once — on a device that has
+        # been idle since breakfast the transcript is empty, and the default
+        # long poll would leave the panel blank for twenty seconds before it
+        # could draw so much as the run state.
+        try:
+            wait = float(params.get("wait", [ASSISTANT_POLL_S])[0])
+        except (TypeError, ValueError):
+            wait = ASSISTANT_POLL_S
+        wait = max(0.0, min(wait, ASSISTANT_POLL_S))
+        events, cursor = coordinator.collect(since, wait)
+        self._json({"events": events, "cursor": cursor,
+                    "assistant": coordinator.snapshot()})
+
+    def _assistant_post(self, path: str, payload: dict) -> None:
+        """Ask, stop, or answer an approval.
+
+        Approvals included, which is the decision the agent console already
+        made: anyone who can touch this panel can approve a settings or a
+        source change, because that is consistent with what a touch already
+        means here — the screen reaches the settings page and a shutdown
+        countdown — and the alternative was a run started at the screen that
+        stops halfway until somebody finds a phone.
+        """
+        coordinator = getattr(self.ui, "coordinator", None)
+        if coordinator is None:
+            self._json({"error": "this build has no assistant coordinator"}, 503)
+            return
+
+        if path == "/api/assistant/ask":
+            # `source` says where it was typed, not who typed it, and it is
+            # normalised by the coordinator rather than trusted — a caller
+            # inventing one must not lose somebody's sentence.
+            self._json(coordinator.submit_text(
+                str(payload.get("text", ""))[:MAX_ASK],
+                str(payload.get("source", "text")),
+                str(payload.get("language", "en"))[:8]))
+        elif path == "/api/assistant/cancel":
+            self._json(coordinator.cancel(str(payload.get("run", ""))[:64]))
+        elif path == "/api/assistant/approval":
+            # `allow` is coerced to a boolean here and again in the
+            # coordinator. Silence, a timeout, an unclear answer and a stale
+            # token all mean no, and none of that is decided on this side —
+            # the desk in `aipi5-agent.service` binds an answer to the token it
+            # issued.
+            self._json(coordinator.answer_approval(
+                str(payload.get("token", ""))[:128], bool(payload.get("allow"))))
+        else:
+            self._json({"error": "not found"}, 404)
 
     def _agent_poll(self, params: dict) -> None:
         """Hold a GET until the agent has something to say, or ~20 s passes.
@@ -1496,7 +1619,7 @@ class WebUI:
                  on_call_change=lambda: None, countdown=None, files=None,
                  photos=None, screen=None, games=None, on_wake=lambda why: None,
                  agent=None, hands=None, birthdays=None, volume=None,
-                 dictation=None):
+                 dictation=None, coordinator=None):
         self.cfg = cfg
         self.state = state
         # Called the moment a `wake` arrives, before it is queued for the voice
@@ -1516,7 +1639,13 @@ class WebUI:
         # console arrived on this screen too, the console's own three messages
         # (`_agent_say`).
         self.agent = agent
-        # How the console gets text on a panel with no keyboard: the voice
+        # The one door a sentence goes through, whichever of the four ways it
+        # arrived. This server holds it only to forward — it decides nothing
+        # about tools or policy, which is the point of there being one of
+        # these rather than a decision in each handler. Optional, so a test can
+        # build a server with no model and no agent behind it.
+        self.coordinator = coordinator
+        # How the compose box gets text on a panel with no keyboard: the voice
         # loop captures one utterance and hands back the words. Optional, so a
         # test can build a server with no microphone anywhere near it.
         self.dictation = dictation
