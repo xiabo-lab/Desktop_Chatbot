@@ -35,7 +35,6 @@ from typing import Callable
 
 from aipi5.agent import schedule as schedule_mod
 from aipi5.agent.helper_client import HelperClient
-from aipi5.llm.tools import _schema
 
 #: The helper refuses an `apply` that arrives less than three seconds after its
 #: `propose` — nobody read a diff that fast, so it can only be a machine. That
@@ -684,3 +683,38 @@ def _clip(text: str) -> str:
     # lower, and a summary written here would be this file guessing at what
     # mattered in somebody else's log.
     return text[:RESULT_LIMIT] + '… (truncated; ask for fewer lines)"}'
+
+
+def _schema(name: str, description: str, properties: dict,
+            required: list[str] | None = None) -> dict:
+    """One entry in the `tools` array, in Chat Completions shape.
+
+    A near-copy of the one in `aipi5/llm/tools.py`, and deliberately not shared
+    with it any more. It used to be imported from there, which was true right
+    up until the conversation moved to `/v1/responses` — the two endpoints
+    disagree about where a tool's name lives, so one change to the voice
+    assistant's schema builder silently reshaped every tool the *agent* offers,
+    and the agent has no test that renders a schema against a real API.
+
+    Two files with twenty similar lines is the cheaper mistake. The endpoints
+    are independent, the toolboxes are independent, and each owns the shape it
+    sends. If the agent moves to `/v1/responses` this function is what changes,
+    and nothing on the voice side moves with it.
+
+    `additionalProperties: False` throughout, so a model that invents an extra
+    field gets a schema violation rather than having it silently ignored — the
+    ignored case is how an argument ends up somewhere nobody expected it.
+    """
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required or [],
+                "additionalProperties": False,
+            },
+        },
+    }

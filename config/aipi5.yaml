@@ -87,7 +87,24 @@ openai:
   context_idle_s: 600
   max_output_tokens: 400
 
+  # Whether the model may run the API's own web search.
+  #
+  # Off, and turned on one rollout step at a time. It is the fallback for a
+  # current fact this device has no provider for -- a share price, say -- and
+  # nothing else: the weather, the news and the clock all have narrow local
+  # providers that are faster, cheaper and already cached, and a model offered
+  # both will sometimes search the web for a forecast it was handed a second
+  # ago. The prompt says to prefer the narrow ones; this decides whether the
+  # choice exists at all.
+  web_search: false
+
   # The agent loop's model, empty meaning the same one conversation uses.
+  #
+  # The agent is still on /v1/chat/completions, which is where the note below
+  # applies. The conversation moved to /v1/responses, where neither the token
+  # parameter nor reasoning_effort is a question -- see the docstring at the
+  # top of aipi5/llm/client.py for why the two did not move together.
+  #
   # Worth setting separately: gpt-5.6-luna refuses a tools array unless
   # reasoning_effort is "none" (see _variants in aipi5/llm/client.py), and an
   # agent loop is nothing but tool calls.

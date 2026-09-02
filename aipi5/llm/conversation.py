@@ -17,10 +17,21 @@ answer refer to something nobody in the room said, which reads as the assistant
 having misheard rather than as it having remembered.
 
 **Tool calls are part of the turn they belong to.** They are kept together and
-dropped together, because the API rejects an assistant message with `tool_calls`
-whose matching `tool` results are missing — trimming that splits the pair
-produces a 400 that looks like a malformed request rather than like a history
-that was cut in the wrong place. `_trim` is the whole of the care that takes.
+dropped together, because the API rejects a `function_call` whose matching
+`function_call_output` is missing, and rejects an output whose call it has not
+seen — trimming that splits the pair produces a 400 that looks like a malformed
+request rather than like a history that was cut in the wrong place. `_trim` is
+the whole of the care that takes.
+
+**These are `/v1/responses` input items, not chat messages.** An ordinary turn
+is the same either way — `{"role": "user", "content": "..."}` is accepted by
+both — and the two parts that differ are exactly the two that matter. A tool
+call is an item of its own here rather than a field on the assistant message,
+and its answer is a `function_call_output` carrying `call_id` rather than a
+`tool` message carrying `tool_call_id`. The practical consequence is that this
+history has items with no `role` in it, which `_trim` has to be read with in
+mind: a turn still starts at a `user` role, and a roleless item belongs to
+whichever turn it follows.
 """
 
 from __future__ import annotations
@@ -32,11 +43,13 @@ log = logging.getLogger(__name__)
 
 
 class Conversation:
-    """A bounded, self-expiring message list in the OpenAI wire format.
+    """A bounded, self-expiring list of `/v1/responses` input items.
 
-    Holds only user/assistant/tool messages. The system prompt is *not* here:
-    it is rebuilt for every request because it carries the current time and the
-    language of the utterance, both of which change turn to turn.
+    Holds the user's turns, the assistant's replies, and the tool calls and
+    results in between. The system prompt is *not* here: it is rebuilt for
+    every request because it carries the current time and the language of the
+    utterance, both of which change turn to turn, and it goes as
+    `instructions` rather than as a first item.
     """
 
     def __init__(self, max_turns: int = 8, idle_seconds: float = 600.0):
@@ -71,28 +84,41 @@ class Conversation:
     def assistant(self, text: str) -> None:
         self._messages.append({"role": "assistant", "content": text})
 
-    def assistant_tool_calls(self, message) -> None:
-        """The assistant's own tool-call message, exactly as the API returned it.
+    def assistant_tool_calls(self, calls) -> None:
+        """The `function_call` items the model asked for, as it sent them.
 
-        Stored as the API's own dictionary rather than rebuilt from its parts:
-        the `id` on each call has to match the `tool_call_id` on the result
-        that follows, and reconstructing the message is how those come to
-        differ.
+        Stored as the API's own dictionaries rather than rebuilt from their
+        parts: each `call_id` has to match the `call_id` on the
+        `function_call_output` that follows, and reconstructing an item is how
+        those come to differ — for which the API's answer is an error about
+        mismatched ids that says nothing about where the ids came from.
+
+        A list, and appended before any of them is answered. The model may ask
+        for several at once, and the API rejects a history in which a call is
+        left unanswered as firmly as one in which an answer has no call.
         """
-        self._messages.append(message)
+        if isinstance(calls, dict):          # one item, passed bare
+            calls = [calls]
+        self._messages.extend(calls)
 
     def tool_result(self, call_id: str, content: str) -> None:
         self._messages.append({
-            "role": "tool",
-            "tool_call_id": call_id,
-            "content": content,
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": content,
         })
 
     # ── what goes on the wire ────────────────────────────────────────
 
-    def messages(self, system: str) -> list[dict]:
-        """The request body's message list: system first, then the history."""
-        return [{"role": "system", "content": system}, *self._messages]
+    def items(self) -> list[dict]:
+        """The `input` array: the history, and nothing else.
+
+        No system item. It is rebuilt every turn and goes as `instructions`,
+        which keeps it out of the thing `_trim` is cutting — a system prompt in
+        the history is a system prompt that can be trimmed away, and the
+        assistant then answers in the wrong language with no clue as to why.
+        """
+        return list(self._messages)
 
     def trim(self) -> None:
         """Drop the oldest turns until the history is within its limit.
@@ -111,6 +137,7 @@ class Conversation:
     def describe(self) -> dict:
         return {
             "messages": len(self._messages),
+            "items": len(self._messages),
             "turns": sum(1 for m in self._messages if m.get("role") == "user"),
             "max_turns": self.max_turns,
             "idle_seconds": self.idle_seconds,
@@ -128,7 +155,9 @@ def _trim(messages: list[dict], max_turns: int) -> list[dict]:
     an error that says nothing about history trimming.
 
     Anything before the first user message is dropped. It can only be a
-    fragment of a turn whose question has already gone.
+    fragment of a turn whose question has already gone — which now includes a
+    `function_call_output` whose call went with it, and that is the one the API
+    refuses outright.
     """
     if max_turns <= 0:
         return []

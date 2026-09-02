@@ -272,6 +272,10 @@ class Assistant:
             camera=self.camera if settings.camera.enabled else None,
             vision=self.vision,
             registry=self.registry,
+            # The API's own web search, for a current fact with no local
+            # provider. Off unless the YAML says otherwise — see
+            # `OpenAIConfig.web_search`.
+            web_search=settings.openai.web_search,
             # No launcher. The model may drive the player and may not start it
             # — see the rule in `aipi5/llm/tools.py`. `self.launcher` is reached
             # by the Music button (`action == "kodama"` below) and by the spoken

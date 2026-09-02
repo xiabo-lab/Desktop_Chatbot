@@ -106,6 +106,17 @@ class OpenAIConfig:
     context_idle_s: float = 600.0
     max_output_tokens: int = 400
 
+    #: Whether the model may run the API's own web search.
+    #:
+    #: Off, and enabled one rollout step at a time. It is the fallback for a
+    #: current fact this device has no provider for — a share price, say — and
+    #: nothing else: the weather, the news and the clock all have narrow local
+    #: providers that are faster, cheaper and already cached, and a model given
+    #: both will sometimes search the web for a forecast it was handed a second
+    #: ago. The prompt says to prefer the narrow ones; this switch is what
+    #: decides whether the choice exists at all.
+    web_search: bool = False
+
     # The agent loop's own settings. Separate because the two jobs are not
     # alike: conversation is one request whose answer is read aloud, and the
     # agent is a loop of tool calls whose answer is read on a phone.
@@ -794,6 +805,7 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
             context_idle_s=_positive(openai.get("context_idle_s", 600.0), 600.0,
                                      "openai.context_idle_s"),
             max_output_tokens=max(1, int(openai.get("max_output_tokens", 400))),
+            web_search=bool(openai.get("web_search", False)),
             agent_model=str(openai.get("agent_model", "") or ""),
             agent_timeout_s=_positive(openai.get("agent_timeout_s", 120.0), 120.0,
                                       "openai.agent_timeout_s"),

@@ -84,9 +84,13 @@ class TestWhatIsOffered(unittest.TestCase):
         self.registry = Registry([KodamaLite(), System()])
         self.box = ToolBox(registry=self.registry)
         self.tools = self.box.schemas()
+        # `/v1/responses` shape: the name and the parameters sit on the tool
+        # rather than inside a nested `function` object. The agent's toolbox
+        # still speaks the other spelling — see `_schema` in
+        # `aipi5/agent/tools.py` for why the two are no longer shared.
         self.kodama = next(t for t in self.tools
-                           if t["function"]["name"] == "execute_kodama_command")
-        self.offered = set(self.kodama["function"]["parameters"]
+                           if t["name"] == "execute_kodama_command")
+        self.offered = set(self.kodama["parameters"]
                            ["properties"]["command"]["enum"])
 
     def test_ordinary_commands_are_offered(self):
@@ -118,7 +122,7 @@ class TestWhatIsOffered(unittest.TestCase):
     def test_a_tool_with_no_service_behind_it_is_not_offered(self):
         # Better than offering one that always errors and letting the model
         # discover that at runtime.
-        names = {t["function"]["name"] for t in self.tools}
+        names = {t["name"] for t in self.tools}
         self.assertNotIn("get_weather", names)
         self.assertNotIn("describe_camera_image", names)
 
@@ -126,7 +130,7 @@ class TestWhatIsOffered(unittest.TestCase):
         # Property 4. Not "with this configuration": there is no argument that
         # puts a launcher into a ToolBox any more, so there is no arrangement of
         # services that brings this tool back by accident.
-        names = {t["function"]["name"] for t in self.tools}
+        names = {t["name"] for t in self.tools}
         self.assertNotIn("open_kodama", names)
         self.assertNotIn("open_kodama", ToolBox()._handlers)
 
@@ -140,8 +144,53 @@ class TestWhatIsOffered(unittest.TestCase):
     def test_every_schema_refuses_extra_properties(self):
         for tool in self.tools:
             self.assertFalse(
-                tool["function"]["parameters"]["additionalProperties"],
-                f"{tool['function']['name']} would silently accept invented fields")
+                tool["parameters"]["additionalProperties"],
+                f"{tool['name']} would silently accept invented fields")
+
+    def test_every_schema_is_strict(self):
+        """Strict mode is what makes the schema a guarantee and not a hint.
+
+        Without it the model may omit a required field, send a string where a
+        number belongs, or add one that is silently dropped — and every one of
+        those arrives at a handler as an argument nobody validated.
+        """
+        for tool in self.tools:
+            with self.subTest(name=tool["name"]):
+                self.assertIs(True, tool["strict"])
+
+    def test_an_optional_argument_is_nullable_and_still_required(self):
+        """The price of strict mode, and the shape that pays it.
+
+        Strict mode admits no optional argument: every property must be in
+        `required`. So one that is genuinely optional is declared nullable and
+        listed anyway, and the model sends `null` when it has nothing to say.
+        Declaring it optional instead is a schema the API refuses outright, at
+        the moment somebody asks a question — not at startup.
+        """
+        argument = self.kodama["parameters"]["properties"]["argument"]
+        self.assertIn("null", argument["type"])
+        self.assertIn("argument", self.kodama["parameters"]["required"])
+        # And a genuinely required one is not made nullable.
+        command = self.kodama["parameters"]["properties"]["command"]
+        self.assertEqual("string", command["type"])
+
+    def test_an_explicit_null_reads_as_no_argument(self):
+        """What strict mode actually sends. `args.get("argument", "")` returns
+        None here, not "" — which reached `.strip()` as an AttributeError in
+        the middle of a turn."""
+        box = ToolBox(registry=self.registry, clock=object())
+        answer = parse(box.call("execute_kodama_command",
+                                json.dumps({"command": "pause",
+                                            "argument": None})))
+        # Refused because the player is not running, not because it raised.
+        self.assertIn("error", answer)
+
+    def test_the_web_search_tool_is_off_unless_it_is_asked_for(self):
+        """A model given both will search the web for weather this device has
+        cached from a forecast API three hundred metres away."""
+        self.assertNotIn("web_search", [t.get("type") for t in self.tools])
+        with_search = ToolBox(registry=self.registry, web_search=True).schemas()
+        self.assertEqual("web_search", with_search[-1]["type"])
 
 
 class TestDispatch(unittest.TestCase):

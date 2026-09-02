@@ -1,4 +1,14 @@
-"""The two request parameters that have to be negotiated against the model.
+"""The two request parameters `/v1/chat/completions` has to be negotiated over.
+
+**This is the agent's path now.** The conversation moved to `/v1/responses`,
+where neither question exists — `max_output_tokens` is the only spelling and
+tools and reasoning are not in conflict — and `tests/test_responses_client.py`
+guards that. `step()` did not move with it: its history is a list of chat
+messages that `aipi5/agent/loop.py` builds, appends to and compacts, and the
+two endpoints disagree about the shape of exactly the parts that matter. So
+this file still guards a live path, and the error below is still the reason the
+conversation left.
+
 
 Both were found on the device rather than reasoned about, and both fail in a
 way that is invisible until the exact request shape that triggers them is sent.

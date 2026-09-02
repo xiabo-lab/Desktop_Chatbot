@@ -80,8 +80,29 @@ class TestTheTablesAreDisjoint(unittest.TestCase):
         self.assertEqual(set(), self.assistant & self.agent)
 
     def test_no_agent_operation_is_offered_to_the_voice_model(self):
-        names = {schema["function"]["name"] for schema in ToolBox().schemas()}
+        # Against the handler table rather than the rendered schemas: an empty
+        # `ToolBox` offers no schemas at all, so the same assertion over
+        # `schemas()` passed vacuously and would have gone on passing however
+        # wrong the tables became.
+        self.assertEqual(set(), self.assistant & self.agent)
+        names = {schema["name"] for schema in ToolBox().schemas()}
         self.assertEqual(set(), names & self.agent)
+
+    def test_the_two_toolboxes_no_longer_share_a_schema_builder(self):
+        """They speak to different endpoints, and the shapes differ.
+
+        `aipi5/agent/tools.py` imported `_schema` from the voice toolbox until
+        the conversation moved to `/v1/responses`. One change there reshaped
+        every tool the *agent* offers — silently, because the agent has no test
+        that renders a schema against a real API. Two files with twenty similar
+        lines is the cheaper mistake.
+        """
+        agent_source = (ROOT / "aipi5" / "agent" / "tools.py").read_text(
+            encoding="utf-8")
+        self.assertNotIn("from aipi5.llm.tools import", agent_source)
+        self.assertIn("def _schema(", agent_source)
+        # And the shapes really are different, or the split guards nothing.
+        self.assertIn("function", AgentToolBox().schemas()[0])
 
     def test_every_operation_the_toolbox_names_exists_in_the_helper(self):
         """A tool that calls an operation the helper does not have is a promise

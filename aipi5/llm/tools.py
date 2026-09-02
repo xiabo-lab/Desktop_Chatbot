@@ -85,7 +85,7 @@ class ToolBox:
     """
 
     def __init__(self, *, weather=None, news=None, clock=None, camera=None,
-                 vision=None, registry=None, settings=None):
+                 vision=None, registry=None, settings=None, web_search=False):
         self.weather = weather
         self.news = news
         self.clock = clock
@@ -93,6 +93,12 @@ class ToolBox:
         self.vision = vision
         self.registry = registry
         self.settings = settings
+        #: Whether the API's own web search is offered. Off by default and
+        #: last in the list on purpose: it is the fallback for a current fact
+        #: with no narrow provider, and a model given both will sometimes
+        #: search the web for weather this device already has cached from a
+        #: forecast API three hundred metres away. See `schemas()`.
+        self.web_search = web_search
 
         self._handlers: dict[str, Callable[[dict], str]] = {
             "get_weather": self._get_weather,
@@ -170,6 +176,8 @@ class ToolBox:
                 }},
             ))
 
+        # `commands` first, then the built-in, so the narrow local tools are
+        # always ahead of the general one in the list the model reads.
         commands = self._kodama_commands()
         if commands:
             names = [command.name for _, command in commands]
@@ -195,6 +203,13 @@ class ToolBox:
                 },
                 required=["command"],
             ))
+
+        if self.web_search:
+            # The API runs this one itself; there is no handler here and
+            # nothing comes back through `call()`. Offered only for current
+            # facts this device has no provider for — the weather, the news and
+            # the clock all have one, and the prompt says to prefer them.
+            tools.append({"type": "web_search"})
 
         return tools
 
@@ -239,7 +254,7 @@ class ToolBox:
         if weather is None:
             return _error("the weather service could not be reached")
         payload = weather.as_dict()
-        when = str(args.get("when", "now")).lower()
+        when = str(args.get("when") or "now").lower()
         if when == "now":
             # The forecast is dropped rather than sent and ignored. It is
             # about 400 tokens, on every weather question, for information the
@@ -262,7 +277,10 @@ class ToolBox:
         capture = self.camera.capture_still()
         if capture is None:
             return _error("the camera did not take a picture")
-        question = str(args.get("question", "") or "").strip()
+        # `or ""` rather than a default, because strict mode sends an
+        # explicit `null` for an argument the model has nothing to say about —
+        # `args.get("question", "")` returns None in that case, not "".
+        question = str(args.get("question") or "").strip()
         description = self.vision.describe(capture, question)
         if description is None:
             return _error("the picture was taken but could not be described")
@@ -297,7 +315,7 @@ class ToolBox:
         call_args = {}
         if command.params:
             slot = next(iter(command.params))
-            value = str(args.get("argument", "") or "").strip()
+            value = str(args.get("argument") or "").strip()
             if not value:
                 return _error(f"{command.name} needs a {slot}")
             call_args[slot] = value
@@ -309,22 +327,55 @@ class ToolBox:
 
 def _schema(name: str, description: str, properties: dict,
             required: list[str] | None = None) -> dict:
-    """One entry in the API's `tools` array.
+    """One entry in the API's `tools` array, in `/v1/responses` shape.
+
+    Flat — `name`, `description` and `parameters` sit on the tool rather than
+    inside a nested `function` object, which is the one difference from the
+    Chat Completions spelling `aipi5/agent/tools.py` still uses.
+
+    **`strict: True`, and what it costs.** Strict mode is what makes the
+    schema a guarantee instead of a suggestion: the model cannot invent a
+    field, cannot omit a required one, and cannot send a string where a number
+    belongs. Its price is that *every* property must appear in `required` —
+    there is no such thing as an optional argument. So an argument that is
+    genuinely optional is declared nullable and listed as required, and the
+    model passes `null` when it has nothing to say. That is the shape below,
+    and it is why `required` is a parameter of this function rather than
+    simply every key.
 
     `additionalProperties: False` throughout, so a model that invents an extra
     field gets a schema violation rather than having it silently ignored — the
     ignored case is how an argument ends up somewhere nobody expected it.
     """
+    required = list(required or [])
+    declared = {}
+    for field, spec in properties.items():
+        if field in required:
+            declared[field] = spec
+            continue
+        # Optional, so nullable. `type` may already be a list — a future
+        # argument that takes a number or a string — and is normalised to one
+        # either way rather than special-cased.
+        spec = dict(spec)
+        kinds = spec.get("type", "string")
+        kinds = list(kinds) if isinstance(kinds, list) else [kinds]
+        if "null" not in kinds:
+            kinds.append("null")
+        spec["type"] = kinds
+        declared[field] = spec
+
     return {
         "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required or [],
-                "additionalProperties": False,
-            },
+        "name": name,
+        "description": description,
+        "parameters": {
+            "type": "object",
+            "properties": declared,
+            # Every key, because strict mode admits no other kind. What makes
+            # an argument optional is the `null` added above, not its absence
+            # from this list.
+            "required": list(declared),
+            "additionalProperties": False,
         },
+        "strict": True,
     }

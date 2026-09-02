@@ -15,11 +15,29 @@ so plainly at startup, because the failure mode otherwise is an assistant that
 boots cleanly, reports healthy, and apologises to the first person who speaks
 to it.
 
-**Two request shapes, negotiated once.** Newer OpenAI models reject `max_tokens`
-and want `max_completion_tokens`; older ones reject the second. Rather than
-guess from the model name — which is exactly the guess that breaks when a model
-is renamed — the first request that is rejected for this reason is retried the
-other way and the answer remembered for the session.
+**The conversation runs on `/v1/responses`; the agent loop still runs on
+`/v1/chat/completions`.** Two endpoints in one file looks like indecision and
+is not: the endpoint that answers the person in the room moved because Chat
+Completions would not let it use tools at all. The model this project runs
+carries a default reasoning effort, and
+
+    400 — Function tools with reasoning_effort are not supported for
+    gpt-5.6-luna in /v1/chat/completions. To use function tools, use
+    /v1/responses or set reasoning_effort to 'none'.
+
+is what a tool call came back as. `'none'` cleared it, and `_variants` below is
+the negotiation that grew out of that — two parameters tried against the model
+and remembered, because guessing either from the model name is the guess that
+breaks the next time a model is renamed. On `/v1/responses` neither question
+exists: `max_output_tokens` is the only spelling, and tools and reasoning are
+not in conflict.
+
+The agent's `step()` did not move with it. Its history is a list of chat
+messages that `aipi5/agent/loop.py` builds, appends to, and compacts, and the
+two endpoints disagree about the shape of exactly the parts that matter — a
+tool call and its result. Migrating both in one change would have meant no
+working version to compare against on the one path where a bug is a maintenance
+run that quietly does the wrong thing.
 
 Nothing here raises into the voice loop. Every method returns a result object
 whose failure carries a sentence that can be spoken.
@@ -39,8 +57,31 @@ log = logging.getLogger(__name__)
 # this bounds. It is a bound on a bug, not a feature limit.
 MAX_TOOL_ROUNDS = 3
 
+#: The one tool the startup probe offers. Its only job is to make the probe's
+#: request the same *shape* as a real one — a model that takes a plain request
+#: and refuses a tools array is the exact failure the probe exists to catch,
+#: and it passed cleanly for a week. Named so that a model which calls it
+#: anyway is obvious in the log rather than looking like a real tool.
+PROBE_TOOL = {
+    "type": "function",
+    "name": "startup_check",
+    "description": "Do not call this. It exists so that the startup probe "
+                   "sends the same request shape a real question does.",
+    "parameters": {"type": "object", "properties": {}, "required": [],
+                   "additionalProperties": False},
+    "strict": True,
+}
+
 # "not yet negotiated", distinct from None, which is itself a valid setting.
 _UNKNOWN = "?"
+
+#: Item types `/v1/responses` sends back that carry no text and need no answer.
+#: Listed so that an unknown one is *logged* rather than silently skipped: the
+#: failure being prevented is a model that answered in an item shape this code
+#: does not read, which looks from the room like the assistant saying nothing.
+QUIET_OUTPUT = frozenset({"reasoning", "web_search_call", "file_search_call",
+                          "code_interpreter_call", "computer_call",
+                          "image_generation_call"})
 
 
 @dataclass
@@ -144,19 +185,27 @@ class OpenAIClient:
 
         Run at startup, off the voice path, so that a wrong model name is a
         line in the boot log naming the model rather than an apology to the
-        first person who speaks. Deliberately a real completion rather than a
+        first person who speaks. Deliberately a real request rather than a
         `models.retrieve` — a model can be listed and still refuse the request
         shape this assistant sends, and it is the request shape that matters.
+
+        **It sends a tools array.** That is the whole reason this is worth
+        doing: the failure it exists to catch was a model that accepted a plain
+        completion, reported healthy at boot, and rejected every request that
+        offered it a tool — so the first question anybody asked that needed one
+        came back as an apology. A probe without tools would have passed that
+        day too.
         """
         if self._client is None:
             return False, self._error or "no client"
 
         started = time.monotonic()
         try:
-            response = self._request(
-                messages=[{"role": "user", "content": "Reply with the word ready."}],
-                tools=None,
-                max_tokens=16,
+            response = self._responses_request(
+                items=[{"role": "user", "content": "Reply with the word ready."}],
+                instructions="Answer in one word.",
+                tools=[PROBE_TOOL],
+                max_output_tokens=self.cfg.max_output_tokens,
             )
         except Exception as exc:
             self._probed = False
@@ -166,7 +215,7 @@ class OpenAIClient:
 
         self._probed = True
         ms = (time.monotonic() - started) * 1000
-        text = _content_of(response) or ""
+        text = _output_text(response)
         log.info("model %r answered in %.0f ms (%r)", self.model, ms, text[:40])
         return True, f"answered in {ms:.0f} ms"
 
@@ -178,6 +227,11 @@ class OpenAIClient:
         The loop is bounded and every exit says something. A model that keeps
         asking for tools until `MAX_TOOL_ROUNDS` gets one final request with no
         tools offered, so the turn ends in a sentence rather than in silence.
+
+        The system prompt goes as `instructions` rather than as a first message.
+        It is rebuilt every turn — it carries the clock and the language of the
+        utterance — so it is not history and putting it in the history would
+        mean trimming around it.
         """
         if self._client is None:
             return Reply(ok=False, error=self._error or "no client")
@@ -192,10 +246,11 @@ class OpenAIClient:
             # whole budget calling things and never say anything.
             offer = tools if round_number < MAX_TOOL_ROUNDS else None
             try:
-                response = self._request(
-                    messages=conversation.messages(system),
+                response = self._responses_request(
+                    items=conversation.items(),
+                    instructions=system,
                     tools=offer,
-                    max_tokens=self.cfg.max_output_tokens,
+                    max_output_tokens=self.cfg.max_output_tokens,
                 )
             except Exception as exc:
                 detail = _explain(exc, self.model)
@@ -204,10 +259,11 @@ class OpenAIClient:
                              ms=(time.monotonic() - started) * 1000,
                              tool_calls=called)
 
-            message = response.choices[0].message
-            calls = getattr(message, "tool_calls", None)
+            text, calls, builtins = _read_output(response)
+            called.extend(builtins)
+
             if not calls:
-                text = (_content_of(response) or "").strip()
+                text = text.strip()
                 conversation.assistant(text)
                 return Reply(text=text, ok=bool(text),
                              error="" if text else "the model returned nothing",
@@ -222,11 +278,16 @@ class OpenAIClient:
                                              "does not exist here",
                              ms=(time.monotonic() - started) * 1000)
 
-            conversation.assistant_tool_calls(_as_dict(message))
+            # Every call is stored before any of them is answered. The API
+            # rejects a `function_call_output` whose `call_id` it has not seen,
+            # and it rejects a `function_call` left unanswered — so the pair
+            # travels together or the next request is a 400 that says nothing
+            # about which half was missing.
+            conversation.assistant_tool_calls(calls)
             for call in calls:
-                called.append(call.function.name)
-                result = toolbox.call(call.function.name, call.function.arguments)
-                conversation.tool_result(call.id, result)
+                called.append(call["name"])
+                result = toolbox.call(call["name"], call["arguments"])
+                conversation.tool_result(call["call_id"], result)
 
         # Unreachable: the final round is asked with no tools and therefore
         # cannot come back with tool calls. Kept as a real return rather than
@@ -251,16 +312,14 @@ class OpenAIClient:
         prompt = question.strip() or "What do you see?"
         started = time.monotonic()
         try:
-            response = self._request(
-                messages=[
-                    {"role": "system", "content": instruction},
-                    {"role": "user", "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": data_url}},
-                    ]},
-                ],
+            response = self._responses_request(
+                items=[{"role": "user", "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": data_url},
+                ]}],
+                instructions=instruction,
                 tools=None,
-                max_tokens=self.cfg.max_output_tokens,
+                max_output_tokens=self.cfg.max_output_tokens,
                 model=self.cfg.vision,
                 timeout=self.cfg.vision_timeout_s,
             )
@@ -270,7 +329,7 @@ class OpenAIClient:
             return Reply(ok=False, error=detail,
                          ms=(time.monotonic() - started) * 1000)
 
-        text = (_content_of(response) or "").strip()
+        text = _output_text(response).strip()
         return Reply(text=text, ok=bool(text),
                      error="" if text else "the model described nothing",
                      ms=(time.monotonic() - started) * 1000)
@@ -327,6 +386,59 @@ class OpenAIClient:
             prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
             completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
         )
+
+    def _responses_request(self, *, items, instructions, tools,
+                           max_output_tokens, model=None, timeout=None):
+        """Send one `/v1/responses` request, retrying the network once.
+
+        One retry rather than two questions. The token-parameter and
+        `reasoning_effort` negotiations that `_request` carries do not exist
+        here — `max_output_tokens` is the only spelling this endpoint takes,
+        and tools and reasoning are not in conflict on it — so all that is left
+        is a link that dropped.
+
+        Retries are counted here rather than left to the SDK for the reason
+        given at construction: `max_retries=0` makes the configured timeout a
+        bound on the *whole* attempt, and the SDK's default of two silent
+        retries turns a 20 s timeout into a 60 s wait, which on a device with a
+        2.5 s target is indistinguishable from a hang.
+        """
+        model = model or self.model
+        attempts = self.cfg.max_retries + 1
+        last: Exception | None = None
+
+        for attempt in range(attempts):
+            kwargs = {
+                "model": model,
+                "input": items,
+                "max_output_tokens": max_output_tokens,
+                # Nothing on this device wants the API to keep a copy. The
+                # conversation is held here, bounded and self-expiring, and a
+                # stored response is a transcript of a living room sitting on
+                # somebody else's disk with no expiry this code controls.
+                "store": False,
+            }
+            if instructions:
+                kwargs["instructions"] = instructions
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
+            if timeout is not None:
+                kwargs["timeout"] = timeout
+
+            try:
+                return self._client.responses.create(**kwargs)
+            except Exception as exc:                 # noqa: BLE001
+                last = exc
+                if attempt + 1 < attempts and _is_transient(exc):
+                    log.warning("request failed (%s); retrying once",
+                                type(exc).__name__)
+                    continue
+                raise
+
+        if last is not None:
+            raise last
+        raise RuntimeError("the request could not be sent")
 
     def _request(self, *, messages, tools, max_tokens, model=None, timeout=None):
         """Send, retrying the token parameter and the network once each.
@@ -467,6 +579,87 @@ def _content_of(response) -> str | None:
         return response.choices[0].message.content
     except (AttributeError, IndexError):
         return None
+
+
+# ── reading a Responses answer ───────────────────────────────────────
+#
+# **Every output item, not the first one.** `response.output` is a list and
+# what is in it varies with the model and the request: a reasoning item, then a
+# web search the model ran itself, then two function calls, then the message.
+# Reading `output[0]` works until the day a reasoning item is emitted in front
+# of the answer, and then the assistant goes quiet with nothing in the log to
+# say why.
+#
+# `output_text` is the SDK's own convenience for the same walk and is used
+# where it exists, with the walk as the fallback — the fallback is what the
+# tests drive, because a fake response object that has to grow an
+# `output_text` property is a fake that stops resembling the thing it stands in
+# for.
+
+
+def _item(entry, name, default=None):
+    """One field of an output item, whether it is an object or a dict.
+
+    The SDK hands back typed objects; a `response.model_dump()`, a replay from
+    a log, and every fake in the tests are dictionaries. Both are read the
+    same way here rather than converting, because converting an item and
+    sending it back is how a `call_id` gets regenerated.
+    """
+    if isinstance(entry, dict):
+        return entry.get(name, default)
+    return getattr(entry, name, default)
+
+
+def _output_text(response) -> str:
+    """Everything the model said, in order, as one string."""
+    text = getattr(response, "output_text", None)
+    if isinstance(text, str) and text:
+        return text
+
+    parts: list[str] = []
+    for entry in getattr(response, "output", None) or []:
+        if _item(entry, "type") != "message":
+            continue
+        for chunk in _item(entry, "content") or []:
+            if _item(chunk, "type") in ("output_text", "text"):
+                value = _item(chunk, "text") or ""
+                if value:
+                    parts.append(value)
+    return "".join(parts)
+
+
+def _read_output(response) -> tuple[str, list[dict], list[str]]:
+    """(text, function calls, names of built-in tools the model ran itself).
+
+    The function calls come back as plain dictionaries in the exact shape the
+    API takes them *back* in — `{"type", "call_id", "name", "arguments"}` —
+    because that is what goes into the conversation, and a rebuilt item with a
+    regenerated `call_id` is rejected with an error about mismatched ids that
+    says nothing about where the ids came from.
+    """
+    calls: list[dict] = []
+    builtins: list[str] = []
+    for entry in getattr(response, "output", None) or []:
+        kind = _item(entry, "type")
+        if kind == "function_call":
+            calls.append({
+                "type": "function_call",
+                "call_id": _item(entry, "call_id") or _item(entry, "id") or "",
+                "name": _item(entry, "name") or "",
+                "arguments": _item(entry, "arguments") or "{}",
+            })
+        elif kind == "web_search_call":
+            # Run by the API, not by this process. Recorded so the turn's log
+            # line says a search happened; there is no result to send back.
+            builtins.append("web_search")
+        elif kind in QUIET_OUTPUT or kind == "message":
+            continue
+        else:
+            # Not an error — the API adds item types — but worth a line,
+            # because an answer that arrived in a shape this code does not read
+            # looks from the room like the assistant saying nothing at all.
+            log.info("ignoring an output item of type %r", kind)
+    return _output_text(response), calls, builtins
 
 
 def _as_dict(message) -> dict:
