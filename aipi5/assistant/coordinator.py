@@ -208,20 +208,31 @@ class AgentBridge:
             self._stop.set()
             self._state = "idle"
 
-    def pump(self, timeout: float | None = None) -> int:
+    def pump(self, timeout: float | None = None, report: bool = True) -> int:
         """One poll, translated and published. Returns how many rows landed.
 
         Separated from the loop so the translation, the cursor and the
         end-of-run detection can all be tested without a thread.
+
+        `report=False` for the drain after a run has already finished. A poll
+        that fails there is not news: `agent.done` has been seen, the answer is
+        on the page, and the only thing publishing an error achieves is the
+        sentence "the agent is not answering" sitting directly beneath the
+        answer it just gave. Seen on the device on the first delegated run.
         """
         if self._failed:
             return 0
         status, payload = self.proxy.poll(self._cursor, timeout=timeout)
         if status != 200:
             self._failed = True
-            self.events.publish(
-                "error", "agent",
-                text=str(payload.get("error", "")) or "the agent is not answering")
+            if report:
+                self.events.publish(
+                    "error", "agent",
+                    text=str(payload.get("error", ""))
+                         or "the agent is not answering")
+            else:
+                log.info("the drain after run %s did not answer (%s)",
+                         self._run, status)
             self.stop()
             return 0
 
@@ -232,6 +243,18 @@ class AgentBridge:
         drawn = 0
         for message in payload.get("events", []) or []:
             if not isinstance(message, dict):
+                continue
+            # Only the run being followed. The mailbox does not forget when
+            # this process restarts, and its cursor starts at 0 again here —
+            # so the first delegation after a deploy replayed every row of the
+            # last one: twenty-five checks and an answer to a question nobody
+            # had just asked. Then it reached that run's `agent.done`, called
+            # `stop()`, and quit following the run it was actually started
+            # for, which then reported nothing at all.
+            #
+            # A row with no run is not run-specific and is kept.
+            run_id = str(message.get("run", ""))[:64]
+            if run_id and self._run and run_id != self._run:
                 continue
             row = translate(message)
             if row is None:
@@ -284,7 +307,7 @@ class AgentBridge:
             # turns "poll for two seconds" into a spin.
             self._stop.wait(0)
             time.sleep(min(self.drain_s, 1.0))
-            self.pump(timeout=0.0)
+            self.pump(timeout=0.0, report=False)
         except Exception:                            # noqa: BLE001
             log.exception("the agent bridge stopped")
         finally:

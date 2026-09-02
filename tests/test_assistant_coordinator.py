@@ -422,6 +422,118 @@ class TestTheBridge(unittest.TestCase):
         self.assertLessEqual(proxy.polls, 4)
 
 
+
+
+class TestOnlyTheRunBeingFollowed(unittest.TestCase):
+    """The mailbox keeps yesterday's runs; this process forgets its cursor.
+
+    So the first delegation after a deploy polled from 0 and got the whole of
+    the previous run -- twenty-five checks and an answer to a question nobody
+    had just asked -- and then reached that run's `agent.done`, stopped, and
+    never followed the run it had actually been started for. The person asked
+    for something, was told it had been started, and nothing further appeared.
+
+    Both halves of that are the same missing line: the bridge follows one run
+    and was publishing every run in the mailbox.
+    """
+
+    def batch(self, *events):
+        return FakeProxy([{"cursor": 9, "events": list(events),
+                           "agent": {"run": "r-new", "state": "running"}}])
+
+    def test_another_runs_rows_are_not_drawn(self):
+        events = EventLog()
+        proxy = self.batch(
+            {"type": "agent.say", "run": "r-old", "text": "yesterday's answer"},
+            {"type": "agent.say", "run": "r-new", "text": "today's"},
+        )
+        bridge = AgentBridge(proxy, events)
+        bridge.follow("r-new")
+        bridge.pump(timeout=0.0)
+        self.assertEqual(["today's"], [r["text"] for r in events.collect(0)[0]])
+
+    def test_another_runs_done_does_not_stop_this_one(self):
+        """The half with no visible symptom until later: the page simply stops
+        being told anything about a run that is still going."""
+        bridge = AgentBridge(
+            self.batch({"type": "agent.done", "run": "r-old", "ok": True}),
+            EventLog())
+        bridge.follow("r-new")
+        bridge.pump(timeout=0.0)
+        self.assertFalse(bridge._stop.is_set())
+
+    def test_this_runs_done_still_stops_it(self):
+        bridge = AgentBridge(
+            self.batch({"type": "agent.done", "run": "r-new", "ok": True}),
+            EventLog())
+        bridge.follow("r-new")
+        bridge.pump(timeout=0.0)
+        self.assertTrue(bridge._stop.is_set())
+
+    def test_a_row_with_no_run_is_kept(self):
+        events = EventLog()
+        bridge = AgentBridge(
+            self.batch({"type": "agent.say", "text": "no run on this one"}),
+            events)
+        bridge.follow("r-new")
+        bridge.pump(timeout=0.0)
+        self.assertEqual(1, len(events.collect(0)[0]))
+
+    def test_before_a_run_is_named_everything_is_kept(self):
+        """A bridge adopted mid-run, or a test pumping without following."""
+        events = EventLog()
+        bridge = AgentBridge(
+            self.batch({"type": "agent.say", "run": "r-old", "text": "hello"}),
+            events)
+        bridge.pump(timeout=0.0)
+        self.assertEqual(1, len(events.collect(0)[0]))
+
+    def test_the_answer_offered_aloud_belongs_to_this_run(self):
+        """`_last_said` feeds `speak`. Yesterday's answer read out in the
+        kitchen this morning is the worst version of this bug."""
+        said: list = []
+        bridge = AgentBridge(
+            self.batch(
+                {"type": "agent.say", "run": "r-old", "text": "yesterday"},
+                {"type": "agent.say", "run": "r-new", "text": "today"},
+                {"type": "agent.done", "run": "r-new", "ok": True}),
+            EventLog(), on_answer=lambda text, run: said.append(text))
+        bridge.follow("r-new")
+        bridge.pump(timeout=0.0)
+        self.assertEqual(["today"], said)
+
+
+class TestTheDrainAfterARunEnds(unittest.TestCase):
+    """One pass after `agent.done`, in case a trailing row crossed it in the
+    mailbox. It is opportunistic, and it must be silent about failing.
+
+    On the device the first delegated run ended with the answer on the page and
+    then, directly beneath it, "the agent is not answering" -- from that drain,
+    against an agent that was running and answered the next request fine. A
+    person reading the panel sees the thing that just worked reported broken.
+    """
+
+    def test_a_failed_drain_says_nothing(self):
+        events = EventLog()
+        bridge = AgentBridge(DeadProxy(), events)
+        self.assertEqual(0, bridge.pump(timeout=0.0, report=False))
+        self.assertEqual([], events.collect(0)[0])
+
+    def test_a_failed_poll_during_the_run_still_says_so(self):
+        """The other half. A run whose agent has gone must not simply stop
+        producing rows with no explanation."""
+        events = EventLog()
+        bridge = AgentBridge(DeadProxy(), events)
+        bridge.pump(timeout=0.0)
+        rows, _ = events.collect(0)
+        self.assertEqual("error", rows[0]["kind"])
+
+    def test_the_drain_still_stops_the_bridge(self):
+        bridge = AgentBridge(DeadProxy(), EventLog())
+        bridge.pump(timeout=0.0, report=False)
+        self.assertFalse(bridge.alive())
+
+
 class TestDelegation(unittest.TestCase):
 
     def setUp(self):

@@ -128,6 +128,53 @@ class TestTheTool(DelegationCase):
             with self.subTest(cheap=cheap):
                 self.assertIn(cheap, schema["description"])
 
+    def test_the_prompt_does_not_send_anybody_back_to_the_device(self):
+        """The other half of the same fault, and the half that was giving the
+        advice. The prompt said: you cannot close an application, "say that
+        they should ask the device directly". So asked to close the browser it
+        answered "please say close the browser to the device" -- to somebody
+        who had just said exactly that, to the device.
+
+        Written when Talk and Agent were two things. There is one now, and the
+        model is it.
+        """
+        from aipi5.llm import prompts
+
+        page = prompts.BASE
+        self.assertNotIn("ask the device directly", page)
+        self.assertIn("you are it", page)
+
+    def test_the_prompt_keeps_shut_down_and_close_apart(self):
+        """`shutdown` is a real spoken command with a confirmation. Closing an
+        application is not a command at all -- no plugin declares one -- so
+        offering "shut down" to somebody who asked to close a browser offers
+        to turn off the machine."""
+        from aipi5.llm import prompts
+
+        closing = prompts.BASE[prompts.BASE.index("cannot close an application"):]
+        closing = closing[:closing.index("- **Never tell")]
+        self.assertIn("no** spoken command", closing)
+        self.assertIn("maintenance agent", closing)
+
+    def test_the_schema_covers_doing_and_not_only_asking(self):
+        """Asked to close the browser, the model answered "I can't close
+        applications -- say 'Shut down' and the device will confirm". Wrong
+        twice: the request had already been said to the device, and *shut
+        down* is not what somebody asking to close a browser wants.
+
+        It reads a description about long *questions*, finds closing a browser
+        is not one, and invents advice rather than handing over a thing the
+        agent can plainly do. `browser_close` and `restart_service` are two of
+        its tools.
+        """
+        schema = next(t for t in self.box.schemas()
+                      if t["name"] == "delegate_agent_task")
+        for doing in ("closing the browser", "restarting a service",
+                      "changing a setting"):
+            with self.subTest(doing=doing):
+                self.assertIn(doing, schema["description"])
+        self.assertIn("you are the device", schema["description"])
+
     def test_the_task_carries_what_the_person_said(self):
         """The agent has none of this conversation — it is a different process
         with its own history — so a task of "check that" is a run that has
