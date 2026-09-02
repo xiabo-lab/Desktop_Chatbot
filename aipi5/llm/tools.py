@@ -86,7 +86,7 @@ class ToolBox:
 
     def __init__(self, *, weather=None, news=None, clock=None, camera=None,
                  vision=None, registry=None, settings=None, web_search=False,
-                 volume=None, birthdays=None, consent=None):
+                 volume=None, birthdays=None, consent=None, agent=None):
         self.weather = weather
         self.news = news
         self.clock = clock
@@ -108,6 +108,20 @@ class ToolBox:
         #: `aipi5/assistant/consent.py`; the rule that matters is that a model
         #: reporting "they said yes" is reporting, not deciding.
         self.consent = consent
+        #: `AgentProxy`, for the three deterministic reminder messages and
+        #: nothing else. **Not a way to reach the agent's tools**: it is a
+        #: socket path and a `json.dumps`, the handlers below name three
+        #: message types that are literals in this file, and
+        #: `tests/test_agent_boundary.py` asserts that the voice service holds
+        #: no client for the root helper and imports nothing else out of
+        #: `aipi5.agent`. (It asserts that by looking for the class name as
+        #: text, so this comment says it the long way round on purpose.)
+        #:
+        #: Reminders live over there because reboot survival, retry and the
+        #: delivery handshake with `Housekeeping` all belong to one owner.
+        #: Duplicating a `Schedule` here would be a second file of reminders
+        #: that the phone never hears about.
+        self.agent = agent
         #: Whether the API's own web search is offered. Off by default and
         #: last in the list on purpose: it is the fallback for a current fact
         #: with no narrow provider, and a model given both will sometimes
@@ -126,6 +140,9 @@ class ToolBox:
             "list_birthdays": self._list_birthdays,
             "save_birthday": self._save_birthday,
             "delete_birthday": self._delete_birthday,
+            "create_reminder": self._create_reminder,
+            "read_reminders": self._read_reminders,
+            "delete_reminder": self._delete_reminder,
         }
 
     # ── what the model is told exists ────────────────────────────────
@@ -302,6 +319,55 @@ class ToolBox:
                 "about to remove and wait.",
                 {"id": {"type": "string", "maxLength": 64,
                         "description": "The id from list_birthdays."}},
+                required=["id"],
+            ))
+
+        if self.agent is not None:
+            now = self.clock.as_dict() if self.clock is not None else {}
+            tools.append(_schema(
+                "create_reminder",
+                "Set a reminder that this device will deliver at a given time. "
+                "It survives a reboot and is sent to the paired phone as a "
+                "notification.\n"
+                "`when` must be an absolute local date and time that you have "
+                "worked out yourself from the current time — "
+                + (f"it is currently {now.get('date', '')} {now.get('time', '')} "
+                   "here. " if now else "call get_current_time first if you are "
+                                        "not sure. ")
+                + "Never send 'tomorrow' or 'in an hour'; send the timestamp "
+                  "those mean. If the person did not say enough to work one out "
+                  "— 'remind me later' — ask them when.\n"
+                "Read the time back from the result, not from what you sent: "
+                "the device resolves it in its own timezone and that is the "
+                "moment the reminder will actually arrive.",
+                {
+                    "when": {"type": "string", "maxLength": 64,
+                             "description": "An absolute local time, like "
+                                            "2026-09-03 09:00. No words."},
+                    "text": {"type": "string", "maxLength": 500,
+                             "description": "What to say when it arrives, in "
+                                            "the person's own words where you "
+                                            "can — 'call Mum', not 'the user "
+                                            "wishes to telephone his mother'."},
+                    "deliver": {"type": "string", "enum": ["push", "email"],
+                                "description": "How to send it. 'push' is the "
+                                               "paired phone and is the default; "
+                                               "null means push."},
+                },
+                required=["when", "text"],
+            ))
+            tools.append(_schema(
+                "read_reminders",
+                "Every reminder this device is holding, waiting and recently "
+                "delivered, with the time each is due.",
+                {},
+            ))
+            tools.append(_schema(
+                "delete_reminder",
+                "Cancel a reminder that has not been delivered yet. Call "
+                "read_reminders first and pass the exact id of the one meant.",
+                {"id": {"type": "string", "maxLength": 64,
+                        "description": "The id from read_reminders."}},
                 required=["id"],
             ))
 
@@ -501,6 +567,58 @@ class ToolBox:
                    instruction="Ask the person exactly this and stop. Nothing "
                                "has been removed yet and you must not say it "
                                "has.")
+
+    # ── reminders ────────────────────────────────────────────────────
+    #
+    # Three forwards. The reminder itself is made in `aipi5-agent.service`, by
+    # `AgentService.reminder_create`, which validates the timestamp and calls
+    # `Schedule.add` — **no run, no budget, no model**. What that buys is a
+    # reminder that is as dependable as an alarm clock rather than as
+    # dependable as a conversation: the old route was `agent.ask`, so "remind
+    # me at nine to call Mum" spent one of the day's runs and up to 24 model
+    # steps, and a run that wandered off was a reminder that never got made
+    # with nothing said about it.
+
+    def _create_reminder(self, args: dict) -> str:
+        when = str(args.get("when") or "").strip()
+        text = str(args.get("text") or "").strip()
+        if not when:
+            return _error("a reminder needs an absolute time, like "
+                          "2026-09-03 09:00. Ask the person when they want it.")
+        if not text:
+            return _error("a reminder needs something to say")
+        deliver = str(args.get("deliver") or "push")
+
+        status, answer = self.agent.reminder_create(when, text, deliver)
+        if status != 200:
+            return _error(str(answer.get("error", ""))
+                          or "this device could not save the reminder")
+        if not answer.get("ok"):
+            return _error(str(answer.get("error", "")) or "that time did not work")
+        # `when` and `deliver` come back off the record that was written, not
+        # off what was sent. Reading the request back would be the assistant
+        # confirming a time the device may have refused, adjusted, or read in a
+        # different zone.
+        return _ok(**answer["reminder"])
+
+    def _read_reminders(self, args: dict) -> str:
+        status, answer = self.agent.reminder_list()
+        if status != 200 or not answer.get("ok"):
+            return _error(str(answer.get("error", ""))
+                          or "this device could not read its reminders")
+        reminders = answer.get("reminders", [])
+        return _ok(reminders=reminders, count=len(reminders))
+
+    def _delete_reminder(self, args: dict) -> str:
+        ident = str(args.get("id") or "").strip()
+        if not ident:
+            return _error("call read_reminders and pass the id of the one to "
+                          "cancel")
+        status, answer = self.agent.reminder_cancel(ident)
+        if status != 200 or not answer.get("ok"):
+            return _error(str(answer.get("error", ""))
+                          or "this device could not cancel that reminder")
+        return _ok(cancelled=answer.get("cancelled", {}))
 
     def _execute_kodama_command(self, args: dict) -> str:
         """Run one named Kodama command.

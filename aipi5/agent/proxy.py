@@ -85,6 +85,40 @@ class AgentProxy:
                              body={"type": "agent.open", "url": url},
                              timeout=timeout)
 
+    # ── reminders ───────────────────────────────────────────────────
+    #
+    # Their own methods rather than a `say` at the call site, for the reason
+    # `open_page` has its own: these are messages the *assistant* originates
+    # rather than forwards on the phone's behalf, and they want their own
+    # timeout. `DEFAULT_TIMEOUT_S` is sized for a long poll; what happens on
+    # the other side of these is a validation and a file write, so a wait
+    # measured in seconds is a wait for something that has already failed.
+
+    #: Long enough for an fsync on an SD card that is busy, short enough that
+    #: a person waiting to hear "nine o'clock, on your phone" is not left
+    #: standing there.
+    RPC_TIMEOUT_S = 5.0
+
+    def reminder_create(self, when: str, text: str, deliver: str = "push",
+                        ) -> tuple[int, dict]:
+        return self._request("POST", "/agent/v1/say",
+                             body={"type": "assistant.reminder.create",
+                                   "when": when, "text": text,
+                                   "deliver": deliver},
+                             timeout=self.RPC_TIMEOUT_S)
+
+    def reminder_list(self, limit: int = 20) -> tuple[int, dict]:
+        return self._request("POST", "/agent/v1/say",
+                             body={"type": "assistant.reminder.list",
+                                   "limit": int(limit)},
+                             timeout=self.RPC_TIMEOUT_S)
+
+    def reminder_cancel(self, ident: str) -> tuple[int, dict]:
+        return self._request("POST", "/agent/v1/say",
+                             body={"type": "assistant.reminder.cancel",
+                                   "id": ident},
+                             timeout=self.RPC_TIMEOUT_S)
+
     def snapshot(self) -> dict | None:
         """Cheap enough for the four-second idle poll. Never blocks for long."""
         now = time.monotonic()

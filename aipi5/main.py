@@ -343,6 +343,12 @@ class Assistant:
             # for a person. The model asks the question; it never decides the
             # answer. See `aipi5/assistant/consent.py`.
             consent=self.consent,
+            # The three deterministic reminder messages, and nothing else.
+            # `Schedule` lives in `aipi5-agent.service` because reboot
+            # survival, retry and the delivery handshake with `Housekeeping`
+            # all belong to one owner; a second copy here would be a second
+            # file of reminders the phone never hears about.
+            agent=self.agent,
             # No launcher. The model may drive the player and may not start it
             # — see the rule in `aipi5/llm/tools.py`. `self.launcher` is reached
             # by the Music button (`action == "kodama"` below) and by the spoken

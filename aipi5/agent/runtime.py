@@ -41,6 +41,7 @@ from aipi5.agent.helper_client import HelperClient
 from aipi5.agent.loop import AgentLoop, Budget
 from aipi5.agent.prompts import system_prompt
 from aipi5.agent.notes import Notes
+from aipi5.agent import schedule as schedule_mod
 from aipi5.agent.schedule import Schedule
 from aipi5.agent.tools import AgentToolBox
 from aipi5.call.mailbox import Mailbox
@@ -256,6 +257,62 @@ class AgentService:
     #: can drift. Generous, because the assistant does not block on this: see
     #: `aipi5/browser/launcher.py`.
     OPEN_TIMEOUT_S = 45.0
+
+    # ── reminders, without a run ────────────────────────────────────
+    #
+    # `Schedule` lives here because reboot survival, retry and the delivery
+    # handshake with `Housekeeping` all belong to one owner, and this is it.
+    # What these three add is a way to reach that owner **without starting a
+    # maintenance run**.
+    #
+    # Before them the only door was `agent.ask`, so "remind me at nine to call
+    # Mum" spent one of the day's runs and up to 24 model steps deciding to
+    # call `remind_me` — for a request whose whole content is a timestamp and a
+    # sentence. It also meant the reminder was only as reliable as the model's
+    # mood: a run that wandered off, hit its step ceiling, or decided to check
+    # the journal first was a reminder that never got made, with nothing said
+    # about it.
+    #
+    # So these are validation and a function call. No `AgentLoop`, no budget,
+    # no `_work` thread — and no model anywhere on the path, which is what
+    # makes "remind me" as dependable as an alarm clock rather than as
+    # dependable as a conversation.
+
+    def reminder_create(self, when: str, text: str, deliver: str = "push",
+                        ) -> dict:
+        """One reminder. `when` is an absolute local ISO timestamp.
+
+        Resolved *here* rather than on the assistant's side, so there is one
+        implementation of what "2026-09-02 09:00" means and it is the one that
+        owns the file. `parse_when` is a validator and not a natural-language
+        parser, deliberately: "next Tuesday" means something different
+        depending on the day it is asked, and a parser that guesses is a
+        reminder that arrives on the wrong day for reasons nobody can
+        reconstruct afterwards.
+        """
+        try:
+            at = schedule_mod.parse_when(when)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        try:
+            item = self.schedule.add(at, text, deliver=deliver, run="assistant")
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        log.info("reminder %s set for %s", item.id, when)
+        # `describe()` rather than the raw record: what goes back is a human
+        # time in this device's own zone, which is what has to be read out
+        # loud. An epoch read aloud is not a confirmation of anything.
+        return {"ok": True, "reminder": item.describe()}
+
+    def reminder_list(self, limit: int = 20) -> dict:
+        return {"ok": True, "reminders": self.schedule.listing(max(1, int(limit)))}
+
+    def reminder_cancel(self, ident: str) -> dict:
+        item = self.schedule.cancel(str(ident or "")[:64])
+        if item is None:
+            return {"ok": False,
+                    "error": "there is no reminder waiting with that id"}
+        return {"ok": True, "cancelled": item.describe()}
 
     def open_page(self, url: str) -> dict:
         """Open a page in the agent's browser. No run, no model, no approval.
@@ -532,6 +589,25 @@ class _Handler(http_server.BaseHTTPRequestHandler):
         if kind == "agent.answer":
             return self._json(200, self.service.answer(
                 str(body.get("token", "")), bool(body.get("allow"))))
+        # The assistant's own three. Deliberately a different prefix from
+        # `agent.*`: these do not start a run, do not spend the daily budget,
+        # and never reach the model — see `reminder_create` above. A reader
+        # checking "what can be asked of this socket without a run" gets the
+        # answer from the names.
+        if kind == "assistant.reminder.create":
+            return self._json(200, self.service.reminder_create(
+                str(body.get("when", ""))[:64],
+                str(body.get("text", ""))[:schedule_mod.MAX_TEXT],
+                str(body.get("deliver", "push"))[:16]))
+        if kind == "assistant.reminder.list":
+            try:
+                limit = int(body.get("limit", 20))
+            except (TypeError, ValueError):
+                limit = 20
+            return self._json(200, self.service.reminder_list(limit))
+        if kind == "assistant.reminder.cancel":
+            return self._json(200, self.service.reminder_cancel(
+                str(body.get("id", ""))[:64]))
         return self._json(400, {"error": f"unknown message type {kind!r}"})
 
     def _json(self, code: int, payload: dict):
