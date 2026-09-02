@@ -84,6 +84,7 @@ from aipi5.core.housekeeping import Housekeeping
 from aipi5.core.presence import Presence, PresenceTracker, ScreensaverPolicy
 from aipi5.core.shutdown import ShutdownCountdown, countdown_and_run
 from aipi5.files import FileStore, human_size
+from aipi5.photos.capture import PhotoCapture
 from aipi5.games.manager import GameManager
 from aipi5.games.voice import GameVoice
 from aipi5.kodama.launcher import KodamaLauncher
@@ -349,6 +350,15 @@ class Assistant:
             # all belong to one owner; a second copy here would be a second
             # file of reminders the phone never hears about.
             agent=self.agent,
+            # Taking a picture and keeping it, which is not what the camera
+            # already does. `describe_camera_image` borrows the camera for a
+            # moment and lets tmpfs reclaim the file; this copies it into the
+            # transfer folder the Files screen shows. Two tools because they
+            # are two requests. See `aipi5/photos/capture.py`.
+            photos=PhotoCapture(
+                camera=self.camera if settings.camera.enabled else None,
+                files=self.files),
+            on_capture=self.publish_photo,
             # No launcher. The model may drive the player and may not start it
             # — see the rule in `aipi5/llm/tools.py`. `self.launcher` is reached
             # by the Music button (`action == "kodama"` below) and by the spoken
@@ -376,6 +386,12 @@ class Assistant:
                                devices=self.call_devices,
                                on_change=self.on_call_change,
                                files=self.files, agent=self.agent)
+        # The call server is built after the toolbox — it wants the agent
+        # proxy and the file store — so the controller is handed over here
+        # rather than at construction. It is the *same object* the panel's
+        # button reaches, which is the whole point of extracting it: one
+        # implementation of start-the-session, tell-the-page, send-the-push.
+        self.toolbox.calls = self.call.controller
         #: What the call was doing last time we looked, so a transition can be
         #: acted on once rather than on every poll.
         self._call_live = False
@@ -998,6 +1014,29 @@ class Assistant:
             self.ui_state.describe_camera(self.vision.last_description,
                                           self._last_capture_at())
         return reply.text
+
+    def publish_photo(self, saved: dict) -> None:
+        """Put a photograph that was kept into the conversation.
+
+        The same channel "what do you see" uses, deliberately: the picture and
+        the sentence about it are one event, and a page that received them
+        separately shows the previous photograph under the current answer for
+        one poll interval. That was measured on the panel and is why
+        `describe_camera` moves the id, the text and the image together.
+
+        What differs is the sentence. A description is the answer to a
+        question; this is a receipt — the filename, because that is the thing
+        somebody will look for on the Files screen afterwards, and because the
+        device chose it rather than the person.
+        """
+        name = str(saved.get("filename", ""))
+        self.ui_state.describe_camera(
+            f"Saved as {name}" if name else "Saved.",
+            saved.get("taken_at"))
+        self.events.publish("capture", "voice",
+                            text=f"Saved as {name}" if name else "Saved.",
+                            capture=str(saved.get("token", "")),
+                            meta={"filename": name})
 
     def _last_capture_at(self) -> float | None:
         """When the newest still was taken, or None if there is not one.

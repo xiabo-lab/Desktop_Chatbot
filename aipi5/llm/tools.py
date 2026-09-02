@@ -86,7 +86,8 @@ class ToolBox:
 
     def __init__(self, *, weather=None, news=None, clock=None, camera=None,
                  vision=None, registry=None, settings=None, web_search=False,
-                 volume=None, birthdays=None, consent=None, agent=None):
+                 volume=None, birthdays=None, consent=None, agent=None,
+                 calls=None, photos=None, on_capture=None):
         self.weather = weather
         self.news = news
         self.clock = clock
@@ -122,6 +123,26 @@ class ToolBox:
         #: Duplicating a `Schedule` here would be a second file of reminders
         #: that the phone never hears about.
         self.agent = agent
+        #: `CallController`, or None where calling is off. The same object the
+        #: panel's button uses, so there is one implementation of
+        #: start-the-session, tell-the-page, send-the-push.
+        #:
+        #: It takes a *name that is already paired*, never a number, a URL or a
+        #: push endpoint — see `aipi5/call/controller.py`. The enum below is
+        #: built from that list at request time, so a model cannot name a phone
+        #: that does not exist, and could not do anything with one if it did.
+        self.calls = calls
+        #: `PhotoCapture`, or None. Separate from `self.camera`, which is the
+        #: device: "what do you see" borrows the camera for a moment and lets
+        #: tmpfs reclaim the file, and "take a picture" keeps it. Two tools
+        #: because they are two requests.
+        self.photos = photos
+        #: `on_capture(saved)` — how a photograph reaches the transcript, given
+        #: the dict `PhotoCapture.take` returned. A callable rather than the UI
+        #: state object, so this module still knows nothing about pages, and
+        #: optional so a test can take a picture with no screen anywhere near
+        #: it.
+        self.on_capture = on_capture
         #: Whether the API's own web search is offered. Off by default and
         #: last in the list on purpose: it is the fallback for a current fact
         #: with no narrow provider, and a model given both will sometimes
@@ -143,6 +164,8 @@ class ToolBox:
             "create_reminder": self._create_reminder,
             "read_reminders": self._read_reminders,
             "delete_reminder": self._delete_reminder,
+            "call_phone": self._call_phone,
+            "take_photo": self._take_photo,
         }
 
     # ── what the model is told exists ────────────────────────────────
@@ -369,6 +392,52 @@ class ToolBox:
                 {"id": {"type": "string", "maxLength": 64,
                         "description": "The id from read_reminders."}},
                 required=["id"],
+            ))
+
+        if self.photos is not None and self.photos.available():
+            tools.append(_schema(
+                "take_photo",
+                "Take one picture with the camera on this device and **keep "
+                "it**, in the transfer folder shown on the Files screen. Use "
+                "this when somebody asks you to take a photo, a picture, or a "
+                "snap — anything they mean to look at again later.\n"
+                "This is not the same as describe_camera_image, which takes a "
+                "picture in order to answer a question about what is in front "
+                "of the camera and does not keep it. If somebody asks what you "
+                "can see, use that one.\n"
+                "Say the filename back from the result. The device decides it, "
+                "and two pictures in the same second do not get the same name.",
+                {"label": {
+                    "type": "string", "maxLength": 40,
+                    "description": "A couple of words about what it is, if they "
+                                   "said — 'kitchen', 'the cat'. It becomes part "
+                                   "of the filename. Null if they did not say.",
+                }},
+            ))
+
+        # Only when there is something to ring. A tool that always answers
+        # "no phone has registered for calls" is a tool the model discovers is
+        # useless at runtime, in front of somebody who just asked for it.
+        phones = self.calls.phones() if self.calls is not None else []
+        if phones:
+            tools.append(_schema(
+                "call_phone",
+                "Ring a paired phone from this device, so somebody can pick it "
+                "up and talk to whoever is standing here. Use it for 'call my "
+                "phone', 'ring me', 'call home'.\n"
+                "The person at this device is asked out loud to confirm before "
+                "anything rings, so do not say that the phone is ringing — say "
+                "what you are about to do and stop."
+                + (f" There is more than one paired phone ({', '.join(phones)}), "
+                   "so ask which one if they did not say."
+                   if len(phones) > 1 else ""),
+                {"device": {
+                    "type": "string", "enum": list(phones),
+                    "description": "Which paired phone to ring. Null when there "
+                                   "is only one. You cannot ring anything that "
+                                   "is not in this list, and there is no way to "
+                                   "give a phone number.",
+                }},
             ))
 
         if self.web_search:
@@ -619,6 +688,92 @@ class ToolBox:
             return _error(str(answer.get("error", ""))
                           or "this device could not cancel that reminder")
         return _ok(cancelled=answer.get("cancelled", {}))
+
+    # ── taking a picture and keeping it ──────────────────────────────
+
+    def _take_photo(self, args: dict) -> str:
+        """One still, into the folder the Files screen already shows.
+
+        No confirmation. A photograph of the room, taken because somebody in
+        the room asked for one, is not in the same class as a phone ringing in
+        a pocket — it is reversible by deleting the file, it goes nowhere off
+        this device, and asking "shall I?" every time would make the feature
+        annoying enough not to be used.
+
+        The camera's owner is the thing that can genuinely fail here. A call, a
+        game, hand control and the screensaver handoff all borrow it, and the
+        answer says *who* has it: "the camera is being used by a video call" is
+        something a person can act on, and "the camera did not take a picture"
+        is not.
+        """
+        from aipi5.photos.capture import PhotoError
+
+        try:
+            saved = self.photos.take(str(args.get("label") or ""))
+        except PhotoError as exc:
+            return _error(str(exc))
+
+        # The photograph goes into the transcript beside the sentence about it.
+        # After the save rather than before, so what appears on the screen is a
+        # picture that is actually on disk.
+        if self.on_capture is not None:
+            try:
+                self.on_capture(saved)
+            except Exception:                        # noqa: BLE001
+                log.warning("could not publish the photograph to the screen",
+                            exc_info=True)
+        return _ok(**{k: v for k, v in saved.items() if k != "token"})
+
+    # ── ringing a phone ──────────────────────────────────────────────
+
+    def _call_phone(self, args: dict) -> str:
+        """Ask first. Nothing rings from this call.
+
+        A phone buzzing in somebody's pocket because a half-heard sentence
+        sounded like a request is the sort of thing a house stops trusting a
+        device over — and unlike the volume it cannot be undone by saying the
+        opposite. So this parks the ring behind a question and answers the
+        model with the sentence to say. What happens next is decided by a
+        phrase matcher over the raw transcript, or by a finger on the panel.
+
+        The device name is checked against the paired list **here** as well as
+        in the controller. Two checks for the same thing, deliberately: this
+        one keeps the question honest — "shall I ring Alex's phone?" must not
+        be asked about a phone that does not exist — and the controller's is
+        what actually stands between model output and a notification.
+        """
+        if self.consent is None:
+            return _error("this device cannot ask for confirmation right now, "
+                          "so nothing was rung")
+        phones = self.calls.phones()
+        if not phones:
+            return _error("no phone has registered for calls on this device")
+
+        device = str(args.get("device") or "").strip()
+        if not device:
+            if len(phones) > 1:
+                # Not "the first one". Ringing the wrong person's phone is
+                # worse than one more short question.
+                return _error("there is more than one paired phone ("
+                              + ", ".join(phones)
+                              + "). Ask which one they mean.")
+            device = phones[0]
+        elif device not in phones:
+            return _error(f"{device!r} is not a paired phone. The phones on "
+                          f"this device are: " + ", ".join(phones))
+
+        pending = self.consent.ask(
+            what=f"ring {device}",
+            question=f"Shall I ring {device}?",
+            detail=device,
+            action=lambda: self.calls.call_out(device).as_dict(),
+        )
+        if pending is None:
+            return _error("there is already a question waiting for an answer")
+        return _ok(asked=True, device=device, question=pending.question,
+                   ringing=False,
+                   instruction="Ask the person exactly this and stop. Nothing "
+                               "is ringing yet and you must not say it is.")
 
     def _execute_kodama_command(self, args: dict) -> str:
         """Run one named Kodama command.

@@ -33,6 +33,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from aipi5.call import controller as call_controller
 from aipi5.call import push, tailscale, tls, turn
 from aipi5.call.signaling import PHONE, PI, POLL_TIMEOUT_S, SignalingHub
 from aipi5.files import Tickets, web as files_web
@@ -770,6 +771,13 @@ class CallServer:
         self.push_keys = push.PushKeys(cfg.devices.parent)
         self.subscriptions = push.Subscriptions(cfg.devices.parent)
         self.push = push.Pusher(self.push_keys, self.subscriptions)
+        # The one implementation of "ring a paired phone". Both the panel's
+        # button and the spoken request go through it, so there is no second
+        # copy of start-the-session, tell-the-page, send-the-push to drift.
+        # See `aipi5/call/controller.py`.
+        self.controller = call_controller.CallController(
+            hub=self.hub, subscriptions=self.subscriptions, push=self.push,
+            ice_servers=self.ice_servers, on_change=lambda: on_change())
         self.on_change = on_change
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
