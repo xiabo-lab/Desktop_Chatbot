@@ -231,10 +231,26 @@ class PriceService:
         stamped = row.get("last_updated_at")
         as_of = float(stamped) if isinstance(stamped, (int, float)) else now
         if as_of > now + 60 or as_of < now - STALE_S:
-            # A clock that disagrees this much is a clock to ignore rather than
-            # a fact to report. The Pi has no RTC and the provider is not
-            # wrong by an hour.
-            as_of = now
+            # **Refused, not restamped.** This used to set `as_of = now` on the
+            # reasoning that the Pi has no real-time clock and a provider is
+            # not wrong by an hour — but the two cases are indistinguishable
+            # from here, and they are not equally safe. If the provider really
+            # did send an hour-old figure, stamping it `now` turns demonstrably
+            # stale money into an apparently current quote, which is the exact
+            # lie this whole module exists to prevent. If instead our clock is
+            # wrong, we cannot say how old anything is, and a price whose age
+            # is unknown is not a price worth saying out loud.
+            #
+            # Either way the honest answer is that there is no current quote.
+            # The caller falls back to the last cached one, which carries its
+            # own real age.
+            log.warning("%s came back stamped %s against a clock reading %s",
+                        ident,
+                        time.strftime("%Y-%m-%d %H:%M", time.localtime(as_of)),
+                        time.strftime("%Y-%m-%d %H:%M", time.localtime(now)))
+            raise PriceError(
+                "the price service sent a price I cannot date, so I do not "
+                "know whether it is current")
 
         log.info("%s = %s %s (as of %s)", ident, price, code.upper(),
                  time.strftime("%H:%M", time.localtime(as_of)))

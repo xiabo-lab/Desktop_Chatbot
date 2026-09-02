@@ -62,6 +62,18 @@ class Pending:
     detail: str
     created: float
     ttl: float
+    #: The turn that parked this, and the way that turn arrived. Together they
+    #: are what stops one channel answering another channel's question.
+    #:
+    #: The voice loop reads the desk at the end of *every* spoken turn and, if
+    #: something is waiting, holds the floor for a yes or a no. Without this it
+    #: read the desk globally: a call confirmation parked by somebody typing on
+    #: the panel would be picked up by the next unrelated spoken turn, so
+    #: "what's the weather" would be answered with the forecast and then
+    #: silently listen for consent to ring a phone. Anything affirmative in the
+    #: next sentence rang it.
+    turn: str = ""
+    source: str = ""
     #: What the transcript says once this has actually happened -- "removed a
     #: birthday", not "asked about removing a birthday". Fixed text from the
     #: handler, carrying none of the arguments, for the same reason `SAID` in
@@ -103,7 +115,8 @@ class ConsentDesk:
     # ── asking ──────────────────────────────────────────────────────
 
     def ask(self, what: str, question: str, action: Callable[[], dict],
-            detail: str = "", said: str = "") -> Pending | None:
+            detail: str = "", said: str = "", turn: str = "",
+            source: str = "") -> Pending | None:
         """Park an action behind a question. None if one is already waiting."""
         now = self.clock()
         with self._lock:
@@ -117,7 +130,8 @@ class ConsentDesk:
                 question=str(question)[:MAX_QUESTION],
                 detail=str(detail)[:MAX_DETAIL],
                 created=now, ttl=self.ttl_s, action=action,
-                said=str(said)[:80])
+                said=str(said)[:80], turn=str(turn)[:64],
+                source=str(source)[:16])
             self._pending = pending
         self._announce(pending)
         return pending
@@ -182,8 +196,15 @@ class ConsentDesk:
             self._finished(pending, allowed=True, ok=False)
             return {"ok": False, "allowed": True, "what": pending.what,
                     "error": f"it was approved but did not work ({exc})"}
-        self._finished(pending, allowed=True, ok=True)
-        answer = {"ok": True, "allowed": True, "what": pending.what}
+        # What the action itself said, not merely that it returned. An action
+        # that answers `{"ok": False}` — a hub that would not start the
+        # session, a calendar entry that had already gone — was being reported
+        # as a success here because it had not raised, so the transcript row
+        # said "removed a birthday" and the room heard "Done." for something
+        # that did not happen. Not raising is transport; `ok` is the outcome.
+        did = outcome.get("ok", True) if isinstance(outcome, dict) else True
+        self._finished(pending, allowed=True, ok=bool(did))
+        answer = {"ok": bool(did), "allowed": True, "what": pending.what}
         if isinstance(outcome, dict):
             answer["result"] = outcome
         return answer
@@ -211,6 +232,23 @@ class ConsentDesk:
             self.on_done(pending.said, allowed, ok)
         except Exception:                            # noqa: BLE001
             log.exception("the consent listener failed")
+
+    def waiting_for(self, turn: str) -> Pending | None:
+        """The question this turn parked, or None. Never another turn's.
+
+        What the spoken loop must use. `waiting()` answers "is anything
+        waiting anywhere", which is the right question for drawing a card and
+        the wrong one for deciding to hold a microphone open: a question
+        somebody typed is not a question the room was asked, and the room has
+        not heard it.
+
+        A turn that parked nothing gets None even when the desk is busy, so a
+        turn with no question of its own never listens for an answer to one.
+        """
+        pending = self.waiting()
+        if pending is None or not turn or pending.turn != turn:
+            return None
+        return pending
 
     def _announce(self, pending: Pending | None) -> None:
         if self.on_change is None:

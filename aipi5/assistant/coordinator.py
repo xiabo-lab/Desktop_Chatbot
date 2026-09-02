@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 
 from aipi5.assistant.events import EventLog, EventSink
 
@@ -430,6 +431,12 @@ class Coordinator:
         if not text:
             return {"ok": False, "error": "there was nothing in that message"}
         language = self._language_of(text, language)
+        # Minted here because this is the only place every request passes
+        # through, and handed back so the caller can tell its own turn's
+        # consequences from somebody else's. The spoken loop uses it to decide
+        # whether a question waiting on the consent desk is one the room was
+        # actually asked — see `ConsentDesk.waiting_for`.
+        turn_id = "t-" + uuid.uuid4().hex[:12]
 
         if not self._turn.acquire(timeout=self.turn_wait_s):
             # Not queued. Whoever is waiting on this has been waiting half a
@@ -454,14 +461,15 @@ class Coordinator:
                 # Before `respond`, and from `text` rather than from anything
                 # the model produces. See `ToolBox.begin_turn`.
                 try:
-                    self.on_turn(text, source)
+                    self.on_turn(text, source, turn_id)
                 except Exception:                    # noqa: BLE001
                     log.exception("preparing the turn failed")
             reply = self.respond(text, language)
             reply = str(reply or "").strip()
             if reply:
                 self.events.publish("assistant", source, text=reply)
-            return {"ok": True, "text": reply, "run": self.run()}
+            return {"ok": True, "text": reply, "run": self.run(),
+                    "turn": turn_id}
         finally:
             if self.after_turn is not None:
                 try:

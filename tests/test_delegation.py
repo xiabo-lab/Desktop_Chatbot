@@ -304,8 +304,22 @@ class TestWhenTheAnswerIsSpokenAloud(unittest.TestCase):
         self.assertEqual(4, self.body.count("leaving it on the"))
 
     def test_it_is_recorded_even_when_it_is_spoken(self):
-        # The 24-hour audible log is what was said in the room, and this was.
-        self.assertIn('self.history.record("aia", text, language)', self.body)
+        """The 24-hour audible log is what was said in the room, and this was.
+
+        Recorded by `say`, which is the only thing that should: it records and
+        speaks together "so the two cannot drift apart", and this method used
+        to call `history.record` as well — writing every spoken delegated
+        answer into the log twice, which reads as an assistant that said the
+        same thing back to back.
+        """
+        self.assertIn("say(self, text, language)", self.body)
+        self.assertNotIn('self.history.record("aia", text, language)',
+                         self.body)
+        source = (ROOT / "aipi5" / "main.py").read_text(encoding="utf-8")
+        body = source[source.index("def say(assistant"):]
+        body = body[:body.index(chr(10) + chr(10) + "def ")]
+        self.assertIn('assistant.history.record("aia", text, language)',
+                      body)
 
 
 if __name__ == "__main__":

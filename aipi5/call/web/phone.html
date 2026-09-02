@@ -119,6 +119,10 @@
   .ev { max-width: 88%; padding: 9px 12px; border-radius: 14px; font-size: 16px;
         line-height: 1.42; white-space: pre-wrap; overflow-wrap: anywhere; }
   .ev.you { align-self: flex-end; background: var(--accent); color: #06121f; }
+  /* The task the model composed, not what the person typed. Same side of the
+     screen, deliberately dimmer: it belongs to the request above it. */
+  .ev.handed { align-self: flex-end; background: var(--accent);
+               color: #06121f; opacity: .75; font-style: italic; }
   .ev.say { align-self: flex-start; background: var(--panel);
             border: 1px solid var(--panel-edge); }
   /* Tool activity is deliberately quiet: it is there so the person can see it
@@ -993,7 +997,11 @@ function agentRow(kind, text) {
 function drawEvent(event) {
   switch (event.type) {
     case "agent.ask":
-      agentRow("you", event.text || "");
+      // The task the model composed and handed over, echoed back by the run —
+      // not something the person said. The sentence they actually typed is
+      // already above, drawn by `assistantAsk`, so rendering this as "you"
+      // too showed one request twice, the second in words nobody spoke.
+      agentRow("handed", "Handed to the agent: " + (event.text || ""));
       break;
     case "agent.say":
       agentRow("say", event.text || "");
@@ -1121,8 +1129,34 @@ el("agent-compose").addEventListener("submit", (event) => {
   if (!text) return;
   box.value = "";
   box.style.height = "auto";
-  agentSay({ type: "agent.ask", text: text });
+  assistantAsk(text);
 });
+
+// The compose box goes through the assistant coordinator, not straight to the
+// maintenance agent. It used to send `agent.ask` unconditionally, so "set the
+// volume to thirty" said into the phone spent one of the day's six maintenance
+// runs and up to 24 model steps doing what the voice loop does in one call —
+// while the same sentence typed on the panel took the short path with
+// different tools and different policy, and nothing on either screen said
+// which you had reached.
+//
+// A short turn answers in this response. One the model decides to hand over
+// comes back with a run id and its progress arrives on the agent stream below,
+// exactly as it always did — so delegation looks the same and everything else
+// stopped costing a run.
+async function assistantAsk(text) {
+  agentRow("you", text);
+  try {
+    const response = await api("/assistant/v1/ask", {
+      method: "POST", body: JSON.stringify({ text: text }),
+    });
+    const answer = await response.json();
+    if (answer.text) agentRow("say", answer.text);
+    else if (answer.error) agentRow("bad", answer.error);
+  } catch (err) {
+    agentRow("bad", String(err.message || err));
+  }
+}
 
 // Grow with the text, up to the CSS cap. Enter sends; Shift+Enter is a
 // newline, which is what anybody who has used a chat expects.

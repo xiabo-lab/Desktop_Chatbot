@@ -6067,10 +6067,12 @@ function agentBubble(role, text) {
   const empty = feed.querySelector(".empty");
   if (empty) empty.remove();
   const node = document.createElement("div");
-  node.className = "msg " + (role === "user" ? "user" : "aia");
+  node.className = "msg " + (role === "assistant" ? "aia" : "user");
   const who = document.createElement("span");
   who.className = "who";
-  who.textContent = role === "user" ? "You" : "Assistant";
+  who.textContent = role === "user" ? "You"
+                  : role === "handed" ? "Handed to the agent"
+                  : "Assistant";
   node.appendChild(who);
   node.appendChild(document.createTextNode(text));
   feed.appendChild(node);
@@ -6086,7 +6088,14 @@ function drawAssistantEvent(event) {
   const meta = event.meta || {};
   switch (event.kind) {
     case "user":
-      agentBubble("user", event.text || "");
+      // A user row from the *agent* is the task the model composed and handed
+      // over, echoed back by the run. It is worth showing — it is what the
+      // agent was actually asked, and for a run started from the phone it is
+      // the only record of the question — but it is not something a person
+      // said. Labelled as itself, so the panel does not show two "You" bubbles
+      // for one request, the second of them words nobody spoke.
+      agentBubble(event.source === "agent" ? "handed" : "user",
+                  event.text || "");
       break;
     case "assistant":
       agentBubble("assistant", event.text || "");

@@ -75,6 +75,19 @@ PROBE_TOOL = {
 # "not yet negotiated", distinct from None, which is itself a valid setting.
 _UNKNOWN = "?"
 
+#: What to ask the API to include in the output.
+#:
+#: With `store: False` the API keeps nothing, so a reasoning model's own
+#: thinking exists only in the response it arrived in. Handed back on the next
+#: request it continues that thinking across the tool call; dropped, the model
+#: starts again from the text — which does not error, and is why this went
+#: unnoticed. It answers slightly worse and nothing says so.
+#:
+#: Negotiated rather than assumed: an API or a model that does not offer it
+#: answers 400, and this device must not stop talking over a field it can do
+#: without. See `_include`.
+REASONING_INCLUDE = "reasoning.encrypted_content"
+
 #: Item types `/v1/responses` sends back that carry no text and need no answer.
 #: Listed so that an unknown one is *logged* rather than silently skipped: the
 #: failure being prevented is a model that answered in an item shape this code
@@ -133,6 +146,29 @@ class LlmUnavailable(RuntimeError):
     """
 
 
+def _needs_responses(client) -> None:
+    """Refuse a client that cannot reach `/v1/responses`, and say so plainly.
+
+    The conversation lives on that endpoint. An SDK old enough to lack it still
+    imports, still constructs, still satisfies a `>=1.0` pin — and fails on the
+    first sentence anybody says, with an `AttributeError` on a private
+    attribute that names neither the endpoint nor the version. On a device
+    whose only output is a speaker, that arrives as the assistant saying
+    nothing.
+
+    Checked once at construction rather than per request: it is a property of
+    the installation, and finding out at startup means the preflight report
+    says it while somebody is still looking at a terminal.
+    """
+    if not hasattr(client, "responses"):
+        import openai
+
+        raise RuntimeError(
+            f"the installed openai package ({getattr(openai, '__version__', '?')}) "
+            f"has no Responses API; aipi5 needs at least 1.66 — "
+            f"pip install -U 'openai>=1.66,<3'")
+
+
 class OpenAIClient:
     """One client, one model, and the tool loop around it."""
 
@@ -149,6 +185,11 @@ class OpenAIClient:
         # here — it means "send no reasoning_effort at all".
         self._tool_effort: str | None = _UNKNOWN
         self._probed: bool | None = None
+        #: What to ask `/v1/responses` to include. Emptied on the first refusal
+        #: that names it — see `_responses_request`. Set before the early
+        #: returns below, because a client with no key is still constructed and
+        #: still handed to a test.
+        self._include: tuple[str, ...] = (REASONING_INCLUDE,)
 
         if not api_key:
             self._error = ("no OPENAI_API_KEY in the environment and no key file "
@@ -168,6 +209,7 @@ class OpenAIClient:
         # of two silent retries turns a 20 s timeout into a 60 s wait, which on
         # a device with a 2.5 s target is indistinguishable from a hang.
         self._client = OpenAI(api_key=api_key, timeout=cfg.timeout_s, max_retries=0)
+        _needs_responses(self._client)
         log.info("OpenAI client ready for model %r", self.model)
 
     # ── startup ──────────────────────────────────────────────────────
@@ -259,8 +301,19 @@ class OpenAIClient:
                              ms=(time.monotonic() - started) * 1000,
                              tool_calls=called)
 
-            text, calls, builtins = _read_output(response)
+            text, calls, builtins, carry = _read_output(response)
             called.extend(builtins)
+
+            unfinished = _unfinished(response)
+            if unfinished:
+                # `failed` and `incomplete` both come back with a 200 and an
+                # `output` that may be empty or half-formed. Read as an
+                # ordinary answer that is one of those is the assistant saying
+                # nothing, with the reason sitting unexamined in the response.
+                log.warning("the model did not finish: %s", unfinished)
+                return Reply(ok=False, error=unfinished,
+                             ms=(time.monotonic() - started) * 1000,
+                             tool_calls=called)
 
             if not calls:
                 text = text.strip()
@@ -283,7 +336,9 @@ class OpenAIClient:
             # and it rejects a `function_call` left unanswered — so the pair
             # travels together or the next request is a 400 that says nothing
             # about which half was missing.
-            conversation.assistant_tool_calls(calls)
+            # `carry`, not `calls`: the reasoning that led to them travels
+            # with them. See `_read_output`.
+            conversation.assistant_tool_calls(carry)
             for call in calls:
                 called.append(call["name"])
                 result = toolbox.call(call["name"], call["arguments"])
@@ -418,6 +473,8 @@ class OpenAIClient:
                 # somebody else's disk with no expiry this code controls.
                 "store": False,
             }
+            if self._include:
+                kwargs["include"] = list(self._include)
             if instructions:
                 kwargs["instructions"] = instructions
             if tools:
@@ -430,6 +487,16 @@ class OpenAIClient:
                 return self._client.responses.create(**kwargs)
             except Exception as exc:                 # noqa: BLE001
                 last = exc
+                if self._include and _rejects_include(exc):
+                    # Negotiated the way the token parameters are, and for the
+                    # same reason: a device that stops answering because one
+                    # optional field was not recognised is worse than one that
+                    # answers slightly less well. Said once, at INFO, because
+                    # it is a property of the model rather than a fault.
+                    log.info("this model does not carry reasoning across tool "
+                             "calls; continuing without it")
+                    self._include = ()
+                    continue
                 if attempt + 1 < attempts and _is_transient(exc):
                     log.warning("request failed (%s); retrying once",
                                 type(exc).__name__)
@@ -628,8 +695,14 @@ def _output_text(response) -> str:
     return "".join(parts)
 
 
-def _read_output(response) -> tuple[str, list[dict], list[str]]:
-    """(text, function calls, names of built-in tools the model ran itself).
+def _read_output(response) -> tuple[str, list[dict], list[str], list[dict]]:
+    """(text, function calls, built-in tools it ran, items to send back).
+
+    The fourth is what the next request in this turn has to repeat: the
+    model's reasoning and the calls it asked for, in the order they arrived.
+    Dropping the reasoning does not error — the model simply picks the thread
+    up from the text instead of from its own thinking, slightly worse, with
+    nothing anywhere saying so.
 
     The function calls come back as plain dictionaries in the exact shape the
     API takes them *back* in — `{"type", "call_id", "name", "arguments"}` —
@@ -639,15 +712,26 @@ def _read_output(response) -> tuple[str, list[dict], list[str]]:
     """
     calls: list[dict] = []
     builtins: list[str] = []
+    carry: list[dict] = []
     for entry in getattr(response, "output", None) or []:
         kind = _item(entry, "type")
-        if kind == "function_call":
-            calls.append({
+        if kind == "reasoning":
+            # Kept and handed straight back on the next request. With
+            # `store: False` the API remembers nothing, so this is the only
+            # copy of the model's own thinking, and a tool call in the middle
+            # of a turn is exactly where it needs to survive. Verbatim,
+            # including the encrypted content: it is not for this process to
+            # read, only to return.
+            carry.append(_verbatim(entry))
+        elif kind == "function_call":
+            item = {
                 "type": "function_call",
                 "call_id": _item(entry, "call_id") or _item(entry, "id") or "",
                 "name": _item(entry, "name") or "",
                 "arguments": _item(entry, "arguments") or "{}",
-            })
+            }
+            calls.append(item)
+            carry.append(item)
         elif kind == "web_search_call":
             # Run by the API, not by this process. Recorded so the turn's log
             # line says a search happened; there is no result to send back.
@@ -659,7 +743,27 @@ def _read_output(response) -> tuple[str, list[dict], list[str]]:
             # because an answer that arrived in a shape this code does not read
             # looks from the room like the assistant saying nothing at all.
             log.info("ignoring an output item of type %r", kind)
-    return _output_text(response), calls, builtins
+    return _output_text(response), calls, builtins, carry
+
+
+def _verbatim(entry) -> dict:
+    """One output item as a plain dictionary, unchanged.
+
+    Not rebuilt from named parts. The point of these is to go back to the API
+    exactly as they arrived — an item this code understood well enough to
+    reconstruct would be one it could have left out, and the fields that matter
+    here are the ones it deliberately does not read.
+    """
+    for method in ("model_dump", "to_dict", "dict"):
+        convert = getattr(entry, method, None)
+        if callable(convert):
+            try:
+                return {k: v for k, v in convert().items() if v is not None}
+            except Exception:                        # noqa: BLE001
+                break
+    if isinstance(entry, dict):
+        return {k: v for k, v in entry.items() if v is not None}
+    return {"type": _item(entry, "type") or "reasoning"}
 
 
 def _as_dict(message) -> dict:
@@ -729,6 +833,46 @@ def _is_transient(exc: Exception) -> bool:
         return True
     status = getattr(exc, "status_code", None)
     return status in (408, 409, 429, 500, 502, 503, 504)
+
+
+def _unfinished(response) -> str:
+    """Why this response is not an answer, or "" when it is one.
+
+    `/v1/responses` returns 200 for a response that `failed` or stopped
+    `incomplete` — out of output tokens, or filtered — with an `output` that
+    may be empty or cut short. Read as an ordinary answer, that is the
+    assistant saying nothing at all in a room, with the reason sitting
+    unexamined in a field nobody looked at.
+    """
+    status = _item(response, "status") or ""
+    if status not in ("failed", "incomplete"):
+        return ""
+    detail = getattr(response, "incomplete_details", None) or getattr(
+        response, "error", None)
+    reason = _item(detail, "reason") or _item(detail, "message") or ""
+    if "max_output_tokens" in str(reason):
+        return "I ran out of room before I finished that answer."
+    if reason:
+        return f"I could not finish that ({reason})."
+    return "I could not finish that answer."
+
+
+def _rejects_include(exc: Exception) -> bool:
+    """Whether this failure is the API refusing the `include` field.
+
+    Narrow on purpose. A 400 that names the field or the value is one to stop
+    asking about; every other 400 is a real fault in the request and must
+    surface rather than be quietly retried without a field that had nothing to
+    do with it.
+    """
+    said = str(exc).lower()
+    if isinstance(exc, TypeError):
+        # An SDK old enough not to know the argument at all. It never reaches
+        # the network, so there is no status to read.
+        return "include" in said
+    if getattr(exc, "status_code", None) not in (400, 404, 422):
+        return False
+    return "include" in said or "encrypted_content" in said
 
 
 def _explain(exc: Exception, model: str) -> str:

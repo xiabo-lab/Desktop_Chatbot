@@ -129,6 +129,66 @@ class TestAskingAndAnswering(unittest.TestCase):
         self.assertEqual([], self.ran)
 
 
+
+class TestOneChannelDoesNotAnswerAnother(unittest.TestCase):
+    """A question belongs to the turn that asked it.
+
+    The spoken loop reads the desk at the end of every turn and, if something
+    is waiting, holds the floor for a yes or a no. It used to read it globally.
+    So: somebody types "call my phone" on the panel, the tool parks the
+    question, and within the minute somebody in the room says "what's the
+    weather". The forecast is read out, the floor is held in silence for an
+    answer to a question the room never heard, and anything affirmative in the
+    next sentence rings the phone.
+
+    Nothing about that is visible from either channel on its own, which is why
+    both channels' tests passed.
+    """
+
+    def setUp(self):
+        self.desk = ConsentDesk()
+        self.rang: list = []
+        self.pending = self.desk.ask(
+            "ring Fuwen iPhone", "Shall I ring it?",
+            action=lambda: self.rang.append(1) or {"ok": True},
+            turn="t-typed-one", source="text")
+
+    def test_a_later_spoken_turn_does_not_pick_it_up(self):
+        self.assertIsNone(self.desk.waiting_for("t-spoken-two"))
+
+    def test_a_turn_that_parked_nothing_hears_nothing(self):
+        """The fast path. It never reaches the model, so it parks nothing and
+        carries no turn id -- and must not inherit somebody else's."""
+        self.assertIsNone(self.desk.waiting_for(""))
+
+    def test_the_turn_that_asked_still_hears_it(self):
+        self.assertIs(self.pending, self.desk.waiting_for("t-typed-one"))
+
+    def test_the_card_still_sees_it_whoever_asked(self):
+        """`waiting()` is the right question for drawing a card: the panel
+        shows what is waiting anywhere, and the token decides who may answer.
+        Only holding a microphone open needs the narrower one."""
+        self.assertIsNotNone(self.desk.waiting())
+        self.assertEqual("Shall I ring it?", self.desk.snapshot()["question"])
+
+    def test_the_token_answers_it_from_any_channel(self):
+        """Binding the *listening* to a turn must not bind the answering: the
+        approval card on the panel and the phone both answer by token, and a
+        question asked out loud can still be settled with a finger."""
+        self.desk.answer(self.pending.token, True)
+        self.assertEqual([1], self.rang)
+
+    def test_the_source_is_recorded(self):
+        self.assertEqual("text", self.pending.source)
+
+    def test_an_expired_question_is_not_this_turns_either(self):
+        clock = Clock()
+        desk = ConsentDesk(clock=lambda: clock.now)
+        desk.ask("x", "Shall I?", action=lambda: {"ok": True}, turn="t-1")
+        clock.now += 3600
+        self.assertIsNone(desk.waiting_for("t-1"))
+
+
 class TestWhatThePageIsTold(unittest.TestCase):
 
     def test_the_snapshot_carries_the_question_and_the_token(self):
@@ -226,6 +286,58 @@ class TestWhatTheTranscriptSaysHappened(unittest.TestCase):
         pending = desk.ask("x", "Shall I?", action=lambda: {"ok": True},
                            said="removed a birthday")
         self.assertTrue(desk.answer(pending.token, True)["allowed"])
+
+
+
+class TestTheTurnIdReachesTheDesk(unittest.TestCase):
+    """End to end: the coordinator mints it, `begin_turn` carries it, the
+    handler stamps it, and the spoken loop reads with it."""
+
+    def test_a_parked_question_carries_the_turn_that_parked_it(self):
+        from aipi5.assistant import Coordinator, EventLog
+        from aipi5.llm.tools import ToolBox
+
+        desk = ConsentDesk()
+        box = ToolBox(consent=desk, calls=_OnePhone())
+
+        def respond(text, language):
+            box.call("call_phone", "{}")
+            return "Shall I ring it?"
+
+        coordinator = Coordinator(events=EventLog(), respond=respond,
+                                  consent=desk, on_turn=box.begin_turn,
+                                  after_turn=box.end_turn)
+        answer = coordinator.submit_voice("call my phone", "en")
+        self.assertTrue(answer["turn"].startswith("t-"))
+        self.assertIsNotNone(desk.waiting_for(answer["turn"]))
+        self.assertIsNone(desk.waiting_for("t-somebody-else"))
+
+    def test_two_turns_get_two_ids(self):
+        from aipi5.assistant import Coordinator, EventLog
+
+        coordinator = Coordinator(events=EventLog(),
+                                  respond=lambda text, language: "ok")
+        first = coordinator.submit_text("hello")["turn"]
+        second = coordinator.submit_text("hello again")["turn"]
+        self.assertNotEqual(first, second)
+
+    def test_the_spoken_loop_asks_for_its_own_turn(self):
+        """Asserted over the source: `waiting()` there is the bug, and it is
+        one character away from being back."""
+        loop = MAIN.read_text(encoding="utf-8")
+        self.assertIn("consent.waiting_for(spoken_turn)", loop)
+        self.assertNotIn("awaiting = assistant.consent.waiting()", loop)
+
+
+class _OnePhone:
+    def phones(self):
+        return ["Fuwen iPhone"]
+
+    def available(self):
+        return True
+
+    def call_out(self, device=""):
+        raise AssertionError("nothing may ring before somebody says yes")
 
 
 class TestTheVoiceLoopDecidesItAndNotTheModel(unittest.TestCase):

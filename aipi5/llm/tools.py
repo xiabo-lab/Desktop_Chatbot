@@ -155,6 +155,10 @@ class ToolBox:
         #: Which way in the current turn arrived by, for the row above. Set by
         #: `begin_turn`, which the coordinator calls for every turn.
         self._source = "voice"
+        #: This turn's id, stamped on anything parked on the consent desk so
+        #: that only the turn which asked can hear the answer. See
+        #: `ConsentDesk.waiting_for`.
+        self._turn = ""
         self.weather = weather
         self.news = news
         self.clock = clock
@@ -262,7 +266,8 @@ class ToolBox:
 
     # ── the turn's own facts ─────────────────────────────────────────
 
-    def begin_turn(self, text: str = "", source: str = "voice") -> None:
+    def begin_turn(self, text: str = "", source: str = "voice",
+                   turn: str = "") -> None:
         """Told what the person actually said, before the model sees it.
 
         One flag comes out of this and it gates one tool. It is here rather
@@ -277,6 +282,17 @@ class ToolBox:
         """
         self._explicit_launch = asks_to_open(text)
         self._source = source or "voice"
+        self._turn = turn
+
+    @property
+    def source(self) -> str:
+        """Which way in the turn being handled arrived by.
+
+        Read by `main.py` when it queues a photograph, so the picture is
+        attributed to the person who asked for it rather than always to the
+        microphone.
+        """
+        return self._source
 
     def end_turn(self) -> None:
         """Drop the turn's permission. Belt and braces beside `begin_turn`."""
@@ -504,10 +520,18 @@ class ToolBox:
                                             "the person's own words where you "
                                             "can — 'call Mum', not 'the user "
                                             "wishes to telephone his mother'."},
-                    "deliver": {"type": "string", "enum": ["push", "email"],
-                                "description": "How to send it. 'push' is the "
-                                               "paired phone and is the default; "
-                                               "null means push."},
+                    # No `email`. The schema offered one and the schedule
+                    # accepted one, and `Housekeeping` has always delivered
+                    # every reminder by push -- it never reads `deliver`. So a
+                    # reminder somebody asked to have emailed arrived on the
+                    # phone instead and nothing anywhere said so. An option
+                    # that is not implemented is worse than one that does not
+                    # exist: this way the model says it cannot rather than
+                    # saying it will and not doing it.
+                    "deliver": {"type": "string", "enum": ["push"],
+                                "description": "How to send it. The paired "
+                                               "phone is the only way this "
+                                               "device can; null means push."},
                 },
                 required=["when", "text"],
             ))
@@ -914,6 +938,7 @@ class ToolBox:
         pending = self.consent.ask(
             what=f"delete the birthday for {found['name']}",
             said="removed a birthday",
+            turn=self._turn, source=self._source,
             question=f"Do you want me to remove {label} from the calendar?",
             detail=label,
             action=lambda: _delete_now(self.birthdays, entry_id),
@@ -1042,8 +1067,9 @@ class ToolBox:
         kind, label = found
         if kind == "kodama":
             outcome = self.launcher.open(who="the assistant, asked out loud")
-            return _ok(opened=wanted, label=label, succeeded=outcome.ok,
-                       detail=outcome.say("en"))
+            if not outcome.ok:
+                return _error(outcome.say("en"))
+            return _ok(opened=wanted, label=label, detail=outcome.say("en"))
 
         from aipi5.browser.launcher import SITES
 
@@ -1051,8 +1077,9 @@ class ToolBox:
         if site is None:
             return _error(f"there is nothing called {wanted!r} on this device")
         outcome = self.browser.open(site, who="the assistant, asked out loud")
-        return _ok(opened=wanted, label=label, succeeded=outcome.ok,
-                   detail=outcome.say("en"))
+        if not outcome.ok:
+            return _error(outcome.say("en"))
+        return _ok(opened=wanted, label=label, detail=outcome.say("en"))
 
     # ── a price, or nothing ──────────────────────────────────────────
 
@@ -1149,6 +1176,7 @@ class ToolBox:
         pending = self.consent.ask(
             what=f"ring {device}",
             said="rang a phone",
+            turn=self._turn, source=self._source,
             question=f"Shall I ring {device}?",
             detail=device,
             action=lambda: self.calls.call_out(device).as_dict(),
@@ -1195,8 +1223,15 @@ class ToolBox:
             call_args[slot] = value
 
         outcome = command.handler(**call_args)
-        return _ok(command=command.name, succeeded=outcome.ok,
-                   detail=outcome.say("en"))
+        # One contract across every tool: `ok` is whether the thing asked for
+        # happened. It used to be whether the call returned, with the real
+        # answer buried in `succeeded` — so a launcher that found no Chromium,
+        # and a Kodama command that did nothing, both came back `ok: true`.
+        # The model reads the first field and the transcript row draws a tick
+        # from it, so a failure was shown to the room as a success.
+        if not outcome.ok:
+            return _error(outcome.say("en"))
+        return _ok(command=command.name, detail=outcome.say("en"))
 
 
 #: What "open this" or "play this" looks like in the two languages spoken to
@@ -1284,6 +1319,14 @@ def _schema(name: str, description: str, properties: dict,
         if "null" not in kinds:
             kinds.append("null")
         spec["type"] = kinds
+        # And into the enum, where there is one. `{"type": ["string", "null"],
+        # "enum": ["push", "email"]}` is not nullable: JSON Schema applies both
+        # keywords, and null fails the enum. So four optional arguments --
+        # `when`, `deliver`, `currency`, `device` -- said they could be omitted
+        # and could not be, which leaves a model choosing a value nobody asked
+        # for rather than saying it has nothing to say.
+        if "enum" in spec and None not in spec["enum"]:
+            spec["enum"] = list(spec["enum"]) + [None]
         declared[field] = spec
 
     return {

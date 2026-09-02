@@ -148,7 +148,7 @@ class TestEveryOutputItemIsRead(unittest.TestCase):
         self.assertEqual("", _output_text(FakeResponse()))
 
     def test_calls_come_back_in_the_shape_the_api_takes_them_back_in(self):
-        _, calls, _ = _read_output(FakeResponse(
+        _, calls, _, _ = _read_output(FakeResponse(
             reasoning(), call("get_weather", {"when": "now"}, "call_1"),
             message("checking")))
         self.assertEqual([{"type": "function_call", "call_id": "call_1",
@@ -156,14 +156,14 @@ class TestEveryOutputItemIsRead(unittest.TestCase):
                            "arguments": '{"when": "now"}'}], calls)
 
     def test_several_calls_in_one_answer_are_all_returned(self):
-        _, calls, _ = _read_output(FakeResponse(
+        _, calls, _, _ = _read_output(FakeResponse(
             call("get_weather", {}, "a"), call("get_current_time", {}, "b")))
         self.assertEqual(["a", "b"], [c["call_id"] for c in calls])
 
     def test_a_search_the_api_ran_itself_is_recorded_and_not_answered(self):
         """There is no result to send back — the API ran it. It is named so
         the turn's log line says a search happened."""
-        _, calls, builtins = _read_output(FakeResponse(web_search(),
+        _, calls, builtins, _ = _read_output(FakeResponse(web_search(),
                                                        message("Bitcoin is …")))
         self.assertEqual([], calls)
         self.assertEqual(["web_search"], builtins)
@@ -413,3 +413,127 @@ class TestVision(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheModelsOwnThinkingSurvivesATool(unittest.TestCase):
+    """With `store: False` the API keeps nothing, so a reasoning item exists
+    only in the response it arrived in.
+
+    Dropped, the model picks the thread up from the text instead of from its
+    own thinking on the far side of a tool call. That does not error and
+    nothing anywhere reports it — the answer is just slightly worse, which is
+    exactly the kind of fault a suite of assertions about shapes will never
+    catch. What is asserted here is that the item goes back.
+    """
+
+    def test_reasoning_is_asked_for(self):
+        made, api = client(FakeResponse(message("Hello.")))
+        conversation = Conversation()
+        conversation.user("hello")
+        made.respond(conversation, "S", Box())
+        self.assertIn("reasoning.encrypted_content", api.sent[0]["include"])
+
+    def test_it_is_handed_back_with_the_call_it_led_to(self):
+        made, api = client(
+            FakeResponse(Item(type="reasoning", id="rs_1", summary=[],
+                              encrypted_content="opaque"),
+                         call("get_weather", {"when": "now"}, "call_1")),
+            FakeResponse(message("It is warm.")))
+        conversation = Conversation()
+        conversation.user("what is the weather")
+        made.respond(conversation, "S", Box())
+
+        second = api.sent[1]["input"]
+        kinds = [item.get("type") for item in second]
+        self.assertIn("reasoning", kinds)
+        carried = next(i for i in second if i.get("type") == "reasoning")
+        self.assertEqual("opaque", carried["encrypted_content"])
+        self.assertEqual("rs_1", carried["id"])
+
+    def test_it_keeps_the_order_it_arrived_in(self):
+        """The reasoning came before the call and has to go back before it."""
+        made, api = client(
+            FakeResponse(Item(type="reasoning", id="rs_1", summary=[]),
+                         call("get_weather", {"when": "now"}, "call_1")),
+            FakeResponse(message("Warm.")))
+        conversation = Conversation()
+        conversation.user("weather")
+        made.respond(conversation, "S", Box())
+
+        kinds = [i.get("type") for i in api.sent[1]["input"]]
+        self.assertLess(kinds.index("reasoning"), kinds.index("function_call"))
+        self.assertLess(kinds.index("function_call"),
+                        kinds.index("function_call_output"))
+
+    def test_a_model_that_does_not_offer_it_still_answers(self):
+        """Negotiated, not assumed. A device that stops talking because one
+        optional field was not recognised is worse than one that answers
+        slightly less well."""
+        refusal = _Refused("Unknown parameter: 'include'.")
+        made, api = client(refusal, FakeResponse(message("Hello.")))
+        conversation = Conversation()
+        conversation.user("hello")
+        answer = made.respond(conversation, "S", Box())
+        self.assertTrue(answer.ok)
+        self.assertEqual("Hello.", answer.text)
+        self.assertNotIn("include", api.sent[1])
+
+    def test_an_old_sdk_that_has_never_heard_of_it_still_answers(self):
+        """Raised before the network, so there is no status code to read."""
+        made, api = client(TypeError("create() got an unexpected keyword "
+                                     "argument 'include'"),
+                           FakeResponse(message("Hello.")))
+        conversation = Conversation()
+        conversation.user("hello")
+        self.assertTrue(made.respond(conversation, "S", Box()).ok)
+
+    def test_a_real_four_hundred_is_still_a_failure(self):
+        """Narrow on purpose: every 400 that is not about this field is a
+        fault in the request and must surface."""
+        made, _ = client(_Refused("Invalid schema for function 'get_weather'."))
+        conversation = Conversation()
+        conversation.user("hello")
+        self.assertFalse(made.respond(conversation, "S", Box()).ok)
+
+
+class TestAResponseThatDidNotFinish(unittest.TestCase):
+    """`failed` and `incomplete` come back with a 200 and an `output` that may
+    be empty or cut short. Read as an ordinary answer, one of those is the
+    assistant saying nothing in a room, with the reason sitting unexamined in
+    a field nobody looked at."""
+
+    def test_running_out_of_room_is_said_rather_than_swallowed(self):
+        answer = FakeResponse(message("It was a dark and"))
+        answer.status = "incomplete"
+        answer.incomplete_details = {"reason": "max_output_tokens"}
+        made, _ = client(answer)
+        conversation = Conversation()
+        conversation.user("tell me a story")
+        reply = made.respond(conversation, "S", Box())
+        self.assertFalse(reply.ok)
+        self.assertIn("ran out of room", reply.error)
+
+    def test_a_failed_response_is_reported(self):
+        answer = FakeResponse()
+        answer.status = "failed"
+        answer.error = {"message": "the model refused"}
+        made, _ = client(answer)
+        conversation = Conversation()
+        conversation.user("hello")
+        reply = made.respond(conversation, "S", Box())
+        self.assertFalse(reply.ok)
+        self.assertIn("refused", reply.error)
+
+    def test_a_completed_response_is_untouched(self):
+        answer = FakeResponse(message("Hello."))
+        answer.status = "completed"
+        made, _ = client(answer)
+        conversation = Conversation()
+        conversation.user("hello")
+        self.assertTrue(made.respond(conversation, "S", Box()).ok)
+
+
+class _Refused(Exception):
+    """An SDK `BadRequestError`, near enough: a message and a status code."""
+
+    status_code = 400

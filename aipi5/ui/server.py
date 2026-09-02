@@ -31,6 +31,7 @@ import logging
 import socket
 import threading
 import time
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -153,6 +154,16 @@ ASSISTANT_POLL_S = 20.0
 #: bound on the far side; this one stops a body being parsed at all.
 MAX_ASK = 4000
 
+#: How many model requests this server will start in a minute, across every
+#: caller. Not a security control — `_same_origin` is what keeps a web page
+#: out — but the backstop for the case that one gets past it or a script on
+#: this device runs away: every one of these costs money at OpenAI and holds
+#: the turn lock, so a loop is a bill and a device that will not answer anybody
+#: standing in front of it. Twenty a minute is far more than a person can say
+#: and far less than a loop can send.
+ASK_LIMIT = 20
+ASK_WINDOW_S = 60.0
+
 PREVIEW_FPS = 6
 
 #: As fast as `/api/camera/stream` may be asked to go. Hand tracking wants
@@ -237,6 +248,75 @@ class _Handler(BaseHTTPRequestHandler):
     def _json(self, payload: dict, code: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self._send(code, body, "application/json; charset=utf-8")
+
+    def _same_origin(self, json_body: bool = True) -> bool:
+        """Whether this POST came from the assistant's own page.
+
+        **Loopback is not an authentication boundary here, and this server had
+        been treating it as one.** The reasoning was that only a process on
+        this device can reach 127.0.0.1 — true, and beside the point, because
+        the kiosk Chromium is a process on this device and this device
+        deliberately opens arbitrary websites. `open_known_app` puts YouTube on
+        the screen and the agent's browser can be sent anywhere.
+
+        A page cannot *read* a cross-origin response, which is what people
+        remember about the same-origin policy. It can still send the request,
+        and every route here is a side effect: `/api/shutdown` powers the
+        machine off, `/api/files/delete` removes a file, `/api/assistant/ask`
+        spends money at OpenAI. None of them needs its reply to do harm.
+
+        Three checks, cheap and in order of how much they can be trusted:
+
+        - `Sec-Fetch-Site`, which Chromium sets itself and a page cannot forge.
+          `same-origin` and `none` (a typed address, a bookmark) pass.
+        - `Origin`, sent on every cross-origin POST and, in current browsers,
+          on same-origin ones too. It must be one of ours.
+        - `Content-Type`, which must be JSON. A request a page can send without
+          a CORS preflight is limited to a few content types, and JSON is not
+          among them — so requiring it means a cross-origin caller has to ask
+          permission first, and this server never grants it.
+
+        What this deliberately is **not** is a per-process token. A token would
+        have to reach the page somehow, and the page is served from this same
+        loopback port to anything that asks — so any local process able to
+        forge these headers can also fetch the token, and any process that
+        cannot forge them is already stopped. It would be ceremony rather than
+        a boundary, and the honest statement is that a *non-browser* process
+        running as this user is not defended against here and cannot be: it
+        can reach the microphone and the camera directly.
+        """
+        site = self.headers.get("Sec-Fetch-Site", "")
+        if site and site not in ("same-origin", "none"):
+            log.warning("refused a %s request to %s", site, self.path)
+            return False
+
+        origin = self.headers.get("Origin", "")
+        if origin and origin not in self._own_origins():
+            log.warning("refused a request to %s from %s", self.path, origin)
+            return False
+
+        kind = (self.headers.get("Content-Type", "") or "").split(";")[0].strip()
+        if json_body and kind and kind != "application/json":
+            # Empty is allowed: `fetch` with no body sends no content type, and
+            # several of these routes take none.
+            log.warning("refused a %s request to %s", kind or "typeless",
+                        self.path)
+            return False
+        return True
+
+    def _own_origins(self) -> set[str]:
+        """The origins the assistant's own page is served from.
+
+        Both spellings of loopback and the port actually bound, because the
+        page is opened as `127.0.0.1` by the kiosk and as `localhost` by
+        anybody debugging with an ssh tunnel.
+        """
+        try:
+            port = self.server.server_address[1]
+        except (AttributeError, IndexError):
+            port = 8092
+        return {f"http://127.0.0.1:{port}", f"http://localhost:{port}",
+                f"http://[::1]:{port}"}
 
     def _drain(self) -> None:
         """Read a request body that is about to be refused, and discard it.
@@ -334,8 +414,20 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        # First, and before the body is read: an upload is the one body this
-        # server must not buffer. It is streamed to disk in
+        # Before anything reads a body or acts on one. Every route below is a
+        # side effect, and a page on this device's own screen can send a
+        # request here even though it cannot read the reply — see
+        # `_same_origin`. The upload is exempt from the JSON rule only: it is
+        # multipart by design.
+        if not self._same_origin(json_body=(path != "/api/files/upload")):
+            if path != "/api/files/upload":
+                # Not on an upload: the body may be a large file and this
+                # refusal must not read it.
+                self._drain()
+            self._json({"error": "that request did not come from this screen"},
+                       403)
+            return
+        # An upload is the one body this server must not buffer. It is streamed to disk in
         # `aipi5/files/web.py` rather than read whole in order to be parsed.
         if path == "/api/files/upload":
             self._file_upload()
@@ -750,6 +842,10 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/assistant/ask":
+            if not self.ui.may_ask():
+                self._json({"error": "too many requests in a row; wait a "
+                                     "moment and ask again"}, 429)
+                return
             # `source` says where it was typed, not who typed it, and it is
             # normalised by the coordinator rather than trusted — a caller
             # inventing one must not lose somebody's sentence.
@@ -1639,6 +1735,10 @@ class WebUI:
         # these rather than a decision in each handler. Optional, so a test can
         # build a server with no model and no agent behind it.
         self.coordinator = coordinator
+        #: When the last `ASK_LIMIT` model requests were started. See
+        #: `may_ask`.
+        self._asks: deque[float] = deque(maxlen=ASK_LIMIT)
+        self._ask_lock = threading.Lock()
         # How the compose box gets text on a panel with no keyboard: the voice
         # loop captures one utterance and hands back the words. Optional, so a
         # test can build a server with no microphone anywhere near it.
@@ -1679,6 +1779,28 @@ class WebUI:
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._page: bytes | None = None
+
+    def may_ask(self) -> bool:
+        """Whether another model request may start now.
+
+        A backstop, not a boundary: `_same_origin` is what keeps a web page
+        out. This is for the case that something gets past it, or a script on
+        this device runs away — each of these costs money at OpenAI and takes
+        the coordinator's turn lock, so a loop is both a bill and a device that
+        will not answer the person standing in front of it.
+
+        Counted across every caller rather than per address, because there is
+        only one address: everything reaching this server came from loopback.
+        """
+        now = time.monotonic()
+        with self._ask_lock:
+            if len(self._asks) == self._asks.maxlen and (
+                    now - self._asks[0]) < ASK_WINDOW_S:
+                log.warning("refusing a model request: %d in the last %.0fs",
+                            len(self._asks), now - self._asks[0])
+                return False
+            self._asks.append(now)
+        return True
 
     def page(self) -> bytes | None:
         """Read the single application page once and hold it.

@@ -143,13 +143,24 @@ class TestAGoodQuote(unittest.TestCase):
                        clock=clock)
         self.assertEqual(300, made.quote("bitcoin").as_dict(clock.now)["age_seconds"])
 
-    def test_a_provider_clock_that_disagrees_wildly_is_ignored(self):
-        """The Pi has no RTC and the provider is not wrong by a year. A
-        timestamp that far out is a clock to distrust, not a fact to report."""
+    def test_a_provider_clock_that_disagrees_wildly_is_refused(self):
+        """This test used to assert the opposite, and the opposite was wrong.
+
+        The reasoning was that the Pi has no RTC and CoinGecko is not wrong by
+        a year, so a timestamp that far out is a clock to distrust rather than
+        a fact to report -- and the quote was restamped `now`. But a distrusted
+        clock means the age is *unknown*, and restamping it says the age is
+        zero. The two readings of a wild timestamp are "our clock is wrong" and
+        "this price is old", they cannot be told apart from here, and only one
+        of them is safe to guess at.
+
+        See `TestAPriceThatCannotBeDated` for what happens instead.
+        """
         clock = Clock()
         made = service(FakeResponse(quote_payload(at=clock.now - 400_000)),
                        clock=clock)
-        self.assertEqual(0, made.quote("bitcoin").as_dict(clock.now)["age_seconds"])
+        with self.assertRaises(PriceError):
+            made.quote("bitcoin")
 
     def test_a_fresh_quote_carries_no_apology(self):
         made = service(FakeResponse(quote_payload()))
@@ -279,7 +290,11 @@ class TestTheTool(unittest.TestCase):
         schema = next(t for t in box.schemas() if t["name"] == "get_asset_price")
         self.assertEqual(sorted(set(ASSETS.values())),
                          schema["parameters"]["properties"]["asset"]["enum"])
-        self.assertEqual(list(CURRENCIES),
+        # `currency` is optional, so its enum carries a trailing None --
+        # without it `{"type": ["string", "null"]}` is a lie, because JSON
+        # Schema applies both keywords and null fails the enum. The point of
+        # this test is that the values come from the module.
+        self.assertEqual(list(CURRENCIES) + [None],
                          schema["parameters"]["properties"]["currency"]["enum"])
 
     def test_the_schema_says_never_to_answer_from_memory(self):
@@ -294,3 +309,63 @@ class TestTheTool(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAPriceThatCannotBeDated(unittest.TestCase):
+    """A provider timestamp far from our own clock used to be replaced with
+    `now`, on the reasoning that the Pi has no real-time clock and CoinGecko is
+    not wrong by an hour.
+
+    The two cases are indistinguishable from here and are not equally safe. If
+    the provider really did send an hour-old figure, stamping it `now` turns
+    demonstrably stale money into an apparently current quote — the exact lie
+    this module exists to prevent, and worse than the "answering from memory"
+    it was written against, because it carries a timestamp saying otherwise.
+    If instead our clock is wrong, the age is unknown, and a price whose age is
+    unknown is not one to say out loud.
+    """
+
+    def test_an_hour_old_stamp_is_refused_rather_than_restamped(self):
+        clock = Clock()
+        made = service(FakeResponse(quote_payload(at=clock.now - 7200)),
+                       clock=clock)
+        with self.assertRaises(PriceError) as raised:
+            made.quote("bitcoin", "usd")
+        self.assertIn("current", str(raised.exception))
+
+    def test_a_stamp_from_the_future_is_refused_too(self):
+        clock = Clock()
+        made = service(FakeResponse(quote_payload(at=clock.now + 4000)),
+                       clock=clock)
+        with self.assertRaises(PriceError):
+            made.quote("bitcoin", "usd")
+
+    def test_the_last_real_quote_is_offered_with_its_own_age(self):
+        """What the person gets instead: the previous price, honestly dated.
+        Not silence, and not a fresh-looking number."""
+        clock = Clock()
+        made = service(FakeResponse(quote_payload(price=61_000.0, at=clock.now)),
+                       FakeResponse(quote_payload(price=99_000.0,
+                                                  at=clock.now - 7200)),
+                       clock=clock)
+        self.assertEqual(61_000.0, made.quote("bitcoin", "usd").price)
+        clock.now += 300
+        later = made.quote("bitcoin", "usd")
+        self.assertEqual(61_000.0, later.price)
+        self.assertTrue(later.cached)
+        self.assertEqual(300, round(later.age_s(clock.now)))
+
+    def test_a_small_disagreement_is_still_accepted(self):
+        """Seconds of skew are normal and are not what this guards against."""
+        clock = Clock()
+        made = service(FakeResponse(quote_payload(at=clock.now - 30)),
+                       clock=clock)
+        self.assertEqual(30, round(made.quote("bitcoin", "usd").age_s(clock.now)))
+
+    def test_no_stamp_at_all_is_still_dated_on_arrival(self):
+        """A provider that sends none is a different case: nothing is being
+        contradicted, and receipt time is the best available and is honest
+        about being seconds old."""
+        clock = Clock()
+        made = service(FakeResponse(quote_payload(at=None)), clock=clock)
+        self.assertEqual(0, round(made.quote("bitcoin", "usd").age_s(clock.now)))

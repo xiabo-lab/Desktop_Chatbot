@@ -23,6 +23,11 @@ from aipi5.assistant.consent import ConsentDesk
 from aipi5.call.controller import CallController
 from aipi5.llm.tools import ToolBox
 
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+MAIN = ROOT / "aipi5" / "main.py"
+
 
 def parse(result: str) -> dict:
     return json.loads(result)
@@ -207,7 +212,11 @@ class TestTheToolAsksFirst(unittest.TestCase):
         """A model cannot name a phone that does not exist, and could not do
         anything with one if it did — the controller checks again."""
         schema = next(t for t in self.box.schemas() if t["name"] == "call_phone")
-        self.assertEqual(["iPhone"],
+        # The trailing None is what makes `device` genuinely optional: the
+        # type says ["string", "null"] and JSON Schema applies the enum too,
+        # so without it "leave it out" was not expressible. The point of this
+        # test is that the phones come from the paired list.
+        self.assertEqual(["iPhone", None],
                          schema["parameters"]["properties"]["device"]["enum"])
 
     def test_two_phones_and_no_name_asks_which(self):
@@ -275,3 +284,197 @@ class TestTheRouteUsesTheSameCode(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNothingRingsBeforeEverythingThatCanFail(unittest.TestCase):
+    """`ice_servers()` used to be evaluated last, inside the constructor call
+    that builds the successful outcome — after the session was up and the push
+    was away.
+
+    So if it raised, the consent desk caught the exception and reported "it was
+    approved but did not work" while the phone was ringing in somebody's
+    pocket. The worst version of a wrong report: the person is told nothing
+    happened, by a device they can hear happening.
+    """
+
+    def test_a_failure_working_out_the_connection_rings_nothing(self):
+        hub, push = FakeHub(), FakePush()
+
+        def broken(name):
+            raise RuntimeError("no TURN credentials")
+
+        made = CallController(hub=hub, subscriptions=FakeSubscriptions(),
+                              push=push, ice_servers=broken,
+                              on_change=lambda: None)
+        outcome = made.call_out("iPhone")
+        self.assertFalse(outcome.started)
+        self.assertEqual([], hub.calls)
+        self.assertEqual([], push.rung)
+
+    def test_it_says_what_went_wrong_rather_than_raising(self):
+        made = CallController(
+            hub=FakeHub(), subscriptions=FakeSubscriptions(), push=FakePush(),
+            ice_servers=lambda name: (_ for _ in ()).throw(RuntimeError("nope")),
+            on_change=lambda: None)
+        self.assertIn("nope", made.call_out("iPhone").detail)
+
+    def test_the_ordinary_path_still_carries_the_connection_details(self):
+        made = controller()
+        outcome = made.call_out("iPhone")
+        self.assertTrue(outcome.started)
+        self.assertEqual([{"urls": "stun:example"}], outcome.ice_servers)
+
+
+class TestWhenTheNotificationDoesNotArrive(unittest.TestCase):
+    """The ring stays up — an open app sees it by polling — but somebody
+    watching a silent phone must not be told "Done."."""
+
+    def test_the_outcome_records_that_it_did_not_go(self):
+        made = controller(push=FakePush(sent=False, detail="subscription gone"))
+        outcome = made.call_out("iPhone")
+        self.assertTrue(outcome.started)
+        self.assertIs(False, outcome.notified)
+
+    def test_the_spoken_reply_distinguishes_the_two(self):
+        """Asserted over `main.py`: the generic "Done." for a call whose
+        notification failed is the assistant reporting a success the person can
+        see is not one."""
+        main = MAIN.read_text(encoding="utf-8")
+        self.assertIn("CONSENT_DONE_QUIETLY", main)
+        self.assertIn('result.get("notified") is False', main)
+
+
+class TestCallingOffMeansTheToolIsGone(unittest.TestCase):
+    """`call.enabled: false` stops the server listening. It does not empty the
+    push subscriptions on disk, so `phones()` still names whatever was paired
+    when calling was on — and the toolbox was handed the controller on the
+    rollout switch alone.
+
+    A device with calling deliberately disabled would still have offered the
+    model `call_phone`, and a stale subscription would have been rung.
+    """
+
+    def test_both_flags_are_required_in_the_wiring(self):
+        main = MAIN.read_text(encoding="utf-8")
+        wiring = main[main.index("self.toolbox.calls = "):]
+        wiring = wiring[:wiring.index("\n\n")]
+        self.assertIn("settings.call.enabled", wiring)
+        self.assertIn('settings.assistant.tool("call")', wiring)
+
+    def test_a_toolbox_without_the_controller_does_not_offer_it(self):
+        box = ToolBox(consent=ConsentDesk())
+        self.assertNotIn("call_phone", {t["name"] for t in box.schemas()})
+        answer = json.loads(box.call("call_phone", "{}"))
+        self.assertFalse(answer["ok"])
+        self.assertNotIn("unexpectedly", answer["error"])
+
+
+class TestThePhoneGoesThroughTheSameDoor(unittest.TestCase):
+    """The fourth way in, which was not going through it.
+
+    `aipi5/assistant/coordinator.py` says all four — the wake word, the Listen
+    button, the compose box and the phone — reach the same function with the
+    same tools and the same policy. Three of them did. The phone's compose box
+    sent `agent.ask` unconditionally, so "set the volume to thirty" said into
+    it spent one of the day's six maintenance runs and up to 24 model steps
+    doing what the voice loop does in one call, while the same sentence typed
+    on the panel three feet away took the short path.
+    """
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path as _Path
+
+        from aipi5.assistant import Coordinator, EventLog
+        from aipi5.call.server import CallServer
+        from aipi5.call.signaling import SignalingHub
+        from aipi5.call.tokens import TrustedDevices
+        from aipi5.core import config as config_mod
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = _Path(self.tmp.name)
+        devices = TrustedDevices(root / "devices.json")
+        self.token = devices.pair("a phone")
+
+        self.asked: list[tuple] = []
+        self.agent = _RecordingProxy()
+        self.coordinator = Coordinator(
+            events=EventLog(), agent=self.agent,
+            respond=lambda text, language: self.asked.append(
+                (text, language)) or "The volume is thirty percent.")
+        self.addCleanup(self.coordinator.close)
+
+        cfg = config_mod.CallConfig(enabled=True, host="127.0.0.1", port=0,
+                                    tls=False, devices=root / "devices.json")
+        self.server = CallServer(cfg, hub=SignalingHub(), devices=devices,
+                                 coordinator=self.coordinator)
+        self.assertTrue(self.server.start(), self.server.error)
+        self.addCleanup(self.server.stop)
+        self.port = self.server._server.server_address[1]
+
+    def ask(self, body, token=True):
+        import http.client
+
+        connection = http.client.HTTPConnection("127.0.0.1", self.port,
+                                                timeout=10)
+        try:
+            head = {"Content-Type": "application/json"}
+            if token:
+                head["Authorization"] = f"Bearer {self.token}"
+            connection.request("POST", "/assistant/v1/ask",
+                               json.dumps(body), head)
+            response = connection.getresponse()
+            return response.status, json.loads(response.read() or b"{}")
+        finally:
+            connection.close()
+
+    def test_a_sentence_takes_the_short_path(self):
+        status, answer = self.ask({"text": "set the volume to thirty"})
+        self.assertEqual(200, status)
+        self.assertEqual("The volume is thirty percent.", answer["text"])
+        self.assertEqual([("set the volume to thirty", "en")], self.asked)
+
+    def test_it_does_not_spend_a_maintenance_run(self):
+        """The regression, stated plainly. This is what `agent.ask` cost."""
+        self.ask({"text": "set the volume to thirty"})
+        self.assertEqual([], self.agent.said)
+
+    def test_the_phone_is_still_a_paired_device_and_not_the_public(self):
+        """Unlike the panel, this server is reachable from the whole tailnet.
+        Every route here authenticates, and this one is no different."""
+        status, _ = self.ask({"text": "set the volume to thirty"}, token=False)
+        self.assertEqual(401, status)
+        self.assertEqual([], self.asked)
+
+    def test_a_build_with_no_coordinator_says_so(self):
+        self.server.coordinator = None
+        status, answer = self.ask({"text": "hello"})
+        self.assertEqual(503, status)
+        self.assertIn("coordinator", answer["error"])
+
+    def test_the_page_sends_there_and_not_to_the_agent(self):
+        page = (ROOT / "aipi5" / "call" / "web" / "phone.html").read_text(
+            encoding="utf-8")
+        compose = page[page.index('el("agent-compose").addEventListener'):]
+        compose = compose[:compose.index("});")]
+        self.assertIn("assistantAsk(text)", compose)
+        self.assertNotIn("agent.ask", compose)
+
+
+class _RecordingProxy:
+    """`AgentProxy`'s three methods. Records anything sent to the agent."""
+
+    def __init__(self):
+        self.said: list[dict] = []
+
+    def poll(self, since, timeout=None):
+        return 200, {"events": [], "cursor": since,
+                     "agent": {"run": "", "state": "idle"}}
+
+    def say(self, message):
+        self.said.append(message)
+        return 200, {"ok": True, "run": "r-1"}
+
+    def snapshot(self):
+        return {"run": "", "state": "idle", "busy": False, "pending": None}

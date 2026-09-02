@@ -204,3 +204,56 @@ class TestBounds(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAReaderThatOutlivedThisProcess(unittest.TestCase):
+    """The sequence begins at 1 again when the service does. The readers do
+    not restart with it.
+
+    `AgentBridge` keeps one number for the life of the *voice* process, and
+    `aipi5-agent.service` is a separate unit that is restarted on its own
+    whenever agent code is deployed. So the bridge could be holding a cursor of
+    a hundred against a mailbox that has issued three — and it would ignore the
+    first hundred messages of the next run, which is most of one, before
+    catching up. Silently: nothing errors, the transcript is simply missing its
+    beginning.
+
+    The same asymmetry in the other direction made the kiosk go deaf across an
+    assistant restart; that one is in `EventLog.collect`.
+    """
+
+    def test_a_cursor_beyond_anything_issued_gets_everything(self):
+        box = Mailbox(["agent"])
+        box.post("agent", {"type": "agent.say", "text": "first"})
+        box.post("agent", {"type": "agent.say", "text": "second"})
+        messages, cursor = box.collect("agent", 100, timeout=0)
+        self.assertEqual(["first", "second"], [m["text"] for m in messages])
+        self.assertEqual(2, cursor)
+
+    def test_it_does_not_wait_out_the_poll_first(self):
+        """A reader in this state would otherwise block for the whole timeout
+        on every pass while messages sat unread in front of it."""
+        box = Mailbox(["agent"])
+        box.post("agent", {"type": "agent.say", "text": "here"})
+        started = time.monotonic()
+        messages, _ = box.collect("agent", 100, timeout=5.0)
+        self.assertEqual(1, len(messages))
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_a_cursor_at_the_high_water_mark_is_not_a_restart(self):
+        """Ordinary "nothing new since I last asked". It must keep waiting
+        rather than being handed the whole box again."""
+        box = Mailbox(["agent"])
+        box.post("agent", {"type": "agent.say", "text": "here"})
+        self.assertEqual(([], 1), box.collect("agent", 1, timeout=0))
+
+    def test_eviction_does_not_look_like_a_restart(self):
+        """The counter must be the highest ever *issued*, not the newest still
+        held — otherwise a mailbox that has dropped its front would resend
+        everything to a reader that is merely behind."""
+        box = Mailbox(["agent"], max_depth=2)
+        for n in range(5):
+            box.post("agent", {"type": "agent.say", "text": str(n)})
+        messages, cursor = box.collect("agent", 4, timeout=0)
+        self.assertEqual(["4"], [m["text"] for m in messages])
+        self.assertEqual(5, cursor)

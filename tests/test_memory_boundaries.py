@@ -209,9 +209,13 @@ class TestTheAudibleRecordIsUntouched(unittest.TestCase):
         main = (ROOT / "aipi5" / "main.py").read_text(encoding="utf-8")
         body = main[main.index("def speak_delegated_answer"):]
         body = body[:body.index("\n    def ")]
-        record = body.index('self.history.record("aia", text, language)')
+        # Recorded by `say`, which records and speaks in one call. This
+        # method used to record as well, writing every spoken answer into the
+        # log twice.
+        spoken = body.index("say(self, text, language)")
         for refusal in ("leaving it on the screen",):
-            self.assertLess(body.index(refusal), record)
+            self.assertLess(body.index(refusal), spoken)
+        self.assertNotIn('self.history.record("aia", text, language)', body)
 
 
 if __name__ == "__main__":

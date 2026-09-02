@@ -140,6 +140,13 @@ CONFIRM_LISTEN = {"en": "Say yes or no…", "zh": "请回答“确定”或“�
 CONSENT_CANCELLED = {"en": "All right, I have left it alone.",
                      "zh": "好的，我没有做。"}
 CONSENT_DONE = {"en": "Done.", "zh": "好了。"}
+# Said when the thing was done but the part somebody is standing there waiting
+# for did not happen. Ringing a phone whose notification failed still puts the
+# call up — the app sees it if it is open — but "Done." to somebody watching a
+# silent phone is the assistant reporting a success they can see is not one.
+CONSENT_DONE_QUIETLY = {
+    "en": "The call is up, but I could not get the notification to the phone.",
+    "zh": "通话已经接通了，但是通知没能发到手机上。"}
 CONSENT_FAILED = {"en": "I could not do that.", "zh": "我没能完成。"}
 THINKING_TEXT = {"en": "Thinking…", "zh": "让我想想…"}
 
@@ -420,7 +427,7 @@ class Assistant:
         #: Photographs taken during a turn, held until the reply has been
         #: published so that the sentence introducing one comes first. See
         #: `finish_turn`.
-        self._pending_captures: list[tuple[str, str, dict]] = []
+        self._pending_captures: list[tuple[str, str, dict, str]] = []
         self.events = EventLog()
         self.coordinator = Coordinator(events=self.events, respond=self.answer,
                                        agent=self.agent, consent=self.consent,
@@ -438,14 +445,24 @@ class Assistant:
         self.call = CallServer(settings.call, hub=self.call_hub,
                                devices=self.call_devices,
                                on_change=self.on_call_change,
-                               files=self.files, agent=self.agent)
+                               files=self.files, agent=self.agent,
+                               # So the phone's compose box goes through the
+                               # same door as the microphone and the panel.
+                               coordinator=self.coordinator)
         # The call server is built after the toolbox — it wants the agent
         # proxy and the file store — so the controller is handed over here
         # rather than at construction. It is the *same object* the panel's
         # button reaches, which is the whole point of extracting it: one
         # implementation of start-the-session, tell-the-page, send-the-push.
+        # Both flags, not just the rollout switch. `call.enabled: false` turns
+        # the calling subsystem off — the server does not listen — but the
+        # controller object still exists and `phones()` still reads whatever
+        # push subscriptions are on disk from when it was on. So the model was
+        # offered `call_phone` on a device with calling disabled, and a stale
+        # subscription would have been rung.
         self.toolbox.calls = (self.call.controller
-                              if settings.assistant.tool("call") else None)
+                              if settings.call.enabled
+                              and settings.assistant.tool("call") else None)
         #: What the call was doing last time we looked, so a transition can be
         #: acted on once rather than on every poll.
         self._call_live = False
@@ -1125,8 +1142,38 @@ class Assistant:
 
         language = reply_language(text, fallback="en")
         log.info("speaking the answer to run %s", run_id or "?")
-        self.history.record("aia", text, language)
+        # `say` records it. Doing it here as well wrote every spoken
+        # delegated answer into the 24-hour audible log twice, which reads as
+        # an assistant that repeated itself.
         say(self, text, language)
+
+    def publish_fast_turn(self, said: str, reply: str, intent=None) -> None:
+        """Put a fast-path command in the shared transcript. Never raises.
+
+        The router answers "pause", "next" and "open YouTube" in about nine
+        milliseconds without a network, which is the whole point of it — and it
+        answers them *before* the coordinator, so none of them reached the
+        event log. The Assistant page reads only that log, deliberately, to
+        avoid drawing the spoken turns twice from `/api/feed`. The result was a
+        page called unified on which the fastest and most-used commands on the
+        device left no trace at all: somebody says "next", the music changes,
+        and the transcript shows the weather question from five minutes ago.
+
+        Published together at the end rather than the user row first, because
+        by here the whole turn is known and there is nothing to interleave —
+        the model path is the one that needs its question on screen while it
+        thinks.
+        """
+        try:
+            self.events.publish("user", "voice", text=said)
+            if intent is not None:
+                self.events.publish("tool", "voice", ok=True,
+                                    tool=intent.command.name,
+                                    text=intent.command.describe("en"))
+            if reply:
+                self.events.publish("assistant", "voice", text=reply)
+        except Exception:                            # noqa: BLE001
+            log.exception("could not put the spoken command in the transcript")
 
     def publish_consent(self, pending) -> None:
         """Draw the card, or take it away. Never raises.
@@ -1215,10 +1262,19 @@ class Assistant:
 
     def queue_capture(self, token: str, text: str = "",
                       meta: dict | None = None) -> None:
-        """Hold a picture until the turn that produced it has been answered."""
+        """Hold a picture until the turn that produced it has been answered.
+
+        The source is read *now*, while the turn is still running, rather than
+        when the queue is drained: it is a fact about who asked. Every capture
+        used to be published as `voice`, so a photograph asked for from the
+        compose box was attributed to somebody speaking — a small untruth about
+        who did what, on a panel several people share.
+        """
         if not token:
             return
-        self._pending_captures.append((token, text, meta or {}))
+        source = self.toolbox.source if self.toolbox is not None else "voice"
+        self._pending_captures.append(
+            (token, text, meta or {}, source if source in SOURCES else "voice"))
 
     def finish_turn(self) -> None:
         """Everything that must happen after a reply has been published.
@@ -1230,9 +1286,9 @@ class Assistant:
         """
         self.toolbox.end_turn()
         pending, self._pending_captures = self._pending_captures, []
-        for token, text, meta in pending:
+        for token, text, meta, source in pending:
             try:
-                self.events.publish("capture", "voice", capture=token,
+                self.events.publish("capture", source, capture=token,
                                     text=text, meta=meta)
             except Exception:                        # noqa: BLE001
                 log.warning("could not publish a capture", exc_info=True)
@@ -1602,6 +1658,12 @@ def main() -> int:
                     turn.mark("routed")
 
                     speak = False
+                    # Reset every turn, and deliberately not once outside the
+                    # loop: a turn id left over from the previous utterance
+                    # would let this turn hear the answer to the last one's
+                    # question, which is the bug being fixed with a longer
+                    # fuse.
+                    spoken_turn = ""
 
                     if intent is not None and intent.command.name == "shutdown":
                         # Not a spoken confirmation, and not because one would
@@ -1649,6 +1711,7 @@ def main() -> int:
                         assistant.publish(listening_text=THINKING_TEXT.get(
                             language, THINKING_TEXT["en"]))
                         outcome = assistant.coordinator.submit_voice(text, language)
+                        spoken_turn = str(outcome.get("turn", ""))
                         # `answer` returns a sentence on every path, including
                         # its failures, so `text` is normally what to say. The
                         # fallback is for the two cases the coordinator itself
@@ -1663,12 +1726,28 @@ def main() -> int:
                     machine.to(State.SPEAKING)
                     assistant.publish(listening_text="")
                     assistant.history.record("aia", reply, language)
+                    # The coordinator publishes its own rows, and `spoken_turn`
+                    # is set only when it ran. So this is the fast path, whose
+                    # commands reached no transcript at all before.
+                    if not spoken_turn:
+                        assistant.publish_fast_turn(text, reply, intent)
                     # A tool that parked something behind a question needs the
                     # question spoken and the answer heard, so this one is
                     # blocking whatever the command list said. Read before the
                     # speaking rather than after it, so the floor is never
                     # given up between the two.
-                    awaiting = assistant.consent.waiting()
+                    # **This turn's question, not whatever is on the desk.**
+                    # A question parked by somebody typing on the panel is not
+                    # a question the room was asked, and the room has not heard
+                    # it — so reading the desk globally meant "what's the
+                    # weather" was answered with the forecast and then, in
+                    # silence, listened for consent to ring a phone. Anything
+                    # affirmative in the next sentence rang it.
+                    #
+                    # A fast-path command never has one: it does not reach the
+                    # model, parks nothing, and leaves `spoken_turn` empty,
+                    # which `waiting_for` answers with None.
+                    awaiting = assistant.consent.waiting_for(spoken_turn)
                     if speak or awaiting is not None:
                         speaker.say(reply, language,
                                     blocking=awaiting is not None)
@@ -1774,7 +1853,11 @@ def hear_consent(assistant, mic, frames, pending, language) -> None:
 
     result = outcome.get("result") or {}
     if outcome.get("ok") and result.get("ok", True):
-        spoken = CONSENT_DONE.get(language, CONSENT_DONE["en"])
+        # `notified` is only present on a call, and only False when the ring
+        # went up and the push did not.
+        quiet = result.get("notified") is False
+        spoken = (CONSENT_DONE_QUIETLY.get(language, CONSENT_DONE_QUIETLY["en"])
+                  if quiet else CONSENT_DONE.get(language, CONSENT_DONE["en"]))
     else:
         spoken = str(result.get("error") or outcome.get("error")
                      or CONSENT_FAILED.get(language, CONSENT_FAILED["en"]))

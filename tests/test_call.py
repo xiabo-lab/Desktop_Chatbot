@@ -456,9 +456,21 @@ class TestSignalingHub(unittest.TestCase):
         self.assertLess(time.monotonic() - began, 1.5)
 
     def test_an_empty_poll_gives_up_without_moving_the_cursor(self):
-        messages, cursor = self.hub.collect(PI, 7, timeout=0.05)
+        """A caller that is up to date stays where it is.
+
+        The cursor has to be one this hub actually issued. It used to be 7
+        against a hub that had posted nothing, which passed for the wrong
+        reason and now means something else entirely: a cursor beyond anything
+        a mailbox ever issued is a reader from before a restart, and is sent
+        the whole box rather than left waiting for messages that will never
+        have those numbers. See `TestAReaderThatOutlivedThisProcess` in
+        tests/test_mailbox.py.
+        """
+        self.hub.post(PI, {"type": "answer", "sdp": "v=0"})
+        _, cursor = self.hub.collect(PI, 0, timeout=0.05)
+        messages, again = self.hub.collect(PI, cursor, timeout=0.05)
         self.assertEqual(messages, [])
-        self.assertEqual(cursor, 7)
+        self.assertEqual(again, cursor)
 
     def test_a_message_for_a_stale_session_is_dropped(self):
         # A phone that reloaded mid-call posting candidates for the call it

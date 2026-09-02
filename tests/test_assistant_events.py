@@ -16,6 +16,7 @@ from __future__ import annotations
 import threading
 import time
 import unittest
+from pathlib import Path
 
 from aipi5.assistant.events import (AssistantEvent, EventError, EventLog,
                                     KINDS, MAX_TEXT, NullSink, SOURCES)
@@ -217,6 +218,90 @@ class TestAPageThatOutLivedTheProcess(unittest.TestCase):
         for n in range(3):
             log.publish("user", "voice", text=str(n))
         self.assertEqual(([], 3), log.collect(3, timeout=0.1))
+
+
+
+class TestTheFastPathIsInTheTranscriptToo(unittest.TestCase):
+    """The router answers "pause", "next" and "open YouTube" in about nine
+    milliseconds without a network, and it answers them *before* the
+    coordinator — so none of them reached the event log.
+
+    The Assistant page reads only that log, deliberately, so that the spoken
+    turns are not drawn twice from `/api/feed`. Between the two decisions, the
+    fastest and most-used commands on the device left no trace on the page
+    called unified: somebody says "next", the music changes, and the transcript
+    still shows the weather question from five minutes ago.
+    """
+
+    def rows(self, log):
+        return [(e["kind"], e.get("tool", ""), e.get("text", ""))
+                for e in log.collect(0)[0]]
+
+    def test_a_command_leaves_a_question_an_action_and_an_answer(self):
+        from types import SimpleNamespace
+
+        log = EventLog()
+        assistant = SimpleNamespace(events=log)
+        intent = SimpleNamespace(command=SimpleNamespace(
+            name="open_youtube", describe=lambda language: "Open YouTube"))
+        MAIN_PUBLISH(assistant, "open youtube", "Opening YouTube.", intent)
+        self.assertEqual(
+            [("user", "", "open youtube"),
+             ("tool", "open_youtube", "Open YouTube"),
+             ("assistant", "", "Opening YouTube.")],
+            self.rows(log))
+
+    def test_a_turn_with_no_command_still_says_what_was_said(self):
+        from types import SimpleNamespace
+
+        log = EventLog()
+        MAIN_PUBLISH(SimpleNamespace(events=log), "hello", "Hello.", None)
+        self.assertEqual([("user", "", "hello"), ("assistant", "", "Hello.")],
+                         self.rows(log))
+
+    def test_a_transcript_that_refuses_does_not_end_the_turn(self):
+        from types import SimpleNamespace
+
+        class Refuses:
+            def publish(self, *a, **k):
+                raise RuntimeError("no")
+
+        MAIN_PUBLISH(SimpleNamespace(events=Refuses()), "next", "Next.", None)
+
+    def test_the_voice_loop_only_does_this_on_the_fast_path(self):
+        """The coordinator publishes its own rows. Doing both would draw every
+        spoken sentence twice, a second apart, with nothing to say which."""
+        loop = (Path(__file__).resolve().parent.parent
+                / "aipi5" / "main.py").read_text(encoding="utf-8")
+        guarded = loop[loop.index("if not spoken_turn:"):]
+        self.assertIn("assistant.publish_fast_turn(", guarded[:200])
+
+
+def MAIN_PUBLISH(assistant, said, reply, intent):
+    """`Assistant.publish_fast_turn`, called on an object that is not one.
+
+    Imported as an unbound function because `aipi5.main` needs numpy through
+    AIA and will not import on every machine this suite runs on. What is being
+    tested is the method's own logic, which touches nothing but `events`.
+    """
+    import ast
+    import textwrap
+
+    source = (Path(__file__).resolve().parent.parent
+              / "aipi5" / "main.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "publish_fast_turn")
+    namespace = {"log": _QuietLog()}
+    exec(compile(ast.Module(body=[function], type_ignores=[]),
+                 "<publish_fast_turn>", "exec"), namespace)
+    namespace["publish_fast_turn"](assistant, said, reply, intent)
+
+
+class _QuietLog:
+    def exception(self, *a, **k):
+        pass
 
 
 class TestTheWireShape(unittest.TestCase):

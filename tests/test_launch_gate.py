@@ -198,8 +198,12 @@ class TestWhatMayBeOpened(GateCase):
         box = ToolBox(launcher=Refuses())
         box.begin_turn("put some music on")
         answer = parse(box.call("open_known_app", '{"app": "music"}'))
-        self.assertFalse(answer["succeeded"])
-        self.assertIn("no Chromium", answer["detail"])
+        # `ok` is whether it opened, not whether the call returned. This
+        # used to read `succeeded` while `ok` said True, which is the shape a
+        # model reads first and the transcript draws a tick from — a failure
+        # shown to the room as a success.
+        self.assertFalse(answer["ok"])
+        self.assertIn("no Chromium", answer["error"])
 
     def test_the_tool_is_not_offered_with_nothing_to_open(self):
         self.assertEqual([], [t for t in ToolBox().schemas()

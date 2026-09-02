@@ -21,7 +21,9 @@ conversation. These tests are mostly about that absence.
 from __future__ import annotations
 
 import json
+import pathlib
 import re
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -323,3 +325,58 @@ class TestTheMessagesAreNotRunsInDisguise(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOnlyTheDeliveryThisDeviceHas(unittest.TestCase):
+    """The schema offered `push` or `email`, the schedule stored either, and
+    `Housekeeping.deliver_due` has always rung the paired phone for everything
+    due — it never reads the field.
+
+    So a reminder somebody asked to have emailed was accepted, recorded as
+    email, and delivered to a phone, with nothing anywhere saying it had been
+    changed. An option that is not implemented is worse than one that does not
+    exist: the model now says it cannot rather than saying it will and not
+    doing it.
+    """
+
+    def test_the_tool_offers_only_push(self):
+        from aipi5.llm.tools import ToolBox
+
+        box = ToolBox(agent=_Silent())
+        schema = next(t for t in box.schemas() if t["name"] == "create_reminder")
+        self.assertEqual(["push", None],
+                         schema["parameters"]["properties"]["deliver"]["enum"])
+
+    def test_the_schedule_refuses_email(self):
+        from aipi5.agent.schedule import Schedule
+
+        with tempfile.TemporaryDirectory() as folder:
+            book = Schedule(pathlib.Path(folder) / "reminders.json")
+            with self.assertRaises(ValueError) as raised:
+                book.add(at=time.time() + 600, text="call Mum", deliver="email")
+            self.assertIn("paired phone", str(raised.exception))
+
+    def test_push_is_still_accepted_and_is_the_default(self):
+        from aipi5.agent.schedule import Schedule
+
+        with tempfile.TemporaryDirectory() as folder:
+            book = Schedule(pathlib.Path(folder) / "reminders.json")
+            item = book.add(at=time.time() + 600, text="call Mum")
+            self.assertEqual("push", item.deliver)
+
+    def test_housekeeping_still_only_knows_how_to_ring_a_phone(self):
+        """The reason the option went rather than the delivery arriving. If a
+        mail path is ever written, this is the test that should fail first."""
+        source = (pathlib.Path(__file__).resolve().parent.parent
+                  / "aipi5" / "core" / "housekeeping.py").read_text(encoding="utf-8")
+        due = source[source.index("for item in due:"):]
+        due = due[:due.index("\n\n")]
+        self.assertIn("call.push.ring", due)
+        self.assertNotIn("mail", due.lower())
+
+
+class _Silent:
+    """An `AgentProxy` that is present but never spoken to."""
+
+    def say(self, message):
+        raise AssertionError("no reminder should be sent while building a schema")

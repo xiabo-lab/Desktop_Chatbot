@@ -64,6 +64,11 @@ class Mailbox:
         # One counter across every seat, so a cursor is meaningful on its own
         # and two seats can never hand back the same sequence number.
         self._sequence = itertools.count(1)
+        #: The highest sequence ever handed out, across every seat. Not the
+        #: same as any seat's cursor: this keeps rising when messages are
+        #: evicted and is what tells a cursor from a previous *process* from a
+        #: cursor that is merely behind. See `collect`.
+        self._issued = 0
         self._boxes: dict[str, list[tuple[int, dict]]] = {s: [] for s in self.seats}
         #: monotonic time each seat last asked for its messages.
         self._seen: dict[str, float] = {}
@@ -83,7 +88,8 @@ class Mailbox:
             return False
         with self._lock:
             box = self._boxes[to]
-            box.append((next(self._sequence), message))
+            self._issued = next(self._sequence)
+            box.append((self._issued, message))
             if len(box) > self.max_depth:
                 # The oldest go first. A peer this far behind has lost the
                 # handshake anyway, and the alternative is unbounded memory
@@ -113,6 +119,21 @@ class Mailbox:
             # on entry rather than on return, so a poll that waits out its
             # whole timeout still counts as the peer being present.
             self._seen[seat] = time.monotonic()
+            if since > self._issued:
+                # A cursor from before this process started. The sequence
+                # begins at 1 again when the service does and the readers do
+                # not: `AgentBridge` keeps one number for the life of the voice
+                # process, so restarting `aipi5-agent.service` on its own left
+                # it holding a cursor above everything the new mailbox will
+                # ever issue — and it would silently ignore that many messages
+                # of the next run before catching up.
+                #
+                # The same asymmetry in the other direction made the panel go
+                # deaf across a restart of the assistant; see
+                # `EventLog.collect` in aipi5/assistant/events.py.
+                log.info("%s asked from %d, beyond anything this mailbox has "
+                         "issued; sending from the start", seat, since)
+                since = 0
             while True:
                 pending = [(seq, m) for seq, m in self._boxes[seat] if seq > since]
                 if pending:

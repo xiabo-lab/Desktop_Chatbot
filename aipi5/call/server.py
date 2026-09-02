@@ -51,6 +51,12 @@ PAGE = Path(__file__).resolve().parent / "web" / "phone.html"
 #: codecs runs to a few kilobytes. 64 KiB is generous and still bounded.
 MAX_BODY = 64 * 1024
 
+#: The longest sentence the phone may send to the assistant. The same bound
+#: the panel's compose box has in `aipi5/ui/server.py`, and for the same
+#: reason: what arrives here is dictated or typed by a person, and anything
+#: longer is a mistake or a probe rather than a question.
+MAX_ASK = 4000
+
 #: `Authorization: Bearer <token>`, and nothing else accepted. A token in a
 #: query string would be a token in the server log, in the browser history and
 #: in any proxy in between.
@@ -345,7 +351,9 @@ class _Handler(BaseHTTPRequestHandler):
                   "/call/v1/pickup": self._pickup,
                   "/call/v1/files/ticket": self._file_ticket,
                   "/call/v1/files/delete": self._file_delete,
-                  "/agent/v1/say": self._agent_say}
+                  "/agent/v1/say": self._agent_say,
+                  "/assistant/v1/ask": self._assistant_ask,
+                  "/assistant/v1/cancel": self._assistant_cancel}
         handler = routes.get(path)
         if handler is None:
             self._json({"error": "not found"}, 404)
@@ -439,6 +447,32 @@ class _Handler(BaseHTTPRequestHandler):
             return
         status, payload = self.call.agent.say(self._payload)
         self._json(payload, status)
+
+    def _assistant_ask(self) -> None:
+        """A sentence from the phone, through the same door as every other.
+
+        Short turns answer here, in this response, with the same tools and the
+        same policy the panel and the microphone get. A turn the model decides
+        to hand over comes back with a run id, and the progress arrives on the
+        agent stream this page already reads — so delegation looks exactly as
+        it did, and everything else no longer costs a maintenance run.
+        """
+        if self._device() is None:
+            return
+        if self.call.coordinator is None:
+            self._json({"error": "this build has no assistant coordinator"}, 503)
+            return
+        text = str(self._payload.get("text", ""))[:MAX_ASK]
+        self._json(self.call.coordinator.submit_text(text, "text"))
+
+    def _assistant_cancel(self) -> None:
+        if self._device() is None:
+            return
+        if self.call.coordinator is None:
+            self._json({"error": "this build has no assistant coordinator"}, 503)
+            return
+        self._json(self.call.coordinator.cancel(
+            str(self._payload.get("run", ""))[:64]))
 
     def _state(self) -> None:
         device = self._device()
@@ -752,7 +786,8 @@ class CallServer:
     """
 
     def __init__(self, cfg, *, hub: SignalingHub, devices,
-                 on_change=lambda: None, files=None, agent=None):
+                 on_change=lambda: None, files=None, agent=None,
+                 coordinator=None):
         self.cfg = cfg
         self.hub = hub
         self.devices = devices
@@ -761,6 +796,18 @@ class CallServer:
         # authenticates the phone and forwards. Everything the agent knows
         # lives in another process under another user.
         self.agent = agent
+        # The one door a sentence goes through, whichever of the four ways it
+        # arrived. Held only to forward: this module decides nothing about
+        # tools or policy, which is the whole point of there being one
+        # coordinator rather than a decision per surface.
+        #
+        # Before this the phone's compose box sent `agent.ask` unconditionally,
+        # so "set the volume to thirty" said into the phone spent one of the
+        # day's maintenance runs and up to 24 model steps doing what the voice
+        # loop does in one call — while the same sentence typed on the panel
+        # three feet away took the short path. The four-ways-in architecture
+        # was true of three of them.
+        self.coordinator = coordinator
         # The transfer folder, or None where file transfer is not configured.
         # This module owns no filesystem logic: it authenticates, and asks.
         self.files = files

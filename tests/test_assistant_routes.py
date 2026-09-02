@@ -58,15 +58,18 @@ class RouteCase(unittest.TestCase):
         self.addCleanup(self.web.stop)
         self.port = self.web._server.server_address[1]
 
-    def call(self, method, path, body=None, timeout=5):
+    def call(self, method, path, body=None, timeout=5, headers=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.port,
                                                 timeout=timeout)
         try:
-            if body is None:
+            if body is None and headers is None:
                 connection.request(method, path)
             else:
-                connection.request(method, path, json.dumps(body),
-                                   {"Content-Type": "application/json"})
+                head = {"Content-Type": "application/json"}
+                head.update(headers or {})
+                connection.request(method, path,
+                                   json.dumps(body if body is not None else {}),
+                                   head)
             response = connection.getresponse()
             return response.status, json.loads(response.read() or b"{}")
         finally:
@@ -174,6 +177,102 @@ class TestTheFourRoutes(RouteCase):
                                         {"text": "x" * 2000})
             self.assertEqual(404, status)
             self.assertEqual("not found", payload["error"])
+
+
+
+class TestAPageOnThisScreenIsNotTrusted(RouteCase):
+    """Loopback was being treated as an authentication boundary and is not one.
+
+    The reasoning in the code was that only a process on this device can reach
+    127.0.0.1. True, and beside the point: the kiosk Chromium is a process on
+    this device, and this device deliberately opens arbitrary websites —
+    `open_known_app` puts YouTube on the screen and the agent's browser can be
+    sent anywhere.
+
+    A page cannot read a cross-origin reply, which is the half of the
+    same-origin policy people remember. It can still *send*, and every route
+    here is a side effect that does not need its reply: powering the machine
+    off, deleting a file, spending money at OpenAI.
+    """
+
+    def test_a_request_from_a_website_is_refused(self):
+        status, answer = self.call(
+            "POST", "/api/assistant/ask", {"text": "hello"},
+            headers={"Origin": "https://example.com",
+                     "Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(403, status)
+        self.assertEqual([], self.asked)
+
+    def test_the_browsers_own_word_for_it_is_enough(self):
+        """`Sec-Fetch-Site` is set by the browser and cannot be forged by the
+        page, so it is checked before anything the page controls."""
+        status, _ = self.call("POST", "/api/assistant/ask", {"text": "hello"},
+                              headers={"Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(403, status)
+        self.assertEqual([], self.asked)
+
+    def test_a_form_post_cannot_dress_itself_as_json(self):
+        """The content types a page may send without asking permission first
+        do not include JSON — so requiring JSON means a cross-origin caller
+        has to preflight, and this server answers no."""
+        status, _ = self.call("POST", "/api/assistant/ask", {"text": "hello"},
+                              headers={"Content-Type": "text/plain"})
+        self.assertEqual(403, status)
+        self.assertEqual([], self.asked)
+
+    def test_the_shutdown_route_is_covered_too(self):
+        """The one that matters most, and the one furthest from the assistant:
+        a web page must not be able to power the device off."""
+        status, _ = self.call("POST", "/api/shutdown", {"action": "start"},
+                              headers={"Origin": "https://example.com"})
+        self.assertEqual(403, status)
+
+    def test_the_assistants_own_page_still_works(self):
+        status, answer = self.call(
+            "POST", "/api/assistant/ask", {"text": "set the volume to thirty"},
+            headers={"Origin": f"http://127.0.0.1:{self.port}",
+                     "Sec-Fetch-Site": "same-origin"})
+        self.assertEqual(200, status)
+        self.assertTrue(answer["ok"])
+
+    def test_localhost_is_the_same_page_by_another_name(self):
+        """The kiosk opens 127.0.0.1; anybody debugging over an ssh tunnel
+        opens localhost. Both are this screen."""
+        status, _ = self.call(
+            "POST", "/api/assistant/ask", {"text": "hello"},
+            headers={"Origin": f"http://localhost:{self.port}"})
+        self.assertEqual(200, status)
+
+    def test_a_caller_with_no_browser_behind_it_still_works(self):
+        """curl over ssh, which is how this device is debugged. It sends
+        neither header, and a header that is absent is not a claim."""
+        status, _ = self.call("POST", "/api/assistant/ask", {"text": "hello"})
+        self.assertEqual(200, status)
+
+
+class TestNotTooManyAtOnce(RouteCase):
+    """A backstop rather than a boundary. Every model request costs money and
+    takes the coordinator's turn lock, so a loop is a bill and a device that
+    will not answer the person in front of it."""
+
+    def test_a_flood_is_refused_rather_than_forwarded(self):
+        from aipi5.ui.server import ASK_LIMIT
+
+        for _ in range(ASK_LIMIT):
+            self.assertEqual(200, self.call("POST", "/api/assistant/ask",
+                                            {"text": "hello"})[0])
+        status, answer = self.call("POST", "/api/assistant/ask",
+                                   {"text": "hello"})
+        self.assertEqual(429, status)
+        self.assertEqual(ASK_LIMIT, len(self.asked))
+        self.assertIn("wait", answer["error"])
+
+    def test_reading_the_transcript_is_never_rate_limited(self):
+        """The page polls this continuously; only what costs something is
+        counted."""
+        for _ in range(30):
+            self.assertEqual(200, self.call("GET",
+                                            "/api/assistant/events?wait=0")[0])
 
 
 class TestWithNoCoordinator(unittest.TestCase):

@@ -13,10 +13,21 @@
 # The configuration file. The one dependency that is purely this project's.
 PyYAML
 
-# The conversational model. Version 1.x — the client is `openai.OpenAI(...)`
-# and the 0.x module-level API is not compatible with anything in
-# aipi5/llm/client.py.
-openai>=1.0
+# The conversational model.
+#
+# **Not `>=1.0`**, which is what this said and which an early 1.x install
+# satisfies. The conversation moved to `/v1/responses` and reaches it as
+# `client.responses.create(...)`, which those versions do not have — so a fresh
+# environment could resolve the requirement, start, pass its imports, and fail
+# on the first sentence anybody said, with an AttributeError that names none of
+# this. The floor is the version the Responses interface actually arrived in;
+# the ceiling is the next major, because that is where it could leave again.
+#
+# 2.53.0 is what is installed on the Pi and what the suite and the live probe
+# were verified against on 2026-09-02. `OpenAIClient` checks at startup too —
+# see `_needs_responses` — because a requirements file is a statement about a
+# fresh install and this device has an environment older than the file.
+openai>=1.66,<3
 
 # Requests is already pulled in by AIA, and is named here because this project
 # uses it directly for the weather and the news feeds. Listing a transitive

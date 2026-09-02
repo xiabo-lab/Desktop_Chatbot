@@ -127,6 +127,18 @@ class CallController:
             return CallOutcome(False, device=device,
                                detail=f"{device!r} is not a paired phone")
 
+        # Everything that can fail, before anything that cannot be undone.
+        # `ice_servers()` used to be evaluated last, inside the constructor
+        # call at the bottom — so if it raised, the session was already up and
+        # the push already sent, and the consent desk reported "it was approved
+        # but did not work" while the phone was ringing in somebody's pocket.
+        try:
+            ice = self.ice_servers("aipi5")
+        except Exception as exc:                     # noqa: BLE001
+            log.exception("could not work out how to connect the call")
+            return CallOutcome(False, device=device,
+                               detail=f"I could not set the call up ({exc})")
+
         started, session, why = self.hub.call_out(device)
         if not started:
             return CallOutcome(False, device=device, detail=why)
@@ -146,5 +158,4 @@ class CallController:
             log.warning("calling %s but the notification failed: %s",
                         device, detail)
         return CallOutcome(True, device=device, session=session,
-                           notified=sent, detail=detail,
-                           ice_servers=self.ice_servers("aipi5"))
+                           notified=sent, detail=detail, ice_servers=ice)

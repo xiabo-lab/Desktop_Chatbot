@@ -133,8 +133,14 @@ class Schedule:
                              "device's own timezone.")
         if at > now + MAX_AHEAD_S:
             raise ValueError("that is more than a year away")
-        if deliver not in ("push", "email"):
-            raise ValueError(f"I cannot deliver by {deliver!r}")
+        # `push` only, and `email` was removed rather than left accepted.
+        # `Housekeeping.deliver_due` rings the paired phone for everything due
+        # and never reads this field, so storing `email` recorded an intention
+        # the device has no way to carry out -- and the reminder arrived on the
+        # phone anyway, with nobody told it had been changed.
+        if deliver not in ("push",):
+            raise ValueError(f"I cannot deliver by {deliver!r}; this device "
+                             f"sends reminders to the paired phone")
 
         with self._lock:
             if sum(1 for i in self._items if i.state == PENDING) >= MAX_PENDING:
