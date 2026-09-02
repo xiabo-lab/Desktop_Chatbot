@@ -971,10 +971,17 @@ one release means that when something is wrong there is no way to tell which
 did it, on a device whose failures are reported as "it did something strange
 yesterday".
 
+That rollout ran on 2 September 2026 and all eight are on. It was worth doing:
+eleven faults turned up that the suite could not have found, most of them
+because the suite builds one object where the device builds all of them — a
+consent desk with no agent beside it, a coordinator whose every test names a
+language, a page whose cursor outlives the process that issued it. They are
+written up in §69 of `REPORT.md`.
+
 ## Tests
 
 ```bash
-python -m unittest discover -s tests -t .    # 1,904 tests, no hardware needed
+python -m unittest discover -s tests -t .    # 1,949 tests, no hardware needed
 ```
 
 No microphone, no camera, no accelerator, no network, no API key. That

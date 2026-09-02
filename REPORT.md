@@ -4027,14 +4027,86 @@ both name `ConversationLog` and `Conversation` in prose, explaining what they
 are *not*. A substring check calls that a dependency. This project's oldest
 testing trap, and it caught both on their first run.
 
-#### Not verified on the device
+#### On the device: eleven faults the suite could not have found
 
-Everything here is asserted off-device. The suite is **1,904 tests, 25 skipped,
-no failures**, with no microphone, camera, accelerator, network or API key. The
-hardware ownership matrix in §8 of the plan — camera → call → camera, camera →
-game → camera, browser hand control → close → camera — has not been re-run
-since the merge, the screenshots still show the old Talk page and the
-nine-button grid, and the fourteen end-to-end phrases have not been said out
-loud. `assistant.tools` in the YAML is the rollout order for doing that: one
-tool, deployed and used for a day, then the next.
+The rollout ran on 2 September 2026, one tool at a time, each used before the
+next was enabled. Eleven things were wrong. Nine of them are one shape:
 
+**the suite builds one object and the device builds all of them.**
+
+A `ConsentDesk` with no agent beside it passed. An agent with no desk passed.
+Only a device has both, and there `snapshot()` overwrote the local question
+with the agent's `pending: None`, so the assistant asked "shall I remove it?"
+out loud and the panel offered nothing to answer with. The same shape put the
+desk's `on_change` at None in `main.py`, so nothing published the row the card
+is drawn from. The same shape again: every coordinator test passes a language
+explicitly, and only the device has a compose box with no recogniser behind
+it — so 音量调到二十 was carried out correctly and answered in English.
+
+Two are the same restart, seen twice. The ids in `EventLog` begin at 1 again
+when the service does, so a panel holding 16 asked for rows after 16, was
+handed back its own 16, and went deaf permanently — on a kiosk with no
+keyboard to reload with, and after every deploy. The agent's mailbox has the
+opposite asymmetry: *it* remembers across a restart while the bridge's cursor
+does not, so the first delegation after a deploy replayed the previous run
+entire, then hit that run's `agent.done` and stopped following the run it had
+been started for. That run closed the browser it was asked to close and
+reported none of it.
+
+Three were the transcript telling the truth about the wrong moment. A local
+tool call left no row at all, so the page showed "checked the disk" for a
+maintenance run and a bare sentence for a volume change. `delete_birthday`
+returns ok when the *question* was asked, so the row read "removed a birthday"
+while the entry was still there. And the drain after a finished run published
+its failure, putting "the agent is not answering" directly beneath the answer
+it had just given.
+
+One was a promise the page could not keep: `enterkeyhint="send"` puts a key
+labelled *send* on the only keyboard this panel has, and a textarea in a form
+answers Enter with a newline.
+
+And one was the prompt, left over from when there were two things to talk to:
+*you cannot close an application; tell them to ask the device directly*. Asked
+to close the browser it answered "please say close the browser to the device",
+to somebody who had just said exactly that, to the device. The same bullet
+offered "shut down" as the alternative — for a browser — and no plugin
+declares a close command at all, so it was an instruction to invent one.
+
+#### What the device did prove
+
+Every preflight check green, including the OpenAI probe answering in 2,740 ms
+— which is the new `/v1/responses` request shape with a real function tool in
+it, against the live API. Then, in order: the volume moved and `wpctl` agreed,
+in English and in Mandarin; a birthday written, read back, and removed through
+the card with the entry surviving until somebody said yes; a reminder set,
+listed and cancelled without spending a maintenance run; a real Bitcoin quote
+carrying its own age; a photograph kept in the transfer folder and drawn
+*below* the sentence introducing it; "is there any music on this device" not
+starting a player and "can you bring up youtube" opening one; a call parked at
+the desk, declined, and nothing ringing; and long work handed over, streaming
+its checks into the same transcript.
+
+One line of the ownership matrix came for free with the browser test and is
+worth recording: hand control took the camera, `take_photo` refused by name
+rather than failing, and on close the journal reads *camera reclaimed from
+hand control* / *the assistant has it back*.
+
+#### Still not verified
+
+The fourteen phrases in §7 have not been said out loud — everything above went
+in as text, through the same door, but a microphone is a different thing from
+a POST. The rest of the ownership matrix (camera → call → camera, camera →
+game → camera) has not been re-run since the merge, music ducking has not been
+heard, and the screenshots in `docs/screenshots/` still show the old Talk page.
+
+Two things are known-wrong and left alone. The agent writes markdown — bold,
+bullets, backticks — and the panel renders it literally; it did that on the
+old agent console too. And asked to check the camera, the agent called it
+unhealthy on the strength of one `running degraded: camera unavailable` line
+that was hand control holding it during a browser test twenty minutes earlier.
+The camera is fine. A diagnosis drawn from a single log line, with no way to
+test the thing itself, is what that tool can do.
+
+The suite is **1,949 tests, 25 skipped, no failures** on Windows and on the Pi
+(where one pre-existing error, `test_yoga_coach3d.py` importing pytest, is not
+this work's).
