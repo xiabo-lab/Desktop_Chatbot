@@ -29,6 +29,7 @@ Stdlib only, like everything else root runs on this device.
 
 import base64
 import json
+import logging
 import os
 import re
 import shutil
@@ -37,6 +38,18 @@ import threading
 import time
 
 import policy
+
+#: The helper's logger, by the name `main.py` gives it, so a line from here is
+#: attributed to the helper in the journal rather than to a bare module name.
+#:
+#: This module called `log.warning` without defining `log` at all, and the one
+#: place it does so is the recovery path in `_pac_url` -- whose docstring
+#: promises "empty rather than fatal". So the exact situation it was written
+#: for, an installer that had not been re-run and no blocklist on disk, raised
+#: `NameError` out of the process that runs as root instead of degrading to a
+#: browser with no ad filtering. Nothing had ever run that branch, because on
+#: a working install the file is always there.
+log = logging.getLogger("aipi5-agent-helper")
 
 #: Chromium reads commands on fd 3 and writes replies on fd 4, each message a
 #: NUL-terminated JSON object.

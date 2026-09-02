@@ -375,3 +375,48 @@ class TestTheDispatchTable(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheBlocklistIsOptional(unittest.TestCase):
+    """`_pac_url` promises "empty rather than fatal": a browser with no ad
+    blocking is worth more than no browser, and an installer that has not been
+    re-run is a likely and recoverable state.
+
+    It did not keep that promise. The recovery path called `log.warning` in a
+    module that never imported `logging`, so the missing-file case it exists
+    for raised `NameError` -- out of the process that runs as root. Nothing
+    caught it because nothing had ever run that branch: on a working install
+    the file is always there. Found by ruff's `F821`.
+    """
+
+    def setUp(self):
+        import browser
+
+        self.browser = browser
+
+    def test_the_module_has_the_logger_it_calls(self):
+        self.assertTrue(hasattr(self.browser, "log"))
+
+    def test_a_missing_blocklist_is_empty_rather_than_fatal(self):
+        import policy as policy_mod
+
+        original = policy_mod.ADBLOCK_PAC
+        policy_mod.ADBLOCK_PAC = Path("/nonexistent/aipi5/adblock.pac")
+        self.addCleanup(setattr, policy_mod, "ADBLOCK_PAC", original)
+        with self.assertLogs("aipi5-agent-helper", level="WARNING") as caught:
+            self.assertEqual("", self.browser._pac_url())
+        self.assertIn("blocklist", caught.output[0])
+
+    def test_a_blocklist_that_is_there_becomes_a_data_url(self):
+        import tempfile
+
+        import policy as policy_mod
+
+        with tempfile.TemporaryDirectory() as folder:
+            pac = Path(folder) / "adblock.pac"
+            pac.write_bytes(b"function FindProxyForURL(){return 'DIRECT';}")
+            original = policy_mod.ADBLOCK_PAC
+            policy_mod.ADBLOCK_PAC = pac
+            self.addCleanup(setattr, policy_mod, "ADBLOCK_PAC", original)
+            self.assertTrue(self.browser._pac_url().startswith(
+                "data:application/x-ns-proxy-autoconfig;base64,"))

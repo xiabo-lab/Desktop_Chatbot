@@ -237,7 +237,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ── routes ───────────────────────────────────────────────────────
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         route = urlparse(self.path)
         if route.path in ("/", "/index.html", "/call"):
             self._page()
@@ -281,7 +281,7 @@ class _Handler(BaseHTTPRequestHandler):
         else:
             self._json({"error": "not found"}, 404)
 
-    def do_HEAD(self) -> None:  # noqa: N802
+    def do_HEAD(self) -> None:
         """Same headers as `GET`, no body — for the static routes only.
 
         Without this the stdlib answers every HEAD with `501 Unsupported
@@ -308,7 +308,7 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             self._head_only = False
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         """Read the body, then dispatch. The order is the whole point.
 
         **Every POST must consume its body, whatever the route does with it.**

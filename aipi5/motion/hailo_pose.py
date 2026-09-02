@@ -253,7 +253,6 @@ class HailoPose:
         if not self._ok:
             return PoseFrame(timestamp=captured_at)
 
-        np = self._np
         height, width = frame.shape[:2]
         try:
             began = time.monotonic()
@@ -278,7 +277,7 @@ class HailoPose:
                 iou_threshold=self.iou_threshold,
                 input_size=self._input_hw[0], quant=self._quant)
             decode_s = time.monotonic() - decoded
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             # Never raises into the pose loop. An accelerator that has stopped
             # answering must degrade to "nobody is there", which the game shows
             # as a lost player, rather than ending the session with a trace.

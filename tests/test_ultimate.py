@@ -703,7 +703,7 @@ class Hits(unittest.TestCase):
         under the threshold, so every hit after the first `land()` was silently
         refused and the test read as a scoring bug.
         """
-        for i in range(count):
+        for _ in range(count):
             self._now += ultimate.HAND_COOLDOWN_S * 0.6
             name = "left_wrist" if self._landed % 2 == 0 else "right_wrist"
             self._landed += 1

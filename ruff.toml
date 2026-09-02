@@ -1,0 +1,93 @@
+# Ruff's settings for AIPI5.
+#
+# **This file exists because its absence was the problem.** With no config,
+# `ruff check .` reports whatever the installed version's defaults happen to
+# be, and those changed: 0.16 answers 447 where the documented core set
+# (E4/E7/E9/F) answers 42. A number that moves with the tool rather than with
+# the code is not a quality signal, and chasing it is how a project ends up
+# rewriting working code to satisfy an opinion nobody chose.
+#
+# So the rules are named here, and each departure from the obvious is written
+# down with its reason.
+
+# A guard rail, not the house style. The code is hand-wrapped at about 79 and
+# should stay that way; this is the width past which a line is not wrapped but
+# runaway. The handful that sit between the two are a column-aligned table of
+# model output shapes in a docstring, and a debug log's format string -- both
+# less readable folded than left alone.
+line-length = 110
+
+extend-exclude = [
+    # Timestamped copies of source made before a deploy, kept on the device to
+    # answer "is this new code slower?". They are old code by definition and
+    # linting them reports faults that were fixed weeks ago -- this is the
+    # whole of the difference between the 460 the Pi reported and the 447 this
+    # machine did.
+    ".deploy-backups",
+    # Vendored or generated, and not ours to restyle.
+    "artwork",
+    "models",
+]
+
+[lint]
+select = [
+    "E",       # pycodestyle errors
+    "W",       # pycodestyle warnings
+    "F",       # pyflakes -- the ones that are usually real: undefined names,
+               # unused imports, unreachable code. `F821` found a `log.warning`
+               # in the root helper that had no `log`, on the recovery path of
+               # a function whose docstring promises "empty rather than fatal".
+    "B",       # flake8-bugbear
+    "BLE",     # `except Exception`. Kept because this codebase already
+               # annotates every deliberate one with `# noqa: BLE001` and a
+               # reason -- enabling the rule is what makes those annotations
+               # mean something, and makes a new undocumented one visible.
+               # Ruff does not flag a handler that calls `log.exception`, so
+               # the convention and the rule already agree in most places.
+    "N802",    # a function named in ScreamingCase. Not the rest of pep8-naming:
+               # `N818` would have every exception class renamed to end in
+               # `Error`, which is a public API change for a spelling.
+    "RUF100",  # a `noqa` that no longer suppresses anything
+]
+
+ignore = [
+    # `zip()` without `strict=`. Three sites in production, all of them
+    # pairing model output with a keypoint table in a frame loop. Tolerating a
+    # length mismatch there drops a joint; `strict=True` raises inside the
+    # game. Neither is obviously right, and choosing per site is a judgement
+    # about the model's output shape rather than a lint fix -- so it is a
+    # decision to make deliberately, not one to take from a default.
+    "B905",
+    # `raise X from err`. Worth having and not worth a mechanical sweep: the
+    # fourteen sites are nearly all in the helper, where exceptions are turned
+    # into sentences for a caller and the chain never reaches a human. Left as
+    # a real improvement somebody can make while reading the code.
+    "B904",
+    # A lambda assigned to a name. One site, in a build script, where the
+    # alternative is a `def` in the middle of an expression-shaped function.
+    "E731",
+]
+
+[lint.per-file-ignores]
+# Two things the tests do on purpose that this list would otherwise forbid:
+# `assertRaises(Exception)`, where the point is that *something* refuses, and
+# a bare attribute access, where the access is what raises.
+#
+# `F401` is deliberately **not** here. The tests do import for side effects --
+# `aia_bridge` puts AIA on `sys.path` -- but each of those already carries a
+# `# noqa: F401` saying so. Ignoring the rule for the whole directory would
+# make every one of those annotations meaningless, and `RUF100` would then
+# offer to delete the very comments that explain why the imports are there.
+"tests/*" = [
+    "B017",  # `assertRaises(Exception)` where the point is that *something*
+             # refuses, not which thing.
+    "B018",  # a bare attribute access, where the access is what raises.
+    "N802",  # a fake must be named after the thing it fakes: `isOpened` and
+             # `VideoWriter_fourcc` are OpenCV's spellings, and renaming them
+             # would make the fake stop standing in for it.
+]
+
+# Pose tables, curriculum data and one-off exports. Data shaped like Python:
+# aligned columns and one-line bodies are what make it readable, and both of
+# these rules are about prose code.
+"design/*" = ["E501", "E701"]

@@ -199,7 +199,7 @@ class BrowserLauncher(Plugin):
             return None
         try:
             return proxy if proxy.available() else None
-        except Exception:                                       # noqa: BLE001
+        except Exception:
             log.debug("could not ask the agent proxy for its socket",
                       exc_info=True)
             return None

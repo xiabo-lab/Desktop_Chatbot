@@ -58,8 +58,11 @@ class Detector(ABC):
     def available(self) -> bool:
         return True
 
-    def close(self) -> None:
-        pass
+    def close(self) -> None:  # noqa: B027
+        """Release anything held. Optional, and concrete on purpose:
+        a detector that holds nothing needs no teardown, and making this
+        abstract would force every subclass to write `pass`.
+        """
 
 
 class NullDetector(Detector):
@@ -211,7 +214,7 @@ class HailoDetector(Detector):
             log.info("Hailo person detection ready (%s, input %dx%d, "
                      "output %d floats)", model_path.name,
                      self._input_hw[0], self._input_hw[1], self._output_size)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             log.warning("could not bring up the Hailo accelerator: %s", exc)
             self.close()
 
@@ -236,7 +239,7 @@ class HailoDetector(Detector):
             self._configured.run([bindings], INFER_TIMEOUT_MS)
 
             return decode_nms_by_class(output, PERSON_CLASS, self.confidence)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             # Never raises into the loop: an accelerator that has stopped
             # answering must degrade to "no opinion", not end presence
             # detection for the session.
@@ -290,7 +293,7 @@ class CpuDetector(Detector):
                 str(model_path), providers=["CPUExecutionProvider"])
             self._input = self._session.get_inputs()[0].name
             log.info("CPU person detection ready (%s)", model_path.name)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             log.warning("could not load %s: %s", model_path, exc)
             self._session = None
 
@@ -307,7 +310,7 @@ class CpuDetector(Detector):
             batch = np.expand_dims(resized, axis=0).astype("uint8")
             outputs = self._session.run(None, {self._input: batch})
             return _best_person(outputs, self.confidence)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             log.warning("CPU inference failed: %s", exc)
             return False, 0.0
 

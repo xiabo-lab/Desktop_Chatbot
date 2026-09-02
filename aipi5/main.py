@@ -42,7 +42,7 @@ import time
 from contextlib import ExitStack
 from dataclasses import replace
 
-from aipi5.core import aia_bridge  # noqa: F401  — puts AIA on sys.path
+from aipi5.core import aia_bridge
 
 from aia.audio import wake as wake_mod
 from aia.audio.capture import Microphone
@@ -579,7 +579,7 @@ class Assistant:
             return
         try:
             speaker.say(text, "en", blocking=False)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.warning("a game could not be spoken for", exc_info=True)
 
     def start(self) -> bool:
@@ -755,7 +755,7 @@ class Assistant:
                 self.settings.call.enabled
                 and self.call.subscriptions.names()
                 and self.call.push.keys.available)
-        except Exception:
+        except Exception:  # noqa: BLE001
             snapshot["can_ring"] = False
         return snapshot
 
@@ -1172,7 +1172,7 @@ class Assistant:
                                     text=intent.command.describe("en"))
             if reply:
                 self.events.publish("assistant", "voice", text=reply)
-        except Exception:                            # noqa: BLE001
+        except Exception:
             log.exception("could not put the spoken command in the transcript")
 
     def publish_consent(self, pending) -> None:
@@ -1191,7 +1191,7 @@ class Assistant:
             self.events.publish("approval", "system", text=pending.question,
                                 meta={"token": pending.token,
                                       "detail": pending.detail})
-        except Exception:                            # noqa: BLE001
+        except Exception:
             log.exception("could not put the question on the page")
 
     def publish_consent_outcome(self, said: str, allowed: bool,
@@ -1228,7 +1228,7 @@ class Assistant:
         try:
             self.events.publish("tool", source if source in SOURCES else "system",
                                 tool=name, ok=bool(ok), text=said)
-        except Exception:                            # noqa: BLE001
+        except Exception:
             log.exception("could not put %s in the transcript", name)
 
     def publish_photo(self, saved: dict) -> None:
@@ -1290,7 +1290,7 @@ class Assistant:
             try:
                 self.events.publish("capture", source, capture=token,
                                     text=text, meta=meta)
-            except Exception:                        # noqa: BLE001
+            except Exception:
                 log.warning("could not publish a capture", exc_info=True)
 
     def _last_capture_at(self) -> float | None:
@@ -1452,7 +1452,7 @@ def main() -> int:
     opening = ExitStack()
     try:
         mic = opening.enter_context(Microphone(cfg.audio))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         log.error("cannot open the microphone: %s", exc)
         if "no input device matching" in str(exc):
             log.error("Plug the capture device back in — `arecord -l` should "

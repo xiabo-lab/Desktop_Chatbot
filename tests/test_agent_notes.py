@@ -145,7 +145,6 @@ class TestANoteCannotGrantPermission(Base):
 
         from aipi5.agent import approvals, tools
         for module in (approvals, tools):
-            source = inspect.getsource(module)
             with self.subTest(module=module.__name__):
                 # `tools` holds a reference so the tools can write one; what
                 # matters is that `_approve` never consults it.
@@ -210,8 +209,8 @@ class TestSkillsAreReadOnly(unittest.TestCase):
         for path in found:
             with self.subTest(skill=path.stem):
                 head = path.read_text(encoding="utf-8").splitlines()[:8]
-                self.assertTrue(any(l.lower().startswith("summary:")
-                                    for l in head),
+                self.assertTrue(any(line.lower().startswith("summary:")
+                                    for line in head),
                                 f"{path.name} has no summary: line")
 
 

@@ -452,7 +452,7 @@ class AgentService:
             skills=self._skill_list())
         try:
             self.loop.run(run_id, text, self._stop)
-        except Exception as exc:                    # noqa: BLE001
+        except Exception as exc:
             log.exception("run %s fell over", run_id)
             self._emit({"type": "agent.error", "run": run_id, "error": str(exc)})
             self._emit({"type": "agent.done", "run": run_id, "ok": False,

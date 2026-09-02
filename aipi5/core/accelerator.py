@@ -164,7 +164,7 @@ def identify() -> dict:
             }
         finally:
             device.release()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         # The likeliest cause by far is that this process already holds the
         # device through `acquire()` — the firmware allows the query, but a
         # driver-level open can still collide. Reported rather than raised.

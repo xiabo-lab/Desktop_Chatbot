@@ -191,7 +191,7 @@ class ConsentDesk:
         log.info("%r was approved", pending.what)
         try:
             outcome = pending.action()
-        except Exception as exc:                     # noqa: BLE001
+        except Exception as exc:
             log.exception("%r failed after it was approved", pending.what)
             self._finished(pending, allowed=True, ok=False)
             return {"ok": False, "allowed": True, "what": pending.what,
@@ -230,7 +230,7 @@ class ConsentDesk:
             return
         try:
             self.on_done(pending.said, allowed, ok)
-        except Exception:                            # noqa: BLE001
+        except Exception:
             log.exception("the consent listener failed")
 
     def waiting_for(self, turn: str) -> Pending | None:
@@ -255,5 +255,5 @@ class ConsentDesk:
             return
         try:
             self.on_change(pending)
-        except Exception:                            # noqa: BLE001
+        except Exception:
             log.exception("the consent listener failed")

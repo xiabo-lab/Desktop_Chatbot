@@ -349,7 +349,7 @@ class CameraLease:
                                    interpolation=cv2.INTER_AREA)
             ok, buffer = cv2.imencode(".jpg", image,
                                       [cv2.IMWRITE_JPEG_QUALITY, quality])
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             log.debug("game preview frame failed: %s", exc)
             return None
         return buffer.tobytes() if ok else None

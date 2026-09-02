@@ -469,7 +469,7 @@ class Camera:
             if frame is None:
                 capture.release()
                 return None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             # OpenCV raises cv2.error, which is a subclass of Exception and
             # nothing more specific worth catching, and a missing device can
             # also surface as a plain RuntimeError from the backend.
@@ -646,7 +646,7 @@ class Camera:
                 if not written:
                     log.warning("could not write the capture to %s", path)
                     return None
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 log.warning("capture failed: %s", exc)
                 return None
 
@@ -697,7 +697,7 @@ class Camera:
                 return None
             try:
                 frame = self._read()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 log.debug("could not read a detection frame: %s", exc)
                 return None
         if frame is None:
@@ -741,7 +741,7 @@ class Camera:
                                        interpolation=cv2.INTER_AREA)
                 ok, buffer = cv2.imencode(
                     ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, PREVIEW_QUALITY])
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 log.debug("preview frame failed: %s", exc)
                 return None
         return buffer.tobytes() if ok else None

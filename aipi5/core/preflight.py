@@ -288,7 +288,7 @@ def _describe_mic(mic) -> str:
     try:
         described = mic.describe()
         return f"{described.get('name', 'unknown')} (card {described.get('card')})"
-    except Exception:
+    except Exception:  # noqa: BLE001
         return "open"
 
 

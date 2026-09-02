@@ -92,7 +92,7 @@ class CallController:
         """Every paired phone that has registered for push, by name."""
         try:
             return list(self.subscriptions.names())
-        except Exception:                            # noqa: BLE001
+        except Exception:
             log.exception("could not read the paired phones")
             return []
 
@@ -134,7 +134,7 @@ class CallController:
         # but did not work" while the phone was ringing in somebody's pocket.
         try:
             ice = self.ice_servers("aipi5")
-        except Exception as exc:                     # noqa: BLE001
+        except Exception as exc:
             log.exception("could not work out how to connect the call")
             return CallOutcome(False, device=device,
                                detail=f"I could not set the call up ({exc})")

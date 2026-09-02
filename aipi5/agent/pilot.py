@@ -418,7 +418,7 @@ class HandPilot:
         """
         try:
             self._read(snapshot)
-        except Exception:                               # noqa: BLE001
+        except Exception:
             log.exception("hand control failed on a pose frame")
 
     def _read(self, snapshot) -> None:
@@ -462,7 +462,7 @@ class HandPilot:
             # where its owner was pointing a moment earlier.
             self._fist_for += 1
             if self._fist_for == FIST_FRAMES and self._can_click(now):
-                where = self._sent if self._sent[0] == self._sent[0] else None
+                where = None if math.isnan(self._sent[0]) else self._sent
                 if where is not None:
                     self._was_open = False        # the next needs a new open
                     self._clicked_at_time = now
@@ -610,7 +610,7 @@ class HandPilot:
                 with self._shape_lock:
                     self._shape_seen = shape
                     self._shape_at = self._clock()
-        except Exception:                             # noqa: BLE001
+        except Exception:
             # A thread that dies quietly is the failure this whole module keeps
             # relearning. It costs the palm gate, so it must be findable.
             log.exception("hand control: the finger reader stopped on an error")
@@ -737,7 +737,7 @@ class HandPilot:
         if now - self._move_at < MOVE_INTERVAL_S:
             return
         last_x, last_y = self._sent
-        if (last_x == last_x                       # not NaN
+        if (not math.isnan(last_x)
                 and math.hypot(x - last_x, y - last_y) < MOVE_MIN
                 and abs(hold - self._sent_hold) < 0.12):
             return

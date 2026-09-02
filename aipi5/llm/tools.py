@@ -718,7 +718,7 @@ class ToolBox:
             ok = False
         try:
             self.on_tool(name, ok, self._source, SAID.get(name, ""))
-        except Exception:                            # noqa: BLE001
+        except Exception:
             # A transcript row must not be able to end a turn.
             log.exception("could not put %s in the transcript", name)
         return answer
@@ -1130,7 +1130,7 @@ class ToolBox:
         if self.on_capture is not None:
             try:
                 self.on_capture(saved)
-            except Exception:                        # noqa: BLE001
+            except Exception:
                 log.warning("could not publish the photograph to the screen",
                             exc_info=True)
         return _ok(**{k: v for k, v in saved.items() if k != "token"})

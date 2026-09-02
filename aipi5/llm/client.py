@@ -249,7 +249,7 @@ class OpenAIClient:
                 tools=[PROBE_TOOL],
                 max_output_tokens=self.cfg.max_output_tokens,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self._probed = False
             detail = _explain(exc, self.model)
             log.error("model %r is not usable: %s", self.model, detail)
@@ -294,7 +294,7 @@ class OpenAIClient:
                     tools=offer,
                     max_output_tokens=self.cfg.max_output_tokens,
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 detail = _explain(exc, self.model)
                 log.warning("request failed: %s", detail)
                 return Reply(ok=False, error=detail,
@@ -378,7 +378,7 @@ class OpenAIClient:
                 model=self.cfg.vision,
                 timeout=self.cfg.vision_timeout_s,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             detail = _explain(exc, self.cfg.vision)
             log.warning("vision request failed: %s", detail)
             return Reply(ok=False, error=detail,
@@ -485,7 +485,7 @@ class OpenAIClient:
 
             try:
                 return self._client.responses.create(**kwargs)
-            except Exception as exc:                 # noqa: BLE001
+            except Exception as exc:
                 last = exc
                 if self._include and _rejects_include(exc):
                     # Negotiated the way the token parameters are, and for the

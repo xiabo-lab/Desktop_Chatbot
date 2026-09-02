@@ -37,8 +37,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import ops        # noqa: E402
-import policy     # noqa: E402
+import ops
+import policy
 
 log = logging.getLogger("aipi5-agent-helper")
 
@@ -229,7 +229,7 @@ def handle(conn, audit, agent_uid):
         _reply(conn, {"id": ident, "op": op, "ok": False, "code": "not_allowed",
                       "refused": str(exc), "ms": round(ms)})
         return
-    except Exception as exc:                        # noqa: BLE001 — never leak
+    except Exception as exc:
         ms = (time.monotonic() - started) * 1000.0
         log.exception("%s failed", op)
         audit.write({"kind": "op", "op": op, "run": run, "ok": False,
@@ -357,7 +357,7 @@ def main():
             continue
         try:
             handle(conn, audit, agent_uid)
-        except Exception:                           # noqa: BLE001
+        except Exception:
             log.exception("a connection failed outside the operation")
         finally:
             try:
@@ -368,7 +368,7 @@ def main():
     # Whatever else happens, the screen goes back to the assistant.
     try:
         ops.browser.shutdown()
-    except Exception:                               # noqa: BLE001
+    except Exception:
         log.exception("could not close the agent browser")
     audit.write({"kind": "stop", "op": ""})
     log.info("helper stopping")

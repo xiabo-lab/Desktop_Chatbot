@@ -13,6 +13,7 @@ what was evicted before anybody read it is counted rather than silently lost.
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 import unittest
@@ -285,7 +286,6 @@ def MAIN_PUBLISH(assistant, said, reply, intent):
     tested is the method's own logic, which touches nothing but `events`.
     """
     import ast
-    import textwrap
 
     source = (Path(__file__).resolve().parent.parent
               / "aipi5" / "main.py").read_text(encoding="utf-8")
@@ -333,8 +333,8 @@ class TestTheWireShape(unittest.TestCase):
     def test_an_event_cannot_be_edited_after_it_is_handed_out(self):
         log = EventLog()
         event = log.publish("assistant", "voice", text="hello")
-        with self.assertRaises(Exception):
-            event.text = "something else"       # frozen dataclass
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            event.text = "something else"
         self.assertIsInstance(event, AssistantEvent)
 
 

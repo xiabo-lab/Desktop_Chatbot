@@ -25,7 +25,6 @@ import http.client
 import io
 import json
 import os
-import shutil
 import tempfile
 import threading
 import time

@@ -177,14 +177,14 @@ class TestWithNothingBehindIt(unittest.TestCase):
         self.assertEqual(["user", "error"], [r["kind"] for r in rows])
 
     def test_delegating_with_no_agent_installed_says_so(self):
-        coordinator = Coordinator(events=EventLog(), respond=lambda t, l: "ok")
+        coordinator = Coordinator(events=EventLog(), respond=lambda text, language: "ok")
         answer = coordinator.delegate("find out why the screen restarted")
         self.assertFalse(answer["ok"])
         self.assertIn("not installed", answer["error"])
 
     def test_an_unreachable_agent_is_reported_rather_than_raised(self):
         coordinator = Coordinator(events=EventLog(), agent=DeadProxy(),
-                                  respond=lambda t, l: "ok")
+                                  respond=lambda text, language: "ok")
         answer = coordinator.delegate("look into it")
         self.assertFalse(answer["ok"])
         rows, _ = coordinator.collect(0)

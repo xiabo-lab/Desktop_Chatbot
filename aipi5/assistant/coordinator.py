@@ -283,7 +283,7 @@ class AgentBridge:
             return
         try:
             self.on_answer(text, run_id)
-        except Exception:                            # noqa: BLE001
+        except Exception:
             log.exception("could not hand over the finished answer")
 
     def _loop(self) -> None:
@@ -309,7 +309,7 @@ class AgentBridge:
             self._stop.wait(0)
             time.sleep(min(self.drain_s, 1.0))
             self.pump(timeout=0.0, report=False)
-        except Exception:                            # noqa: BLE001
+        except Exception:
             log.exception("the agent bridge stopped")
         finally:
             with self._lock:
@@ -422,7 +422,7 @@ class Coordinator:
             return "en"
         try:
             return str(self.detect(text)) or "en"
-        except Exception:                            # noqa: BLE001
+        except Exception:
             log.exception("could not tell what language that was")
             return "en"
 
@@ -462,7 +462,7 @@ class Coordinator:
                 # the model produces. See `ToolBox.begin_turn`.
                 try:
                     self.on_turn(text, source, turn_id)
-                except Exception:                    # noqa: BLE001
+                except Exception:
                     log.exception("preparing the turn failed")
             reply = self.respond(text, language)
             reply = str(reply or "").strip()
@@ -474,7 +474,7 @@ class Coordinator:
             if self.after_turn is not None:
                 try:
                     self.after_turn()
-                except Exception:                    # noqa: BLE001
+                except Exception:
                     log.exception("finishing the turn failed")
             self._turn.release()
 
@@ -570,7 +570,7 @@ class Coordinator:
             return
         try:
             self.speak(text, run_id)
-        except Exception:                            # noqa: BLE001
+        except Exception:
             log.exception("could not speak the delegated answer")
 
     # ── what a page needs to draw itself ────────────────────────────

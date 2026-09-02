@@ -211,7 +211,7 @@ class PickerClient:
         """Everything picked in one session, following `nextPageToken`."""
         found = Picked()
         token = ""
-        for page in range(MAX_PAGES):
+        for _page in range(MAX_PAGES):
             params = {"sessionId": session_id, "pageSize": PAGE_SIZE}
             if token:
                 params["pageToken"] = token

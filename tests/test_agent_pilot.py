@@ -15,7 +15,7 @@ import unittest
 
 from aipi5.agent.pilot import (CLICK_EVERY_S, DWELL_S, HandPilot, LOST_S,
                                REACH,
-                               SWEEP_SPEED, SWEEP_TRAVEL_X, SWEEP_TRAVEL_Y)
+                               SWEEP_TRAVEL_X, SWEEP_TRAVEL_Y)
 
 
 class Point:

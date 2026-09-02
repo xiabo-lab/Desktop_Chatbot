@@ -129,7 +129,7 @@ def version() -> str:
         from aia._version import __version__  # type: ignore[import-not-found]
 
         return str(__version__)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return "unknown"
 
 

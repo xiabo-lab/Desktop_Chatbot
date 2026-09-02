@@ -351,7 +351,7 @@ class YogaSession:
             return
         try:
             self.speak(text)
-        except Exception:  # noqa: BLE001 - a silent coach must not stop a class
+        except Exception:
             log.warning("the coach could not speak", exc_info=True)
 
     def _score_pose(self, now: float) -> None:

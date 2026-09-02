@@ -18,9 +18,8 @@ from aipi5.games.fruit_ninja.fruit import (BOMB, BY_NAME, HEART, ICE, KINDS,
 from aipi5.games.fruit_ninja.game import (BOMB_PENALTY_POINTS, MAX_LIVES,
                                           MIN_SLASH_SPEED, ROUND_SECONDS,
                                           SLOW_FACTOR, SLOW_SECONDS,
-                                          ULTIMATE_START_AT,
                                           ULTIMATE_WARNING_AT, HighScores,
-                                          Phase, Session, State)
+                                          Session, State)
 from aipi5.motion.pose_filter import Hand
 
 
@@ -168,7 +167,7 @@ class TestSlicing(unittest.TestCase):
         self.assertFalse(item.sliced)
 
     def test_a_fruit_cannot_be_sliced_twice(self):
-        item = self.place()
+        self.place()
         blade = screen_hand("right_wrist", 400, 400, 900, 400)
         self.session.tick(now=0.033, hands=[blade])
         self.session.tick(now=0.066, hands=[blade])

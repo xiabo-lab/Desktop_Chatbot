@@ -337,7 +337,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ── routes ───────────────────────────────────────────────────────
 
-    def do_GET(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler's spelling
+    def do_GET(self) -> None:
         route = urlparse(self.path)
         params = parse_qs(route.query)
 
@@ -412,7 +412,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._send(200, body, kind)
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         path = urlparse(self.path).path
         # Before anything reads a body or acts on one. Every route below is a
         # side effect, and a page on this device's own screen can send a

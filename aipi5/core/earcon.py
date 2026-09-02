@@ -125,7 +125,7 @@ def play() -> bool:
         sd.play(samples, RATE)
         _failed = False
         return True
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         # Once, not every wake. On a device whose only sink is HDMI this is
         # usually momentary contention, and a warning per utterance would be
         # the loudest thing in the journal.

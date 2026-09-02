@@ -189,12 +189,12 @@ class TestWeatherRetriesFasterAfterAFailure(unittest.TestCase):
         self.assistant.weather_available = False
         with self.assertLogs("aipi5.core.housekeeping", level="INFO") as first:
             self.keeper.tick(now=1000.0)
-        self.assertTrue(any("no weather right now" in l for l in first.output))
+        self.assertTrue(any("no weather right now" in line for line in first.output))
 
         self.assistant.weather_available = True
         with self.assertLogs("aipi5.core.housekeeping", level="INFO") as caught:
             self.keeper.tick(now=1000.0 + self.retry + 5)
-        self.assertTrue(any("available again" in l for l in caught.output))
+        self.assertTrue(any("available again" in line for line in caught.output))
 
     def test_a_working_startup_fetch_is_not_announced(self):
         # `start()` already fetched; the first tick merely confirms it. A line

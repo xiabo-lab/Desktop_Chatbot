@@ -150,7 +150,6 @@ def should_go_outside(weather: dict) -> dict:
     chance = current.get("precipitation_chance")
     if chance is None:
         chance = today.get("precipitation_chance", 0)
-    feels_c = to_celsius(current.get("feels_like", temperature or 0), unit)
     uv = current.get("uv_index")
 
     summary = "Temp: {}°{} | {} | Rain: {}%".format(

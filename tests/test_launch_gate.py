@@ -32,7 +32,7 @@ from aipi5.llm.tools import ToolBox, asks_to_open
 
 from aipi5.core import aia_bridge  # noqa: F401  — puts AIA on sys.path
 
-from aia.plugins.base import Result  # noqa: E402
+from aia.plugins.base import Result
 
 
 def parse(result: str) -> dict:
@@ -269,7 +269,7 @@ class TestTheCoordinatorSetsIt(unittest.TestCase):
 
         answers = []
         coordinator = Coordinator(events=EventLog(), on_turn=boom,
-                                  respond=lambda t, l: answers.append(t) or "ok")
+                                  respond=lambda text, language: answers.append(text) or "ok")
         self.assertTrue(coordinator.submit_voice("hello", "en")["ok"])
         self.assertEqual(["hello"], answers)
 

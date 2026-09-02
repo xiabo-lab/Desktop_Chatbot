@@ -426,7 +426,7 @@ class AgentToolBox:
             return _error(f"the arguments could not be read: {exc}")
         try:
             return handler(args)
-        except Exception as exc:                    # noqa: BLE001
+        except Exception as exc:
             log.exception("agent tool %s failed", name)
             return _error(f"{name} failed: {exc}")
 

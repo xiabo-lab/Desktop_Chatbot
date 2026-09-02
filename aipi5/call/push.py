@@ -130,7 +130,7 @@ class PushKeys:
                 "public": _urlsafe(raw),
                 "created": time.time(),
             }
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             log.error("could not generate VAPID keys: %s", exc)
             return None
 
@@ -296,7 +296,7 @@ class Pusher:
         # that understands what is actually on disk.
         try:
             signing_key = Vapid02.from_pem(keys["private"].encode("ascii"))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             log.error("the VAPID private key at %s cannot be loaded: %s",
                       self.keys.path, exc)
             return False, "the VAPID key could not be loaded"
@@ -323,7 +323,7 @@ class Pusher:
                 detail = "the phone's subscription has expired; re-register it"
             log.warning("could not ring %s: %s", device, detail)
             return False, detail
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             log.warning("could not ring %s: %s", device, exc)
             return False, f"{exc}"[:200]
 

@@ -26,9 +26,7 @@ drained; this is the one that is not, and the connection goes with it.
 from __future__ import annotations
 
 import logging
-import os
 import re
-from pathlib import Path
 from urllib.parse import quote
 
 from aipi5.files.multipart import (LimitedStream, MultipartError, MultipartReader,

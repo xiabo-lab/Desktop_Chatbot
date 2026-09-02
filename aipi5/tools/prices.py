@@ -264,5 +264,5 @@ class PriceService:
     def close(self) -> None:
         try:
             self._session.close()
-        except Exception:                            # noqa: BLE001
+        except Exception:
             log.debug("closing the price session failed", exc_info=True)
