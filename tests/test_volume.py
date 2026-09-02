@@ -246,3 +246,141 @@ class TestTheSetting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSayingItOutLoud(unittest.TestCase):
+    """"Turn the volume to thirty", said in the room, must move the room.
+
+    It did not. AIA's only volume command belongs to the Kodama-Lite plugin and
+    sets the *music player's* own level, and its phrases are the ones people
+    say for the house -- `volume {level}`, `音量调到{level}`. The fast router
+    matches before the model is ever asked, so every spoken volume request went
+    to the music player: nothing else in the house changed, and when the player
+    was not running the answer was "the music player is not running".
+
+    Typing the same words went elsewhere. The compose box does not run the
+    router, so it reached the model, and the model has `set_master_volume`.
+    Two ways of asking, two different volumes.
+    """
+
+    def setUp(self):
+        self.control = _Recording()
+        self.plugin = volume.SystemVolume(self.control)
+        self.command = next(c for c in self.plugin.commands()
+                            if c.name == "set_volume")
+
+    def run_it(self, said: str):
+        return self.command.handler(level=said)
+
+    def test_it_sets_the_shared_level(self):
+        self.assertTrue(self.run_it("30").ok)
+        self.assertEqual([30], self.control.asked)
+
+    def test_it_reads_back_what_the_device_took_and_not_what_was_asked(self):
+        """`VolumeControl.set` rolls back when it cannot persist, so a reply
+        built from the request would announce a change already undone."""
+        self.control.reports = 42          # what the sink says afterwards
+        answer = self.run_it("30")
+        self.assertIn("42", answer.say("en"))
+        self.assertNotIn("30", answer.say("en"))
+
+    def test_mandarin_numerals_arrive_as_words_and_are_understood(self):
+        """The router captures the argument as it was said, so this handler is
+        given 二十 rather than 20."""
+        self.assertTrue(self.run_it("二十").ok)
+        self.assertEqual([20], self.control.asked)
+
+    def test_a_percentage_in_either_language(self):
+        for said, wanted in (("fifty percent", 50), ("百分之五十", 50)):
+            with self.subTest(said=said):
+                self.control.asked.clear()
+                self.assertTrue(self.run_it(said).ok)
+                self.assertEqual([wanted], self.control.asked)
+
+    def test_a_request_with_no_number_asks_rather_than_guessing(self):
+        answer = self.run_it("")
+        self.assertFalse(answer.ok)
+        self.assertEqual([], self.control.asked)
+        self.assertIn("What volume", answer.say("en"))
+
+    def test_a_device_whose_audio_has_gone_says_so(self):
+        self.control.accepts = False
+        answer = self.run_it("30")
+        self.assertFalse(answer.ok)
+        self.assertIn("could not", answer.say("en"))
+
+    def test_the_reply_is_spoken(self):
+        """The confirmation arrives *at* the new level, which is the only
+        feedback somebody across the room gets."""
+        self.assertTrue(self.command.speaks)
+
+    def test_the_plugin_is_never_reported_as_not_running(self):
+        """`main.py` refuses a whole chain when a plugin says it is
+        unavailable, as "<description> is not currently running" -- which for a
+        volume control is untrue and unhelpful."""
+        self.assertTrue(self.plugin.available())
+
+
+class TestOnlyOneThingAnswersAVolumeRequest(unittest.TestCase):
+    """The router ranks candidates by score, and two commands with identical
+    phrases score identically -- so which volume changed would have come down
+    to the order `main.py` built a list in. Kodama's is withheld instead."""
+
+    def test_the_player_no_longer_offers_a_volume_command(self):
+        from aipi5.kodama.launcher import AIPI5Player
+
+        self.assertNotIn("volume",
+                         {c.name for c in AIPI5Player().commands()})
+
+    def test_everything_else_the_player_does_is_untouched(self):
+        from aia.plugins.kodama import KodamaLite
+        from aipi5.kodama.launcher import AIPI5Player
+
+        theirs = {c.name for c in KodamaLite().commands()}
+        ours = {c.name for c in AIPI5Player().commands()}
+        self.assertEqual({"volume"}, theirs - ours)
+        self.assertTrue(len(ours) > 5)
+
+    def test_the_phrases_kodama_used_now_reach_the_shared_level(self):
+        """The exact spellings that used to change the music player."""
+        spoken = {p for c in volume.SystemVolume(_Recording()).commands()
+                  for p in c.phrases["en"] + c.phrases["zh"]}
+        for phrase in ("volume {level}", "set volume to {level}",
+                       "turn the volume to {level}", "音量调到{level}",
+                       "把音量调到{level}", "声音调到{level}"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, spoken)
+
+    def test_the_registry_offers_exactly_one_volume_command(self):
+        """Asserted over `main.py`, which is where the two are put together."""
+        main = (Path(__file__).resolve().parent.parent
+                / "aipi5" / "main.py").read_text(encoding="utf-8")
+        self.assertIn("volume_control.SystemVolume(self.volume)", main)
+        self.assertIn("AIPI5Player()", main)
+        self.assertNotIn("self.player = KodamaLite()", main)
+
+
+class _Recording:
+    """`VolumeControl`'s two methods, and what was asked of them."""
+
+    def __init__(self, level: int = 30, accepts: bool = True):
+        self.level = level
+        self.accepts = accepts
+        self.asked: list[int] = []
+        #: What the sink reports afterwards, when that differs from what was
+        #: asked -- a rolled-back write, or a device that clamped it.
+        self.reports: int | None = None
+
+    def set(self, percent: int) -> bool:
+        self.asked.append(percent)
+        if not self.accepts:
+            return False
+        self.level = percent
+        return True
+
+    def describe(self) -> dict:
+        level = self.level if self.reports is None else self.reports
+        return {"level": level, "configured": self.level,
+                "available": self.accepts, "persistent": True,
+                "error": "" if self.accepts else "the sink is gone",
+                "controls": []}

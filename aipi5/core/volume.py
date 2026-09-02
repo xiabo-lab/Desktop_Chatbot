@@ -33,6 +33,11 @@ import subprocess
 import threading
 from pathlib import Path
 
+from aipi5.core import aia_bridge  # noqa: F401  — puts AIA on sys.path
+
+from aia.plugins.base import CommandSpec, Plugin, Result
+from aia.plugins.kodama import parse_level
+
 log = logging.getLogger(__name__)
 
 #: The sink to set. Not a card and not an index -- this follows whatever the
@@ -223,3 +228,99 @@ def _persist(path: Path, percent: int) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+class SystemVolume(Plugin):
+    """"Turn the volume down", said out loud, meaning the room.
+
+    The spoken half of the settings page's **All applications** slider, and it
+    did not exist. AIA's only volume command belongs to the Kodama-Lite
+    plugin -- `volume {level}`, `音量调到{level}` -- and it sets the *music
+    player's* own level. So the fast router, which matches before the model is
+    ever asked, sent every spoken volume request to the music player: it worked
+    while music was playing, changed nothing else in the house, and answered
+    "the music player is not running" when it was not. Reported exactly that
+    way: the volume only works for Kodama-Lite.
+
+    Typing the same sentence went somewhere else entirely. The compose box does
+    not run the router, so it reached the model and the model has
+    `set_master_volume`, which moves the PipeWire sink. Two ways of asking, two
+    different volumes, and nothing on screen to say which you had reached.
+
+    This is the one that matches the slider. `AIPI5Player` below drops Kodama's
+    command so there is no second answer to the same question -- see the note
+    there for why that is a removal rather than a tie-break.
+    """
+
+    name = "volume"
+    description = "The output level every application shares"
+
+    def __init__(self, control: "VolumeControl"):
+        self.control = control
+
+    def available(self) -> bool:
+        """Always. The same reasoning `KodamaLauncher` gives for its own.
+
+        `main.py` refuses a whole chain when any plugin in it reports itself
+        unavailable, and says so as "<description> is not currently running" --
+        which for a volume control is both untrue and unhelpful. A device whose
+        audio has gone is a device that should say *that*, from the handler,
+        where the real reason is known.
+        """
+        return True
+
+    def commands(self) -> list[CommandSpec]:
+        return [
+            CommandSpec(
+                name="set_volume",
+                description="Set the level every application shares, 0-100",
+                handler=self.set_level,
+                params={"level": "0-100"},
+                # Spoken, unlike Kodama's was. The confirmation arrives *at*
+                # the new level, which is the only feedback that tells somebody
+                # across the room that the thing they asked for happened -- and
+                # at zero, silence says it just as well.
+                speaks=True,
+                # Kodama's phrases, exactly, plus the two spellings people
+                # actually used on the device that it never had. Taken over
+                # rather than competed with: the router ranks by score and
+                # these would have tied, leaving which volume you changed to
+                # the order a list was built in.
+                phrases={
+                    "en": ("volume {level}", "set volume to {level}",
+                           "set the volume to {level}",
+                           "turn volume to {level}",
+                           "turn the volume to {level}",
+                           "change the volume to {level}"),
+                    "zh": ("音量{level}", "音量调到{level}", "把音量调到{level}",
+                           "声音调到{level}", "把声音调到{level}"),
+                },
+            ),
+        ]
+
+    def set_level(self, level: str) -> Result:
+        """Set the shared level, and read back what the device actually took.
+
+        `parse_level` is AIA's and handles "30", "thirty percent", "百分之三十"
+        and "三十" -- which is what the router hands over, because it captures
+        the words as they were said.
+        """
+        wanted = parse_level(level)
+        if wanted is None:
+            # Asked rather than guessed. A volume nobody said is not a volume.
+            return Result.failed("What volume?", "音量调到多少？")
+
+        if not self.control.set(wanted):
+            state = self.control.describe()
+            detail = state.get("error") or "the audio output did not accept it"
+            log.warning("volume: a spoken request for %d%% failed (%s)",
+                        wanted, detail)
+            return Result.failed(
+                "I could not change the volume just now.",
+                "我现在没能调整音量。")
+
+        # What the device has, not what was asked for. `VolumeControl.set`
+        # rolls back when it cannot persist, so repeating the request would be
+        # the assistant announcing a change that had already been undone.
+        actual = self.control.describe()["level"]
+        return Result.done(f"Volume {actual} percent.", f"音量百分之{actual}。")

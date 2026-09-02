@@ -57,7 +57,6 @@ from aia.audio.ducking import Ducker
 from aia.audio.vad import Endpointer
 from aia.core.state import Machine, State
 from aia.plugins.base import Registry, Result
-from aia.plugins.kodama import KodamaLite
 from aia.plugins.system import System
 from aia.router.fast import FastRouter
 from aia.stt import build as build_stt
@@ -88,7 +87,7 @@ from aipi5.photos.capture import PhotoCapture
 from aipi5.tools.prices import PriceService
 from aipi5.games.manager import GameManager
 from aipi5.games.voice import GameVoice
-from aipi5.kodama.launcher import KodamaLauncher
+from aipi5.kodama.launcher import AIPI5Player, KodamaLauncher
 from aipi5.llm import prompts
 from aipi5.llm.client import OpenAIClient
 from aipi5.llm.conversation import Conversation
@@ -232,8 +231,21 @@ class Assistant:
         self.audio = AudioPriority(self.ducker)
         self.machine = Machine(self.aia.target_latency_ms)
 
+        # The output level. Built here rather than with the other services
+        # below, because `SystemVolume` is one of the spoken commands and the
+        # registry is assembled a few lines down. Never fatal: a device that
+        # will not set its volume is slightly too loud, and that must not be a
+        # device that will not start.
+        self.volume = volume_control.VolumeControl(
+            settings.audio.volume, settings.source)
+        self.volume.apply_configured()
+
         # ── the command set: AIA's, plus a launcher and the games ────
-        self.player = KodamaLite()
+        #
+        # `AIPI5Player`, not `KodamaLite`: the same plugin without its `volume`
+        # command, which claimed the phrases people say for the *room* and set
+        # the music player's own level with them. See `aipi5/kodama/launcher.py`.
+        self.player = AIPI5Player()
         self.launcher = KodamaLauncher(settings.kodama, self.player)
         # Opening a website is a spoken command and not a tool, for the reason
         # `open_kodama` is: starting an application in somebody's living room
@@ -247,7 +259,12 @@ class Assistant:
         # drive, and that failure is silent from the room.
         self.browser = BrowserLauncher(
             settings.browser, agent=lambda: getattr(self, "agent", None))
-        plugins = [self.player, System()]
+        # `SystemVolume` first, and Kodama's `volume` withheld above, so
+        # that "turn the volume to thirty" has exactly one answer: the sink
+        # every application on this device meets at, which is the slider the
+        # settings page calls *All applications*.
+        plugins = [volume_control.SystemVolume(self.volume), self.player,
+                   System()]
         if settings.kodama.enabled:
             plugins.append(self.launcher)
         if settings.browser.enabled:
@@ -301,12 +318,6 @@ class Assistant:
         # The transfer folder, shared by both servers so a file the phone sent
         # is on the screen's list with nothing synchronising the two. Built
         # before the call server, which is handed it.
-        # The output level, before anything can speak. Never fatal:
-        # a device that will not set its volume is slightly too
-        # loud, and that must not be a device that will not start.
-        self.volume = volume_control.VolumeControl(
-            settings.audio.volume, settings.source)
-        self.volume.apply_configured()
         self.files = FileStore(settings.files)
         self.files.start()
         self.birthdays = BirthdayStore()

@@ -33,6 +33,7 @@ from pathlib import Path
 from aipi5.core import aia_bridge  # noqa: F401  — puts AIA on sys.path
 
 from aia.plugins.base import CommandSpec, Plugin, Result
+from aia.plugins.kodama import KodamaLite
 
 log = logging.getLogger(__name__)
 
@@ -339,3 +340,36 @@ class KodamaLauncher(Plugin):
                 },
             ),
         ]
+
+
+class AIPI5Player(KodamaLite):
+    """AIA's Kodama plugin, without its `volume` command.
+
+    **Because on this device there is one volume and it is not the player's.**
+    AIA's command claims the phrases people say for the room -- `volume
+    {level}`, `音量调到{level}`, `把音量调到{level}` -- and sets the music
+    player's own level with them. AIA is right to have it: there, the player is
+    the application. Here it is one of five things sharing a speaker, and the
+    settings page has a single slider labelled *All applications* that moves
+    the PipeWire sink they all meet at.
+
+    So the phrases go to `SystemVolume` in `aipi5/core/volume.py`, and this
+    class is what stops them being claimed twice. **A removal rather than a
+    tie-break**: the router ranks candidates by score and two commands with
+    identical phrases score identically, so which volume changed would have
+    come down to the order `main.py` happened to build a list in -- a coin
+    toss, decided somewhere that says nothing about volume.
+
+    Everything else AIA's plugin does -- play, pause, next, search, shuffle,
+    what is playing -- is untouched, and AIA's own copy is not modified.
+    """
+
+    #: Dropped here, offered nowhere. `commands()` feeds both the fast router
+    #: and the model's `execute_kodama_command`, so the player's own level is
+    #: no longer reachable by voice at all. That is the intended shape: one
+    #: volume, the one on the settings page. The player's own slider is still
+    #: in the player.
+    WITHHELD = frozenset({"volume"})
+
+    def commands(self) -> list[CommandSpec]:
+        return [c for c in super().commands() if c.name not in self.WITHHELD]
