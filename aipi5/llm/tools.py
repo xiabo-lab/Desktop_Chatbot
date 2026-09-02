@@ -616,6 +616,16 @@ class ToolBox:
             log.warning("model asked for unknown tool %r", name)
             return _error(f"there is no tool called {name}")
 
+        missing = self._missing_for(name)
+        if missing is not None:
+            # The tool was not in `schemas()`, so the model is guessing — which
+            # models do, especially at a name they were offered yesterday and
+            # is switched off today. Answered rather than raised: the generic
+            # catch below would turn an `AttributeError` on a None service into
+            # "failed unexpectedly", which is true and tells nobody anything.
+            log.info("model asked for %r, which is not available here", name)
+            return _error(missing)
+
         try:
             parsed = json.loads(arguments) if arguments else {}
             if not isinstance(parsed, dict):
@@ -633,6 +643,43 @@ class ToolBox:
             # error it can speak about, and the trace goes to the journal.
             log.exception("tool %s failed", name)
             return _error(f"{name} failed unexpectedly")
+
+    #: What each tool needs to exist, and what to say when it does not. The
+    #: sentence is for the model to turn into speech, so it says what the
+    #: device cannot do rather than which attribute was None.
+    _NEEDS = {
+        "get_weather": ("weather", "I cannot check the weather on this device"),
+        "get_local_news": ("news", "I cannot check the news on this device"),
+        "get_current_time": ("clock", "I cannot read the clock on this device"),
+        # The camera one needs both halves — a camera with no vision model
+        # behind it can take a picture nobody can describe.
+        "describe_camera_image": ("camera",
+                                  "there is no camera on this device"),
+        "get_master_volume": ("volume", "I cannot control the volume here"),
+        "set_master_volume": ("volume", "I cannot control the volume here"),
+        "list_birthdays": ("birthdays", "there is no calendar on this device"),
+        "save_birthday": ("birthdays", "there is no calendar on this device"),
+        "delete_birthday": ("birthdays", "there is no calendar on this device"),
+        "create_reminder": ("agent", "this device cannot set reminders"),
+        "read_reminders": ("agent", "this device cannot set reminders"),
+        "delete_reminder": ("agent", "this device cannot set reminders"),
+        "call_phone": ("calls", "this device cannot make calls"),
+        "take_photo": ("photos", "this device cannot keep photographs"),
+        "get_asset_price": ("prices", "I cannot look up prices on this device"),
+        "delegate_agent_task": ("delegate",
+                                "there is no maintenance agent on this device"),
+    }
+
+    def _missing_for(self, name: str) -> str | None:
+        needed = self._NEEDS.get(name)
+        if needed is None:
+            return None
+        attribute, sentence = needed
+        if getattr(self, attribute, None) is None:
+            return sentence
+        if name == "describe_camera_image" and self.vision is None:
+            return "I cannot describe what the camera sees on this device"
+        return None
 
     # ── the tools themselves ─────────────────────────────────────────
 

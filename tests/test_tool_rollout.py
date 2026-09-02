@@ -21,6 +21,7 @@ plainly can.
 
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 
@@ -99,10 +100,15 @@ class TestTheWiring(unittest.TestCase):
                      "open_known_app", "delegate_agent_task"):
             with self.subTest(tool=name):
                 self.assertNotIn(name, offered)
-                # Still in the dispatch table, and still refuses, because a
-                # model that invents a name must get a sentence rather than an
-                # exception — see `ToolBox.call`.
+                # Still in the dispatch table, and still refuses — with a
+                # sentence about what the device cannot do rather than an
+                # `AttributeError` on a service that is None. A model asked for
+                # a tool it was offered yesterday and is switched off today is
+                # the ordinary case, not the invented-name one.
                 self.assertIn(name, box._handlers)
+                answer = json.loads(box.call(name, "{}"))
+                self.assertFalse(answer["ok"])
+                self.assertNotIn("unexpectedly", answer["error"])
 
     def test_the_yaml_documents_the_order_and_lists_every_switch(self):
         yaml = (ROOT / "config" / "aipi5.yaml").read_text(encoding="utf-8")
