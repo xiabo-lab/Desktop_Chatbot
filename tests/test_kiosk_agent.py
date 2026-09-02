@@ -1,14 +1,19 @@
-"""The agent console on the touchscreen, and the microphone that feeds it.
+"""The one Assistant page, and the microphone that feeds it.
 
 Assertions on file text, following `tests/test_ui_assets.py` and
 `tests/test_agent_page.py`. Blunt, and right for the same reason it is right
 there: what these guard is invisible until somebody is standing in front of the
 panel with no way to type.
 
-The console was the phone's alone by decision — a chat surface on a screen with
-no keyboard is a chat surface nobody can use. What changed the decision is
-dictation, so the two are tested together: the page, the three routes behind
-it, and the rule that none of them goes near the microphone.
+The agent console was the phone's alone by decision — a chat surface on a
+screen with no keyboard is a chat surface nobody can use. What changed the
+decision is dictation. What changed it again is that a home screen with *Talk*
+and *Agent* on it made the person in the room choose which of two assistants
+their sentence was for, and there was never an honest answer: they are one
+assistant with two kinds of machinery behind it. So the console is not a
+destination any more — the rows land in the conversation feed — and what is
+tested here is that the merge kept every part of it, that the two polls behind
+one page do not multiply, and that none of it goes near the microphone.
 """
 
 from __future__ import annotations
@@ -29,40 +34,105 @@ class TestThePageIsWholeAndAddressable(unittest.TestCase):
     def setUpClass(cls):
         cls.page = PAGE.read_text(encoding="utf-8")
 
+    def _assistant(self) -> str:
+        """The Assistant view's markup, and nothing either side of it."""
+        block = self.page[self.page.index('<div id="page-assistant"'):]
+        return block[:block.index('<div id="page-call"')]
+
     def test_every_piece_the_script_addresses_is_in_the_markup(self):
         """`el()` on a missing id returns null, and the failure is a blank
         screen with a TypeError nobody on a kiosk can see."""
-        for ident in ("page-agent", "agent-log", "agent-state", "agent-text",
-                      "agent-send", "agent-mic", "agent-compose", "agent-stop",
-                      "agent-hint", "agent-dot", "agent-approval",
-                      "agent-approval-what", "agent-approval-detail",
-                      "agent-approval-warning", "agent-approve", "agent-deny"):
+        for ident in ("page-assistant", "assistant-feed", "assistant-listen",
+                      "agent-state", "agent-text", "agent-send", "agent-mic",
+                      "agent-compose", "agent-stop", "agent-hint", "agent-dot",
+                      "agent-approval", "agent-approval-what",
+                      "agent-approval-detail", "agent-approval-warning",
+                      "agent-approve", "agent-deny"):
             with self.subTest(id=ident):
                 self.assertIn(f'id="{ident}"', self.page)
+
+    def test_the_console_kept_every_control_it_had(self):
+        """The merge moved the console; it did not quietly drop half of it.
+
+        Each of these was a working control on `#page-agent`, and each is easy
+        to lose in a move — the page still renders without any one of them.
+        """
+        block = self._assistant()
+        for ident in ("agent-state", "agent-stop", "agent-approval",
+                      "agent-compose", "agent-text", "agent-mic", "agent-send",
+                      "agent-hint"):
+            with self.subTest(id=ident):
+                self.assertIn(f'id="{ident}"', block)
+
+    def test_there_is_no_separate_agent_page_left(self):
+        """The whole point of the merge. A `#page-agent` still in the document
+        would be a second assistant reachable from the address bar."""
+        self.assertNotIn('id="page-agent"', self.page)
+        self.assertNotIn('data-page="agent"', self.page)
+        self.assertNotIn('id="agent-log"', self.page)
 
     def test_it_is_a_view_in_the_one_document(self):
         """Not a window. On a kiosk with no title bars a second window is a
         place nobody can get back from — the rule the whole page is built on.
         """
-        self.assertRegex(self.page, r'<div id="page-agent" class="page">')
-        block = self.page[self.page.index('<div id="page-agent"'):]
-        block = block[:block.index("</div>\n\n<!--")]
-        self.assertIn("data-back", block)
+        self.assertRegex(self.page, r'<div id="page-assistant" class="page">')
+        self.assertIn("data-back", self._assistant())
 
-    def test_it_is_reachable_from_the_home_screen(self):
-        self.assertIn('<button data-page="agent">', self.page)
+    def test_it_is_the_only_place_the_home_screen_offers(self):
+        block = self.page[self.page.index('<div id="page-main"'):]
+        block = block[:block.index('<div id="page-assistant"')]
+        self.assertIn('data-action="talk"', block)
+        self.assertIn(">Assistant<", block)
+        self.assertNotIn(">Talk<", block)
+        self.assertNotIn(">Agent<", block)
+
+    def test_the_old_route_still_opens_it(self):
+        """`#talk` is in bookmarks, in the README, and in the `ssh -L` habit of
+        anybody who has ever worked on this device."""
+        self.assertIn('const PAGE_ALIAS = { talk: "assistant"', self.page)
+        alias = self.page[self.page.index("function fromHash"):]
+        alias = alias[:alias.index("window.addEventListener")]
+        self.assertIn("PAGE_ALIAS[page]", alias)
 
     def test_it_is_started_and_stopped_with_the_page(self):
         # Every page that holds something open is torn down in `show()`, and a
         # long poll that outlived its page would be a request per screen the
         # person visited afterwards.
-        self.assertIn('if (page === "agent") startAgent();', self.page)
-        self.assertIn('if (previous === "agent") stopAgent();', self.page)
+        self.assertIn('if (page === "assistant") startAgent();', self.page)
+        self.assertIn('if (previous === "assistant") stopAgent();', self.page)
+
+    def test_leaving_and_returning_does_not_start_a_second_poll(self):
+        """`startAgent` is called on every entry and the loop is long-lived.
+
+        Without the guard, six visits to this page is six overlapping long
+        polls against the same cursor, each drawing the same rows — which is
+        the transcript duplicating itself, on a device where the fix is to
+        reboot the panel.
+        """
+        body = self.page[self.page.index("async function agentPoll"):]
+        body = body[:body.index("const sleep =")]
+        self.assertIn("if (agentPolling) return;", body)
+        self.assertIn("agentPolling = false;", body)
+
+    def test_delegated_work_lands_in_the_conversation(self):
+        """One transcript. A run's rows go where the spoken turns go, or the
+        merge is a page with two logs stacked on it."""
+        for function in ("function agentRow", "function agentBubble"):
+            body = self.page[self.page.index(function):]
+            body = body[:body.index("\n}")]
+            with self.subTest(function=function):
+                self.assertIn('el("assistant-feed")', body)
 
     def test_the_transcript_is_never_drawn_with_innerhtml(self):
         """Half of what is drawn here is a log line off this device, and a log
-        line is somewhere a string somebody else wrote can end up."""
-        console = self.page[self.page.index("function drawAgentEvent"):]
+        line is somewhere a string somebody else wrote can end up.
+
+        `agentBubble` is in the window now as well as `drawAgentEvent`: it
+        draws the "You"/"Assistant" label that `addMessage` builds with
+        `innerHTML` from two literals, and it must keep building it from a text
+        node instead — the text beside it is not a literal.
+        """
+        console = self.page[self.page.index("function agentRow"):]
         console = console[:console.index("async function agentSay")]
         self.assertNotIn("innerHTML", console)
         self.assertIn("textContent", console)
@@ -72,6 +142,16 @@ class TestThePageIsWholeAndAddressable(unittest.TestCase):
         nobody selects text on, and it makes a textarea unusable."""
         block = self.page[self.page.index("#agent-text {"):]
         self.assertIn("user-select: text", block[:block.index("}")])
+
+    def test_the_two_microphones_are_told_apart(self):
+        """*Listen* starts a turn and the assistant answers out loud; *Dictate*
+        only fills the box in. Both were 🎙 for one draft, which made the page
+        ask a question it had no way to answer."""
+        block = self._assistant()
+        self.assertIn('id="agent-mic" type="button"><span class="glyph">✎</span>'
+                      '<span class="label">Dictate</span>', block)
+        self.assertIn('id="assistant-listen"><span class="glyph">🎙</span>'
+                      '<span class="label">Listen</span>', block)
 
     def test_a_hidden_button_is_actually_hidden(self):
         """`hidden` loses to the page's own `button { display: flex }`.

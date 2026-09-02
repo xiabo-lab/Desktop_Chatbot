@@ -55,7 +55,7 @@ out loud. `REPORT.md` §25 has the full list.
 
 The panel is 1280×800, and every destination is a **view in one document**
 rather than a window — on a kiosk with no title bars and no taskbar, a second
-window is a place nobody can get back from. Each of the nine buttons then
+window is a place nobody can get back from. Each of the eight buttons then
 ignores itself for ten seconds, because a finger on a capacitive panel produces
 repeats and every one of these actions takes seconds of real work.
 
@@ -64,13 +64,21 @@ Every image below is a native 1280×800 capture from the running device.
 ![Home](docs/screenshots/main.png)
 
 **Home** — the eight destinations, the conversation so far above them, and the
-current conditions in the corner. The conversation is the same one the Talk page
-shows; the assistant answers in whichever language it was asked in.
+current conditions in the corner. The conversation is the same one the Assistant
+page shows; the assistant answers in whichever language it was asked in.
+
+There used to be nine, and the ninth was *Agent*. It is gone because it was
+never a different assistant — "why did the screen go blank last night" and "set
+the volume to thirty" are the same request made of the same thing, and only the
+machinery behind them differs. Two buttons asked the person in the room to know
+which, and there was no honest answer to give them. The agent's transcript,
+its compose box and its approval card are on the Assistant page now; the two
+Linux services and the root boundary between them are exactly where they were.
 
 | | |
 |---|---|
-| ![Talk](docs/screenshots/talk.png) | ![Weather](docs/screenshots/weather.png) |
-| **Talk** — the turn-by-turn conversation. *Listen* starts a turn as though the wake word had fired, and *What do you see?* sends a frame to the vision model. English and Mandarin in the same thread, because the language follows the speaker rather than a setting. | **Weather** — current conditions, an hourly strip, seven days, the sun's path through the day, and whether to go outside. That last one is decided by **rules rather than a model**, so the page renders the instant it opens instead of waiting on a request. |
+| ![Assistant](docs/screenshots/talk.png) | ![Weather](docs/screenshots/weather.png) |
+| **Assistant** — one conversation and one identity. *Listen* starts a turn as though the wake word had fired, *What do you see?* sends a frame to the vision model, and the box underneath types or dictates to the same assistant — a long investigation is delegated to `aipi5-agent.service` and its checks stream into this transcript as dim lines between the answers. English and Mandarin in the same thread, because the language follows the speaker rather than a setting. `#talk` still opens it. | **Weather** — current conditions, an hourly strip, seven days, the sun's path through the day, and whether to go outside. That last one is decided by **rules rather than a model**, so the page renders the instant it opens instead of waiting on a request. |
 | ![Calendar](docs/screenshots/calendar.png) | ![Game](docs/screenshots/game.png) |
 | **Calendar** — Gregorian and Chinese lunar dates in the same cell, and **no network at all**: every conversion runs through a bundled table. U.S. moving holidays are rule-based, Chinese ones follow their lunar dates, and 清明节 follows the solar term. Holidays in red, birthdays in green. | **Game** — four AI Motion games played by moving in front of the camera, with the pose estimation running on the AI HAT+ 2. Fruit Ninja, Yoga Coach and Boxing are playable; best scores persist per game. Nothing in the motion layer knows what a fruit is. |
 | ![Music](docs/screenshots/music.png) | ![Files](docs/screenshots/files.png) |
@@ -166,13 +174,12 @@ Plus:
 
 | press | what opens | what it says |
 |---|---|---|
-| **Talk** | the conversation, and nothing else on it | starts listening, as the wake word does |
+| **Assistant** | the one conversation: spoken turns, typed or dictated requests, delegated work, and the approval card | starts listening, as the wake word does |
 | **Call** | the remote video call page, full screen | nothing — the call has its own two directions, below |
 | **Camera** | a live preview, with the answer drawn over the picture and faded ten seconds after the speaking stops | what it sees |
 | **Weather** | the dashboard: now, hourly, seven days, sun, and whether to go out | the sky, the range, and at most one thing worth acting on |
 | **Music** | Kodama-Lite itself | whether it opened |
 | **Files** | the transfer folder, to send and fetch | nothing — it is a folder, not a turn |
-| **Agent** | the agent console — ask it about this device, watch it check, approve what it wants to change | nothing — it answers in writing. The microphone button dictates into it, because the panel has no keyboard |
 | **Settings** | the screensaver: the schedule, the Google account, which photos, how long each stays up | nothing — it configures, it does not ask |
 
 The news **page** was removed: it duplicated on a screen what the assistant

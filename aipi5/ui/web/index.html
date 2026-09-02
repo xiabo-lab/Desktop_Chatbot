@@ -1902,58 +1902,44 @@
   #sd-hint { margin-top: 54px; font-size: 30px; color: #7c8798; }
   #shutdown.done #sd-count { font-size: 150px; color: var(--ink-dim); }
 
-  /* ── the agent console ───────────────────────────────────────────
-     The same console the phone has, on the screen it is standing on.
+  /* ── the agent's half of the Assistant page ──────────────────────
+     There is one assistant, and one place to talk to it. The console used to
+     be a destination of its own — the phone's alone at first, then the
+     panel's too once dictation existed — and a home screen carrying both
+     *Talk* and *Agent* asked the person in the room to know which of two
+     assistants their sentence was for. Nobody did, and there was no answer to
+     give them: "why did the screen go blank last night" and "set the volume
+     to thirty" are the same request made of the same thing, and only the
+     machinery behind them differs.
 
-     It was the phone's alone by decision rather than by accident, and what
-     changed the decision is the microphone button below: this panel has no
-     keyboard, `squeekboard` is installed but a page that autofocuses an input
-     raised nothing on this compositor, and there is no pinyin IME on it
-     either — so half of what gets said in this house could not have been
-     typed. The device already has a bilingual recogniser three feet from the
-     person's face. See `aipi5/ui/dictation.py`.
+     So the transcript below is one feed. What is kept from the console is the
+     *row* rather than the bubble: a run is a question, a dozen checks and an
+     answer, and a bubble per check would be twelve of them. A check is one dim
+     line in the transcript's own colour; the question and the answer are
+     ordinary conversation and are drawn as the bubbles everything else uses.
 
-     Rows rather than the chat bubbles the assistant's own feed uses. A run is
-     a question, a dozen checks and an answer, and bubbles for the checks
-     would be twelve of them; these are one line each, indented, in the
-     transcript's own colour rather than a speaker's. */
-  #agent-log {
-    flex: 1; margin: 14px 0; overflow-y: auto; padding-right: 8px;
-    display: flex; flex-direction: column; gap: 9px;
-  }
-  #agent-log::-webkit-scrollbar { width: 12px; }
-  #agent-log::-webkit-scrollbar-thumb { background: var(--panel-edge); border-radius: 6px; }
-
-  #agent-log .ev {
+     The compose row underneath stays, because this panel has no keyboard.
+     `squeekboard` is installed but a page that autofocuses an input raised
+     nothing on this compositor, and there is no pinyin IME on it either — so
+     half of what gets said in this house could not have been typed. The
+     device already has a bilingual recogniser three feet from the person's
+     face. See `aipi5/ui/dictation.py`. */
+  .feed .ev {
     font-size: 21px; line-height: 1.4; word-wrap: break-word;
     padding: 10px 16px; border-radius: 12px; max-width: 92%;
   }
-  #agent-log .ev.you {
-    align-self: flex-end; background: var(--user); max-width: 78%;
-    border-bottom-right-radius: 4px;
-  }
-  #agent-log .ev.say {
-    align-self: flex-start; background: var(--aia); max-width: 88%;
-    border-bottom-left-radius: 4px;
-  }
   /* A check the agent made. Dim and small: these are the working, and the
      answer is what somebody came to read. */
-  #agent-log .ev.tool {
+  .feed .ev.tool {
     align-self: flex-start; color: var(--ink-dim); font-size: 18px;
     padding: 2px 16px; background: none;
   }
-  #agent-log .ev.tool b { color: var(--accent); margin-right: 8px; font-weight: 600; }
-  #agent-log .ev.done {
+  .feed .ev.tool b { color: var(--accent); margin-right: 8px; font-weight: 600; }
+  .feed .ev.done {
     align-self: center; color: var(--ink-faint); font-size: 16px;
     padding: 2px 16px; background: none;
   }
-  #agent-log .ev.bad { align-self: flex-start; background: #2a1b1e; color: var(--danger); }
-
-  #agent-log .empty {
-    margin: auto; text-align: center; color: var(--ink-faint); font-size: 22px;
-    line-height: 1.6;
-  }
-  #agent-log .empty span { display: block; font-size: 30px; margin-bottom: 10px; }
+  .feed .ev.bad { align-self: flex-start; background: #2a1b1e; color: var(--danger); }
 
   /* What the agent is doing, while it is doing it. In the header rather than
      in the transcript: it is replaced several times a run, and a row per
@@ -1974,6 +1960,11 @@
     border-radius: 14px; padding: 16px 20px; margin-bottom: 12px;
   }
   #agent-approval[hidden] { display: none; }
+  /* It replaces the transcript rather than squeezing it. A card, a compose
+     row, a status line and two buttons do not all fit under a feed worth
+     reading on 800 px of panel, and an approval is the one moment where the
+     question matters more than the conversation behind it. */
+  #page-assistant:has(#agent-approval:not([hidden])) .feed { display: none; }
   #agent-approval-what { font-size: 23px; font-weight: 600; line-height: 1.35; }
   #agent-approval-detail {
     margin: 10px 0 0; padding: 10px 12px; background: #0b0e13;
@@ -1991,7 +1982,7 @@
      how text gets in here, and a USB keyboard is still a keyboard. */
   #agent-compose { display: flex; gap: 14px; align-items: stretch; flex: 0 0 auto; }
   #agent-text {
-    flex: 1; min-height: 88px; max-height: 88px; resize: none;
+    flex: 1; min-height: 76px; max-height: 76px; resize: none;
     padding: 14px 18px; border-radius: 14px;
     border: 1px solid var(--panel-edge); background: var(--panel);
     color: var(--ink); font-family: inherit; font-size: 23px; line-height: 1.35;
@@ -2000,7 +1991,7 @@
   }
   #agent-text:focus { outline: none; border-color: var(--accent); }
   #agent-text::placeholder { color: var(--ink-faint); }
-  #agent-compose button { flex: 0 0 auto; width: 120px; height: 88px; }
+  #agent-compose button { flex: 0 0 auto; width: 120px; height: 76px; }
   /* Listening. The button is the only thing on screen that changes while
      somebody is speaking into it, so it has to be unmistakable. */
   #agent-mic.listening {
@@ -2008,13 +1999,21 @@
     animation: pulse 1.1s ease-in-out infinite;
   }
   #agent-send { background: #16324e; border-color: var(--accent); width: 96px; }
+  /* The compose row and the two action buttons share this page now, so the
+     buttons give up a little height to make room. 84 px is still a comfortable
+     thumb target on a capacitive panel, and the transcript keeps the rest. */
+  #page-assistant .buttons { margin-top: 10px; }
+  #page-assistant .buttons button { height: 84px; }
   #agent-hint {
     flex: 0 0 auto; margin-top: 8px; font-size: 16px; color: var(--ink-faint);
     min-height: 20px;
   }
 
-  /* The dot on the Agent button on the home screen: a run still going, or a
-     question waiting for an answer. */
+  /* The dot on the Assistant button on the home screen: a run still going, or
+     a question waiting for an answer. It moved onto that button when the Agent
+     button went away rather than going away with it — a question the agent is
+     blocked on is the one thing here that somebody looking at the weather
+     needs to be told about. */
   #agent-dot {
     position: absolute; top: 12px; right: 14px;
     width: 12px; height: 12px; border-radius: 50%; background: var(--accent);
@@ -2034,7 +2033,7 @@
   <div class="degraded" data-degraded></div>
 
   <div class="feed" id="main-feed">
-    <div class="empty"><span>小艾同学</span>Say the wake word, or tap a button below</div>
+    <div class="empty"><span>小爱同学</span>Say the wake word, or tap a button below</div>
   </div>
 
   <div class="status" data-status>
@@ -2043,7 +2042,14 @@
   </div>
 
   <div class="buttons">
-    <button data-action="talk"><span class="glyph">💬</span><span class="label">Talk</span>
+    <!-- One assistant, one destination. This was *Talk*, and *Agent* was a
+         second button four along from it; the two were one thing wearing two
+         names, and which of them a sentence belonged to was a question nobody
+         standing in front of the panel could answer. The dot in the corner is
+         the Agent button's, kept: a run still going, or a question the agent
+         is blocked on. -->
+    <button data-action="talk"><span class="glyph">💬</span><span class="label">Assistant</span>
+      <span id="agent-dot" hidden></span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
     <button data-action="call"><span class="glyph">📞</span><span class="label">Call</span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
@@ -2069,8 +2075,6 @@
          not work, there is nothing for the voice loop to do about it, and
          nothing here may be rate limited into looking broken. -->
     <button data-page="files"><span class="glyph">⇅</span><span class="label">Files</span></button>
-    <button data-page="agent"><span class="glyph">🧠</span><span class="label">Agent</span>
-      <span id="agent-dot" hidden></span></button>
     <!-- Also navigation only, and for the same reason. What is on it is the
          screensaver: the schedule, the Google account behind the slideshow,
          and how long each photograph stays up — section 22. -->
@@ -2078,55 +2082,44 @@
   </div>
 </div>
 
-<!-- ── talk ────────────────────────────────────────────────────── -->
-<div id="page-talk" class="page">
+<!-- ── the assistant ───────────────────────────────────────────────
+     One page and one identity. It was *Talk*, and the agent console was a
+     separate destination beside it; what merged them is that they were never
+     two things. The wake word, the Listen button, the compose box and the
+     phone all end up asking the same assistant, and the difference between a
+     question answered in the voice loop and one delegated to
+     `aipi5-agent.service` is machinery — not something to make somebody
+     standing in a kitchen choose between.
+
+     `#talk` still opens this page; see `PAGE_ALIAS`. The processes are
+     untouched: everything the agent knows still lives in
+     `aipi5-agent.service`, so this page holds a cursor and nothing else — the
+     assistant can restart underneath it, and the next poll asks from where it
+     left off and is handed what it missed. -->
+<div id="page-assistant" class="page">
   <header>
     <button class="back" data-back><span class="glyph">‹</span> Back</button>
-    <h1>TALK</h1>
+    <h1>ASSISTANT</h1>
+    <!-- What a delegated run is doing, while it is doing it. In the header
+         rather than in the transcript: it is replaced several times a run,
+         and a row per replacement is a transcript nobody can read. -->
+    <div id="agent-state"></div>
+    <button class="back" id="agent-stop" hidden>Stop</button>
     <div class="headline-weather" data-weather-headline></div>
   </header>
 
   <div class="degraded" data-degraded></div>
 
-  <div class="feed" id="talk-feed">
-    <div class="empty"><span>小艾同学</span>Say the wake word, or tap Listen</div>
+  <!-- One transcript. Spoken turns arrive through `/api/feed`, delegated work
+       through `/api/agent/poll`, and both are drawn here — see `addMessage`
+       and `drawAgentEvent`. -->
+  <div class="feed" id="assistant-feed">
+    <div class="empty"><span>小爱同学</span>Say the wake word, tap Listen, or type below</div>
   </div>
 
   <div class="status" data-status>
     <div class="dot"></div>
     <div data-status-text>Ready</div>
-  </div>
-
-  <div class="buttons">
-    <button id="talk-listen"><span class="glyph">🎙</span><span class="label">Listen</span></button>
-    <!-- The camera, where it now lives. `data-action="camera"` rather than a
-         handler of its own, so it shares the one server-side cooldown with
-         every other way of asking — see `press`. -->
-    <button data-action="camera"><span class="glyph">👁</span><span class="label">What do you see?</span>
-      <span class="cooldown"></span><span class="cooldown-bar"></span></button>
-  </div>
-</div>
-
-<!-- ── agent ───────────────────────────────────────────────────────
-     The agent console, on the screen as well as on the phone.
-
-     It was the phone's alone by decision — a chat surface on a panel with no
-     keyboard is a chat surface nobody can use — and the microphone button in
-     the compose row is what changed that. Everything the agent knows still
-     lives in `aipi5-agent.service`, so this page holds a cursor and nothing
-     else: the assistant can restart underneath it, and the poll comes back
-     asking from where it left off and is handed what it missed. -->
-<div id="page-agent" class="page">
-  <header>
-    <button class="back" data-back><span class="glyph">‹</span> Back</button>
-    <h1>AGENT</h1>
-    <div id="agent-state"></div>
-    <button class="back" id="agent-stop" hidden>Stop</button>
-  </header>
-
-  <div id="agent-log">
-    <div class="empty"><span>🧠</span>Ask it about this device.<br>
-      Press the microphone and say what you want.</div>
   </div>
 
   <!-- Above the compose row on purpose: a question about a change to this
@@ -2141,13 +2134,27 @@
     </div>
   </div>
 
+  <!-- Dictate rather than a second microphone. *Listen* below starts a turn
+       as though the wake word had fired and the assistant answers out loud;
+       this one only fills the box in, and nothing is sent until ↑ is pressed.
+       They were both 🎙 for one draft, which made the page ask a question it
+       had no way to answer. -->
   <form id="agent-compose" autocomplete="off">
     <textarea id="agent-text" rows="1" enterkeyhint="send"
-      placeholder="Press the microphone and speak…"></textarea>
-    <button id="agent-mic" type="button"><span class="glyph">🎙</span><span class="label">Speak</span></button>
+      placeholder="Type, or press Dictate and speak…"></textarea>
+    <button id="agent-mic" type="button"><span class="glyph">✎</span><span class="label">Dictate</span></button>
     <button id="agent-send" type="submit"><span class="glyph">↑</span></button>
   </form>
   <div id="agent-hint"></div>
+
+  <div class="buttons">
+    <button id="assistant-listen"><span class="glyph">🎙</span><span class="label">Listen</span></button>
+    <!-- The camera, where it now lives. `data-action="camera"` rather than a
+         handler of its own, so it shares the one server-side cooldown with
+         every other way of asking — see `press`. -->
+    <button data-action="camera"><span class="glyph">👁</span><span class="label">What do you see?</span>
+      <span class="cooldown"></span><span class="cooldown-bar"></span></button>
+  </div>
 </div>
 
 <!-- ── call ────────────────────────────────────────────────────────
@@ -2887,7 +2894,7 @@
     <div id="ss-stale"></div>
   </div>
 
-  <div id="ss-hint">Touch the screen or say 小艾同学</div>
+  <div id="ss-hint">Touch the screen or say 小爱同学</div>
 </div>
 
 <!-- Shown only while the window is not covering the screen; see
@@ -2939,11 +2946,19 @@ let currentPage = "main";
 // it; the report itself is still there and is asked for out loud. A button may
 // act without navigating — `press` reads this table and simply finds nothing —
 // which is what any future button that speaks rather than shows should do.
-// **`camera` opens Talk.** The camera page is no longer where the answer
-// appears, so pressing "What do you see?" from anywhere lands on the
+// **`camera` opens the Assistant.** The camera page is no longer where the
+// answer appears, so pressing "What do you see?" from anywhere lands on the
 // conversation — where the picture and the sentence about it both arrive.
-const PAGE_OF = { talk: "talk", call: "call", camera: "talk",
+// The action is still named `talk`: it is one of the fixed names the voice
+// loop accepts (`aipi5/main.py`), and renaming a wire protocol to match a
+// heading is a migration for nothing.
+const PAGE_OF = { talk: "assistant", call: "call", camera: "assistant",
                   weather: "weather" };
+
+// Old names for pages that still exist. `#talk` is in bookmarks, in the
+// README, and in the `ssh -L` habit of anybody who has worked on this device;
+// it costs one entry to keep it opening the page it always opened.
+const PAGE_ALIAS = { talk: "assistant", agent: "assistant" };
 
 function show(page) {
   // Idempotent on purpose: this is what "prevent duplicate instances of the
@@ -2981,7 +2996,7 @@ function show(page) {
   // exactly as the call page does. Section 30.
   if (previous === "game") stopGame();
   if (previous === "games") stopLibrary();
-  if (previous === "agent") stopAgent();
+  if (previous === "assistant") stopAgent();
   if (page === "camera") startCamera();
   if (page === "call") startCall();
   if (page === "weather") startWeather();
@@ -2989,7 +3004,7 @@ function show(page) {
   if (page === "files") loadFiles();
   if (page === "settings") startSettings();
   if (page === "games") startLibrary();
-  if (page === "agent") startAgent();
+  if (page === "assistant") startAgent();
   return true;
 }
 
@@ -3012,7 +3027,8 @@ for (const button of document.querySelectorAll("[data-page]")) {
 // posts the action — so opening a page to check its layout does not make the
 // assistant speak.
 function fromHash() {
-  const page = (location.hash || "").replace(/^#/, "");
+  let page = (location.hash || "").replace(/^#/, "");
+  if (PAGE_ALIAS[page]) page = PAGE_ALIAS[page];
   // Any page that exists, checked by asking the DOM rather than against a
   // list. The list had to be edited every time a page was added and was one
   // page behind by the time anybody noticed — and this is the only way to
@@ -3142,8 +3158,8 @@ function applyState(state) {
   // running through every evening when nothing is there to drive.
   syncHandControl(state);
 
-  // The dot on the Agent button: a run still going, or a question waiting for
-  // an answer. Drawn from the state poll rather than from the console's own,
+  // The dot on the Assistant button: a run still going, or a question waiting
+  // for an answer. Drawn from the state poll rather than from the page's own,
   // so it appears while somebody is looking at the weather — which is the only
   // time it is worth anything.
   const dot = el("agent-dot");
@@ -3535,7 +3551,7 @@ async function drawSettings() {
   const presence = info.presence || {};
   const grace = Math.round((screen.wake_grace_s || 0) / 60);
   el("set-camera-idle").textContent = cam.asleep
-    ? `Released — ${cam.asleep}. Touch or say 小艾同学 to wake.`
+    ? `Released — ${cam.asleep}. Touch or say 小爱同学 to wake.`
     : `${cam.running ? "Open" : "Not running"}` +
       `${presence.paused ? ", detector parked" : ", detector looking"}` +
       `${grace ? ` · ${grace} min after a touch to find somebody` : ""}`;
@@ -4477,7 +4493,7 @@ function addMessage(message) {
   // The same line goes to both feeds. They are two elements rather than one
   // moved between pages, because moving it would scroll it back to the top
   // every time somebody navigated.
-  for (const feed of [el("main-feed"), el("talk-feed")]) {
+  for (const feed of [el("main-feed"), el("assistant-feed")]) {
     const empty = feed.querySelector(".empty");
     if (empty) empty.remove();
 
@@ -4519,7 +4535,7 @@ function addMessage(message) {
 // always "here is what I can see", then the photograph.
 async function addCapture(token) {
   await drainFeed();
-  for (const feed of [el("main-feed"), el("talk-feed")]) {
+  for (const feed of [el("main-feed"), el("assistant-feed")]) {
     const empty = feed.querySelector(".empty");
     if (empty) empty.remove();
 
@@ -5879,14 +5895,18 @@ try {
 }
 
 
-// ── the agent console ───────────────────────────────────────────────
+// ── delegated work, in the same transcript ──────────────────────────
 //
-// The same console the phone has (`aipi5/call/web/phone.html`), on the screen
-// somebody is standing in front of. It holds a cursor and nothing else: the
-// transcript, the run and the mailbox all live in `aipi5-agent.service`, which
-// is deliberately *not* the service the agent is most often asked to restart —
-// so the assistant can go down underneath this page, the poll fails, and the
-// next one asks from the same cursor and is handed everything it missed.
+// Not a console any more. The rows below land in `#assistant-feed` beside the
+// spoken conversation, because there is one assistant and a person asking it
+// something should not have to know which half of the machinery answered.
+//
+// What is still separate is the *service*. The transcript, the run and the
+// mailbox all live in `aipi5-agent.service`, which is deliberately not the
+// service the agent is most often asked to restart — so the assistant can go
+// down underneath this page, the poll fails, and the next one asks from the
+// same cursor and is handed everything it missed. This holds a cursor and
+// nothing else.
 //
 // Long-polled rather than ticked. A run posts a dozen events in a few seconds
 // and a timer either shows them late or asks constantly while nothing at all
@@ -5906,13 +5926,18 @@ function stopAgent() {
   // The poll loop reads `currentPage` and unwinds on its own; nothing here has
   // to be torn down, because unlike the camera and the game pages this one
   // holds no device. The in-flight GET is left to finish and is discarded.
+  //
+  // `agentPolling` is what makes leaving and returning cost one poll rather
+  // than one per visit: `startAgent` on the way back finds a loop that has not
+  // finished unwinding and returns immediately, and the loop it finds re-reads
+  // `currentPage` on its next pass and keeps going.
 }
 
 async function agentPoll() {
   if (agentPolling) return;
   agentPolling = true;
   try {
-    while (currentPage === "agent") {
+    while (currentPage === "assistant") {
       let batch;
       try {
         const response = await fetch("/api/agent/poll?since=" + agentCursor,
@@ -5965,31 +5990,61 @@ function agentState(text, bad) {
   bar.appendChild(document.createTextNode(text));
 }
 
-// `textContent` everywhere, never `innerHTML`. Some of what is drawn here is a
+// `textContent` everywhere, never `innerHTML`. Half of what is drawn here is a
 // log line off this device, and a log line is somewhere a string somebody else
-// wrote can end up.
+// wrote can end up. `addMessage` builds its `who` label with `innerHTML` from
+// two literals and escapes the text; nothing on this path has even that.
 function agentRow(kind, text) {
-  const log = el("agent-log");
-  const empty = log.querySelector(".empty");
+  const feed = el("assistant-feed");
+  const empty = feed.querySelector(".empty");
   if (empty) empty.remove();
   const row = document.createElement("div");
   row.className = "ev " + kind;
   row.textContent = text;
-  log.appendChild(row);
-  // Capped the way the assistant's own feed is. A run that made forty checks
-  // is forty rows nobody scrolls back through.
-  while (log.childNodes.length > 200) log.removeChild(log.firstChild);
-  log.scrollTop = log.scrollHeight;
+  feed.appendChild(row);
+  // The same cap `addMessage` keeps. A run that made forty checks is forty
+  // rows nobody scrolls back through, and they share a feed with a transcript
+  // a browser left open all day would otherwise hold every line of.
+  while (feed.children.length > 80) feed.removeChild(feed.firstChild);
+  feed.scrollTop = feed.scrollHeight;
   return row;
+}
+
+// The question and the answer of a delegated run, as ordinary conversation.
+//
+// A bubble rather than an `.ev` row, because that is what they are: somebody
+// asked something and the assistant answered. Only the working in between —
+// the checks, the run summary, an error — stays a dim line, and only because
+// a dozen bubbles of "✓ read the journal" would bury the answer.
+//
+// Drawn into the Assistant feed alone, not into the home screen's copy the way
+// `addMessage` does. The home feed is a glance at the room's conversation; a
+// maintenance run's transcript is not that, and it would be scrolling past on
+// a screen nobody is in front of.
+function agentBubble(role, text) {
+  const feed = el("assistant-feed");
+  const empty = feed.querySelector(".empty");
+  if (empty) empty.remove();
+  const node = document.createElement("div");
+  node.className = "msg " + (role === "user" ? "user" : "aia");
+  const who = document.createElement("span");
+  who.className = "who";
+  who.textContent = role === "user" ? "You" : "Assistant";
+  node.appendChild(who);
+  node.appendChild(document.createTextNode(text));
+  feed.appendChild(node);
+  while (feed.children.length > 80) feed.removeChild(feed.firstChild);
+  feed.scrollTop = feed.scrollHeight;
+  return node;
 }
 
 function drawAgentEvent(event) {
   switch (event.type) {
     case "agent.ask":
-      agentRow("you", event.text || "");
+      agentBubble("user", event.text || "");
       break;
     case "agent.say":
-      agentRow("say", event.text || "");
+      agentBubble("assistant", event.text || "");
       break;
     case "agent.state":
       agentState(event.state === "finishing" ? "Writing the answer…"
@@ -6073,7 +6128,8 @@ function showApproval(event) {
   el("agent-approval").hidden = false;
   el("agent-approve").disabled = false;
   el("agent-deny").disabled = false;
-  el("agent-log").scrollTop = el("agent-log").scrollHeight;
+  const feed = el("assistant-feed");
+  feed.scrollTop = feed.scrollHeight;
 }
 
 function hideApproval(outcome) {
@@ -6091,7 +6147,7 @@ function answerApproval(allow) {
   // arrive as an approval for whatever came next.
   el("agent-approve").disabled = true;
   el("agent-deny").disabled = true;
-  agentRow("you", allow ? "Approved" : "No");
+  agentBubble("user", allow ? "Approved" : "No");
   agentSay({ type: "agent.answer", token: agentApprovalToken, allow: allow });
 }
 
@@ -6213,7 +6269,7 @@ function syncHandControl(state) {
 
 //: Everything that needs the camera the browser is using.
 const HAND_BUSY = '[data-action="camera"], [data-action="call"], ' +
-                  '[data-page="games"], #talk-look, #call-out';
+                  '[data-page="games"], #call-out';
 const HAND_BUSY_WHY =
   "A hand is driving the browser, which needs the camera. " +
   "Close the browser to use this again.";
@@ -6334,7 +6390,7 @@ for (const button of document.querySelectorAll("button[data-action]")) {
 // which is what it is. It is the same one cooldown wherever it is pressed:
 // the copy on the camera page and this one are the same button, so asking
 // twice from two places is still asking twice.
-el("talk-listen").addEventListener("click", () => send("wake"));
+el("assistant-listen").addEventListener("click", () => send("wake"));
 
 // Touching the screensaver takes it down. Presence is the normal way out —
 // section 26 requires that no touch be necessary — but somebody speaking to

@@ -164,33 +164,40 @@ class TestTheAnswerReachesTheConversation(unittest.TestCase):
         self.assertIn('role = "aia:music"', self._branch("kodama"))
 
 
-class TestTheCameraLivesOnTheTalkPage(unittest.TestCase):
-    """No destination of its own on the home screen, and an answer in the feed."""
+class TestTheCameraLivesOnTheAssistantPage(unittest.TestCase):
+    """No destination of its own on the home screen, and an answer in the feed.
+
+    The page it lives on is now called Assistant — the Talk page and the agent
+    console merged into it — and nothing about the camera's arrangement
+    changed with the name. These assertions moved rather than being rewritten.
+    """
 
     def test_the_home_screen_no_longer_offers_a_camera_button(self):
-        home = PAGE.split('<div id="page-main"')[1].split('<div id="page-talk"')[0]
+        home = PAGE.split('<div id="page-main"')[1].split(
+            '<div id="page-assistant"')[0]
         self.assertNotIn('data-action="camera"', home)
         # The rest of the home screen is untouched, which is what makes the
         # absence above a removal rather than a broken split.
         for kept in ("talk", "call", "weather", "kodama"):
             self.assertIn(f'data-action="{kept}"', home)
 
-    def test_the_talk_page_asks_the_camera_instead(self):
-        talk = PAGE.split('<div id="page-talk"')[1].split('<div id="page-call"')[0]
-        self.assertIn('data-action="camera"', talk)
-        self.assertIn('id="talk-listen"', talk)
+    def test_the_assistant_page_asks_the_camera_instead(self):
+        page = PAGE.split('<div id="page-assistant"')[1].split(
+            '<div id="page-call"')[0]
+        self.assertIn('data-action="camera"', page)
+        self.assertIn('id="assistant-listen"', page)
 
     def test_pressing_the_camera_opens_the_conversation(self):
         # The one line that decides where the answer is looked for.
-        self.assertIn('camera: "talk"', PAGE)
+        self.assertIn('camera: "assistant"', PAGE)
         self.assertNotIn('camera: "camera"', PAGE)
 
     def test_the_picture_is_drawn_into_both_feeds(self):
         # The same rule `addMessage` follows: one line, two feed elements, so
-        # navigating between the main screen and Talk never loses it.
+        # navigating between the home screen and the Assistant never loses it.
         body = PAGE.split("function addCapture")[1].split("\nfunction ")[0]
         self.assertIn('el("main-feed")', body)
-        self.assertIn('el("talk-feed")', body)
+        self.assertIn('el("assistant-feed")', body)
         self.assertIn("/api/camera/capture?t=", body)
         # A pruned still must remove its bubble rather than leave a broken
         # image in the middle of the conversation.
