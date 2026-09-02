@@ -37,6 +37,23 @@ from aipi5.llm.tools import ToolBox  # noqa: E402
 STDLIB = set(sys.stdlib_module_names)
 
 
+def _import_paths(path: Path) -> set[str]:
+    """Every module a file imports, by its full dotted name.
+
+    `_imports` keeps only the first segment, which is what its callers want —
+    "does this touch `cv2`" — and is exactly wrong for asking which *part* of
+    `aipi5.agent` something reaches into.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            found.add(node.module)
+    return found
+
+
 def _imports(path: Path) -> set[str]:
     """Top-level module names imported by one file."""
     tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
@@ -410,6 +427,91 @@ class TestTheAgentDoesNotReachIntoTheAssistant(unittest.TestCase):
                 text = path.read_text(encoding="utf-8")
                 self.assertNotIn("from aipi5.main", text)
                 self.assertNotIn("import aipi5.main", text)
+
+
+class TestTheVoiceServiceReachesTheAgentOnlyThroughTheProxy(unittest.TestCase):
+    """One door, and it is a socket path.
+
+    `aipi5.service` runs as the person who owns this home directory; the helper
+    runs as root. Between them sits `aipi5-agent.service`, which is neither, and
+    the only reason that arrangement is worth its three units is that the voice
+    process cannot skip the middle one. `AgentProxy` is a socket path, a
+    timeout, and a `json.dumps` — importing `HelperClient` beside it would put a
+    root-owned operation table one attribute lookup away from the thing a
+    stranger can talk to through a window.
+
+    Nothing announces the loss of this. A `from aipi5.agent.helper_client
+    import HelperClient` in `main.py` starts, runs, passes every other test in
+    this suite, and quietly means the microphone can reach `patch_file`. So it
+    is asserted statically, over every module the voice service loads.
+    """
+
+    #: Everything `aipi5.service` and `aipi5-ui` import. `aipi5/agent/` is
+    #: excluded wholesale: the runtime and its toolbox are the two modules that
+    #: are *supposed* to hold a `HelperClient`, and they run as a different user
+    #: in a different process.
+    VOICE_PACKAGES = ("assistant", "browser", "calendar", "call", "core",
+                      "files", "games", "kodama", "llm", "motion", "photos",
+                      "screensaver", "tools", "ui", "vision")
+
+    def _voice_modules(self):
+        yield ROOT / "aipi5" / "main.py"
+        for package in self.VOICE_PACKAGES:
+            directory = ROOT / "aipi5" / package
+            if directory.is_dir():
+                yield from sorted(directory.rglob("*.py"))
+
+    def test_nothing_on_the_voice_side_imports_the_helper_client(self):
+        for path in self._voice_modules():
+            with self.subTest(path=str(path.relative_to(ROOT))):
+                self.assertNotIn("aipi5.agent.helper_client",
+                                 _import_paths(path))
+                self.assertNotIn("HelperClient",
+                                 path.read_text(encoding="utf-8"))
+
+    def test_the_only_agent_name_the_voice_service_imports_is_the_proxy(self):
+        """`AgentProxy` and the runtime's own configuration, and nothing else.
+
+        Checked as a set rather than as an absence, so a future import of, say,
+        `AgentToolBox` — which holds the helper — fails here and names itself,
+        rather than passing because nobody thought to forbid it.
+        """
+        # `pilot` is the hand recogniser's geometry. It lives under
+        # `aipi5/agent/` because it drives the agent's browser window, but it
+        # imports nothing outside the standard library — asserted below — and
+        # runs on the voice side by design.
+        allowed = {"aipi5.agent.proxy", "aipi5.agent.pilot"}
+        for path in self._voice_modules():
+            reached = {name for name in _import_paths(path)
+                       if name.startswith("aipi5.agent")}
+            with self.subTest(path=str(path.relative_to(ROOT))):
+                self.assertEqual(set(), reached - allowed,
+                                 f"{path.name} imports {sorted(reached - allowed)}")
+
+    def test_the_proxy_itself_holds_nothing_but_a_socket(self):
+        """It has no import of the agent's own code at all.
+
+        Which is what makes the previous test meaningful: an `AgentProxy` that
+        imported `AgentToolBox` would satisfy an allowlist of one name and still
+        pull the helper into this process.
+        """
+        names = _import_paths(ROOT / "aipi5" / "agent" / "proxy.py")
+        self.assertEqual(set(), {n for n in names if n.startswith("aipi5")})
+
+    def test_the_two_modules_the_voice_service_loads_stay_on_its_own_side(self):
+        """Transitively, not just at the first hop.
+
+        `pilot` legitimately reaches `aipi5.motion` and `aipi5.agent.fingers` —
+        it is a pose recogniser that happens to drive the agent's window. What
+        it must never reach is the runtime or its toolbox, either of which
+        carries `HelperClient` in with it.
+        """
+        privileged = {"aipi5.agent.runtime", "aipi5.agent.tools",
+                      "aipi5.agent.helper_client", "aipi5.agent.loop"}
+        for module in ("proxy.py", "pilot.py", "fingers.py"):
+            with self.subTest(module=module):
+                names = _import_paths(ROOT / "aipi5" / "agent" / module)
+                self.assertEqual(set(), names & privileged)
 
 
 class TestTheHelperIsStandalone(unittest.TestCase):
