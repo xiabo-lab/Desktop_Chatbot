@@ -393,11 +393,21 @@ class Assistant:
         # `self.events` is a presentation index and not a second transcript:
         # the 24-hour audible record is `self.history`, the agent's own record
         # is its mailbox, and both outlive it. See `aipi5/assistant/events.py`.
+        #: Photographs taken during a turn, held until the reply has been
+        #: published so that the sentence introducing one comes first. See
+        #: `finish_turn`.
+        self._pending_captures: list[tuple[str, str, dict]] = []
         self.events = EventLog()
         self.coordinator = Coordinator(events=self.events, respond=self.answer,
                                        agent=self.agent, consent=self.consent,
+                                       speak=self.speak_delegated_answer,
                                        on_turn=self.toolbox.begin_turn,
-                                       after_turn=self.toolbox.end_turn)
+                                       after_turn=self.finish_turn)
+        # Late, because the coordinator needs the toolbox and the tool needs
+        # the coordinator. The alternative is a `lambda` reaching for an
+        # attribute that does not exist yet, which is the pattern used three
+        # times above and is one indirection more than this needs.
+        self.toolbox.delegate = self.coordinator.delegate
 
         self.call = CallServer(settings.call, hub=self.call_hub,
                                devices=self.call_devices,
@@ -1028,32 +1038,121 @@ class Assistant:
         # description was made from, and the only thing that knows which of the
         # files on tmpfs that is, is the camera that just wrote it.
         if self.vision is not None and "describe_camera_image" in reply.tool_calls:
-            self.ui_state.describe_camera(self.vision.last_description,
-                                          self._last_capture_at())
+            taken_at = self._last_capture_at()
+            self.ui_state.describe_camera(self.vision.last_description, taken_at)
+            # And into the Assistant page's transcript, which reads the event
+            # stream rather than `ui_state`. Queued rather than published: this
+            # is inside the turn, and the sentence that introduces the picture
+            # has not been published yet. See `finish_turn`.
+            if taken_at is not None:
+                self.queue_capture(str(taken_at))
         return reply.text
+
+    #: The longest delegated answer worth reading out loud. Above this it is
+    #: on the screen and the person can read it — speech is linear, cannot be
+    #: skimmed, and cannot be interrupted without the wake word.
+    DELEGATED_SPEAK_CHARS = 320
+
+    def speak_delegated_answer(self, text: str, run_id: str = "") -> None:
+        """Read out a finished maintenance answer, when that makes sense.
+
+        Three conditions, and every one of them exists because the failure it
+        prevents was easy to walk into:
+
+        **Short enough to hear.** A run that read a journal comes back with
+        paragraphs. Spoken, that is a minute during which the music is ducked
+        and nobody in the room can interrupt.
+
+        **Somebody still there.** A run started twelve minutes ago finished
+        into an empty kitchen more often than not, and a device that talks to
+        an empty room at eleven at night is a device people unplug.
+
+        **Nothing else using the audio.** A call, a game and a bedtime story
+        all own the speaker, and cutting into any of them with the answer to a
+        question asked before they started is worse than not answering.
+
+        The transcript has the answer either way. This is the extra, and when
+        it is declined the reason goes in the log rather than nowhere.
+        """
+        text = (text or "").strip()
+        if not text:
+            return
+        if len(text) > self.DELEGATED_SPEAK_CHARS:
+            log.info("run %s answered in %d characters; leaving it on the "
+                     "screen", run_id or "?", len(text))
+            return
+        if self.speaker is None:
+            return
+        if self.call is not None and self.call.hub.live():
+            log.info("run %s finished during a call; leaving it on the screen",
+                     run_id or "?")
+            return
+        if self.games is not None and self.games.active:
+            log.info("run %s finished during a game; leaving it on the screen",
+                     run_id or "?")
+            return
+        if self.tracker.state is not Presence.PERSON_PRESENT:
+            log.info("run %s finished with nobody in the room; "
+                     "leaving it on the screen", run_id or "?")
+            return
+
+        language = reply_language(text, fallback="en")
+        log.info("speaking the answer to run %s", run_id or "?")
+        self.history.record("aia", text, language)
+        say(self, text, language)
 
     def publish_photo(self, saved: dict) -> None:
         """Put a photograph that was kept into the conversation.
 
-        The same channel "what do you see" uses, deliberately: the picture and
-        the sentence about it are one event, and a page that received them
-        separately shows the previous photograph under the current answer for
-        one poll interval. That was measured on the panel and is why
-        `describe_camera` moves the id, the text and the image together.
+        Two channels, because two pages read different things. The camera page
+        and the home screen watch `ui_state`, where the picture and the
+        sentence about it move together under one id — a page that received
+        them separately showed the previous photograph under the current answer
+        for one poll interval, which is why `describe_camera` sets all three at
+        once. That was measured on the panel.
 
-        What differs is the sentence. A description is the answer to a
-        question; this is a receipt — the filename, because that is the thing
-        somebody will look for on the Files screen afterwards, and because the
-        device chose it rather than the person.
+        The Assistant page reads the event stream, and there the picture is
+        *queued* rather than published. The reason is the same ordering
+        problem seen from the other side: this runs inside the model's turn, so
+        publishing here would put the photograph above the sentence that
+        introduces it. `finish_turn` drains the queue after the reply has been
+        published, which makes it "here is what I can see", then the picture,
+        every time rather than most times.
+
+        What differs from a description is the sentence. A description is the
+        answer to a question; this is a receipt — the filename, because that is
+        what somebody will look for on the Files screen, and because the device
+        chose it rather than the person.
         """
         name = str(saved.get("filename", ""))
-        self.ui_state.describe_camera(
-            f"Saved as {name}" if name else "Saved.",
-            saved.get("taken_at"))
-        self.events.publish("capture", "voice",
-                            text=f"Saved as {name}" if name else "Saved.",
-                            capture=str(saved.get("token", "")),
-                            meta={"filename": name})
+        text = f"Saved as {name}" if name else "Saved."
+        self.ui_state.describe_camera(text, saved.get("taken_at"))
+        self.queue_capture(str(saved.get("token", "")), text,
+                           {"filename": name} if name else None)
+
+    def queue_capture(self, token: str, text: str = "",
+                      meta: dict | None = None) -> None:
+        """Hold a picture until the turn that produced it has been answered."""
+        if not token:
+            return
+        self._pending_captures.append((token, text, meta or {}))
+
+    def finish_turn(self) -> None:
+        """Everything that must happen after a reply has been published.
+
+        Handed to the coordinator as `after_turn`, so it runs on every one of
+        the four ways in and runs in a `finally` — a turn that raised must not
+        leave a launch permission standing or a photograph queued for whatever
+        gets asked next.
+        """
+        self.toolbox.end_turn()
+        pending, self._pending_captures = self._pending_captures, []
+        for token, text, meta in pending:
+            try:
+                self.events.publish("capture", "voice", capture=token,
+                                    text=text, meta=meta)
+            except Exception:                        # noqa: BLE001
+                log.warning("could not publish a capture", exc_info=True)
 
     def _last_capture_at(self) -> float | None:
         """When the newest still was taken, or None if there is not one.

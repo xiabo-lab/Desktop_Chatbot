@@ -98,7 +98,7 @@ class ToolBox:
                  vision=None, registry=None, settings=None, web_search=False,
                  volume=None, birthdays=None, consent=None, agent=None,
                  calls=None, photos=None, on_capture=None, prices=None,
-                 browser=None, launcher=None):
+                 browser=None, launcher=None, delegate=None):
         self.weather = weather
         self.news = news
         self.clock = clock
@@ -170,6 +170,12 @@ class ToolBox:
         #: before the model sees it. False between turns, so a toolbox that is
         #: somehow called without one refuses rather than allows.
         self._explicit_launch = False
+        #: `delegate(task, reason) -> dict` — `Coordinator.delegate`, which
+        #: sends `agent.ask` down the socket and starts following the mailbox.
+        #: A callable rather than the proxy, so this module cannot originate
+        #: any other message to the agent, and so the coordinator stays the
+        #: only thing that knows a run is in flight.
+        self.delegate = delegate
         #: Whether the API's own web search is offered. Off by default and
         #: last in the list on purpose: it is the fallback for a current fact
         #: with no narrow provider, and a model given both will sometimes
@@ -195,6 +201,7 @@ class ToolBox:
             "take_photo": self._take_photo,
             "get_asset_price": self._get_asset_price,
             "open_known_app": self._open_known_app,
+            "delegate_agent_task": self._delegate_agent_task,
         }
 
     # ── the turn's own facts ─────────────────────────────────────────
@@ -482,6 +489,36 @@ class ToolBox:
                                         "tool can open, and no way to give it "
                                         "a web address."}},
                 required=["app"],
+            ))
+
+        if self.delegate is not None:
+            tools.append(_schema(
+                "delegate_agent_task",
+                "Hand a long piece of work about this device to the maintenance "
+                "agent, which can spend minutes on it. Use it for questions "
+                "that need several checks — 'why did the screen go blank last "
+                "night', 'is anything wrong with the camera', 'find out why "
+                "music stopped yesterday' — and for research or browsing that "
+                "cannot finish in this conversation.\n"
+                "**Not for anything you can do here.** Setting the volume, "
+                "reading the calendar, taking a picture, checking the weather "
+                "and setting a reminder are all one call each; sending them to "
+                "the agent spends one of the day's runs and takes minutes.\n"
+                "It answers later, on the screen, not to you. Say one short "
+                "sentence — 'I have started looking into that, it will be on "
+                "the screen' — and nothing about what you expect it to find.",
+                {
+                    "task": {"type": "string", "maxLength": 2000,
+                             "description": "What to look into, as a whole "
+                                            "question. Include what the person "
+                                            "actually said; the agent has none "
+                                            "of this conversation."},
+                    "reason": {"type": "string", "maxLength": 200,
+                               "description": "One short line for the screen "
+                                              "about what you have started. "
+                                              "Null for the default."},
+                },
+                required=["task"],
             ))
 
         if self.prices is not None:
@@ -802,6 +839,39 @@ class ToolBox:
             return _error(str(answer.get("error", ""))
                           or "this device could not cancel that reminder")
         return _ok(cancelled=answer.get("cancelled", {}))
+
+    # ── handing work over ────────────────────────────────────────────
+
+    def _delegate_agent_task(self, args: dict) -> str:
+        """Start a maintenance run and come straight back.
+
+        The answer does not arrive through this call and cannot: a run takes
+        minutes, the voice turn is judged against 2500 ms, and holding the loop
+        open for it would be an assistant that stopped responding to the room.
+        So this returns a run id, and the run's checks and its answer arrive in
+        the same transcript afterwards — see `AgentBridge`.
+
+        What the model is told back is deliberately thin. It gets no tools, no
+        transcript and no promise, because the next thing it does is speak one
+        sentence and end the turn, and a model handed a plausible-looking
+        summary will describe findings that do not exist yet.
+        """
+        task = str(args.get("task") or "").strip()
+        if not task:
+            return _error("there is nothing to look into")
+        reason = str(args.get("reason") or "").strip()
+
+        answer = self.delegate(task, reason)
+        if not answer.get("ok"):
+            return _error(str(answer.get("error", ""))
+                          or "the maintenance agent could not take that on")
+        return _ok(started=True, run=answer.get("run", ""),
+                   appended=bool(answer.get("appended")),
+                   instruction="Say one short sentence — that you have started "
+                               "looking and the progress is on the screen — and "
+                               "nothing about what it might find. You will not "
+                               "be told the answer; it appears on the screen by "
+                               "itself.")
 
     # ── opening something ────────────────────────────────────────────
 

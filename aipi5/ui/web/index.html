@@ -2110,9 +2110,12 @@
 
   <div class="degraded" data-degraded></div>
 
-  <!-- One transcript. Spoken turns arrive through `/api/feed`, delegated work
-       through `/api/agent/poll`, and both are drawn here — see `addMessage`
-       and `drawAgentEvent`. -->
+  <!-- One transcript, from one stream. `/api/assistant/events` carries the
+       spoken turns, the typed ones, the checks a delegated run made, its
+       answer, a photograph and an approval — see `drawAssistantEvent`.
+       Deliberately *not* `/api/feed` as well: the two carry the same spoken
+       turns at different levels, and a page reading both draws every line
+       twice. The home screen is the one that still reads the feed. -->
   <div class="feed" id="assistant-feed">
     <div class="empty"><span>小爱同学</span>Say the wake word, tap Listen, or type below</div>
   </div>
@@ -4489,11 +4492,17 @@ function escapeHtml(text) {
 
 let lastMessageId = 0;
 
+// The home screen's copy of the conversation, and only that.
+//
+// **It used to write to both feeds and must not any more.** The Assistant page
+// reads `/api/assistant/events`, which carries the same spoken turns, so a
+// line written here as well would appear on that page twice — once from each
+// stream, a second apart, with nothing to say which was which. The two feeds
+// are two elements rather than one moved between pages, because moving it
+// would scroll it back to the top every time somebody navigated; that is why
+// there is a second one to get wrong.
 function addMessage(message) {
-  // The same line goes to both feeds. They are two elements rather than one
-  // moved between pages, because moving it would scroll it back to the top
-  // every time somebody navigated.
-  for (const feed of [el("main-feed"), el("assistant-feed")]) {
+  for (const feed of [el("main-feed")]) {
     const empty = feed.querySelector(".empty");
     if (empty) empty.remove();
 
@@ -4533,9 +4542,16 @@ function addMessage(message) {
 // landed above the sentence some of the time and below it the rest. Measured
 // on the device, which is the only reason this is here. One await makes it
 // always "here is what I can see", then the photograph.
-async function addCapture(token) {
-  await drainFeed();
-  for (const feed of [el("main-feed"), el("assistant-feed")]) {
+async function addCapture(token, into) {
+  // `into` names the feed, because the two now arrive from different places:
+  // the home screen's picture comes off the state poll and has to wait for the
+  // transcript to catch up, and the Assistant page's arrives as a `capture`
+  // row already behind the sentence that introduces it — see `finish_turn` in
+  // `aipi5/main.py`. Draining here for the second one would be waiting on a
+  // feed this page no longer reads.
+  const feeds = into ? [el(into)] : [el("main-feed")];
+  if (!into) await drainFeed();
+  for (const feed of feeds) {
     const empty = feed.querySelector(".empty");
     if (empty) empty.remove();
 
@@ -4651,7 +4667,7 @@ function cameraAnswerFromState(state, assistant) {
     // there is a sentence to show and no photograph to show it under, and
     // drawing the previous capture there would be a picture of a different
     // moment under the current answer.
-    if (state.camera_image) addCapture(state.camera_image);
+    if (state.camera_image) addCapture(state.camera_image);   // home screen
     return;
   }
   if (id === 0 || !text) return;
@@ -5895,24 +5911,40 @@ try {
 }
 
 
-// ── delegated work, in the same transcript ──────────────────────────
+// ── the assistant's own stream ──────────────────────────────────────
 //
-// Not a console any more. The rows below land in `#assistant-feed` beside the
-// spoken conversation, because there is one assistant and a person asking it
-// something should not have to know which half of the machinery answered.
+// One transcript, one cursor, four routes. `/api/assistant/events` carries
+// everything that happens to this assistant — a spoken turn, a typed one, the
+// checks a delegated run made, its answer, an approval — and the compose box
+// posts to `/api/assistant/ask` rather than to `agent.ask`.
 //
-// What is still separate is the *service*. The transcript, the run and the
-// mailbox all live in `aipi5-agent.service`, which is deliberately not the
-// service the agent is most often asked to restart — so the assistant can go
-// down underneath this page, the poll fails, and the next one asks from the
-// same cursor and is handed everything it missed. This holds a cursor and
-// nothing else.
+// **That last part is the point of the whole layer.** Typing a sentence used
+// to become `agent.ask` unconditionally, so "set the volume to thirty" spent
+// one of the day's maintenance runs and up to 24 model steps doing something
+// the voice loop does in one call — and saying it out loud and typing it got
+// different answers, with nothing on screen to say which you had reached.
+// Now both go through the coordinator and the model decides whether the work
+// is short or wants handing over.
 //
-// Long-polled rather than ticked. A run posts a dozen events in a few seconds
+// **It does not also read `/api/feed`.** The two carry the same spoken turns
+// at different levels, and a page reading both draws every line twice. The
+// home screen still reads the feed, which is why `drainFeed` is still here —
+// but this page does not, and `addMessage` writes to `#main-feed` only while
+// the Assistant view is on this stream.
+//
+// The *services* are unchanged. The transcript, the run and the mailbox all
+// live in `aipi5-agent.service`, which is deliberately not the service the
+// agent is most often asked to restart — so the assistant can go down
+// underneath this page, the poll fails, and the next one asks from the same
+// cursor and is handed what it missed. This holds a cursor and nothing else.
+//
+// Long-polled rather than ticked. A run posts a dozen rows in a few seconds
 // and a timer either shows them late or asks constantly while nothing at all
-// is happening.
+// is happening. `wait=0` on the first pass, so a page opening onto an idle
+// device draws its backlog and its state at once instead of after twenty
+// seconds of nothing.
 
-let agentCursor = 0;
+let assistantCursor = 0;
 let agentPolling = false;
 let agentRun = "";
 let agentApprovalToken = "";
@@ -5936,13 +5968,19 @@ function stopAgent() {
 async function agentPoll() {
   if (agentPolling) return;
   agentPolling = true;
+  let first = true;
   try {
     while (currentPage === "assistant") {
       let batch;
       try {
-        const response = await fetch("/api/agent/poll?since=" + agentCursor,
-                                     { cache: "no-store" });
+        // `wait=0` only on the way in. A page opening onto a device that has
+        // been idle since breakfast would otherwise sit blank for twenty
+        // seconds before it could draw so much as the run state.
+        const response = await fetch(
+          "/api/assistant/events?since=" + assistantCursor
+          + (first ? "&wait=0" : ""), { cache: "no-store" });
         batch = await response.json();
+        first = false;
         if (batch.error) {
           agentState(batch.error, true);
           await sleep(2000);
@@ -5955,19 +5993,22 @@ async function agentPoll() {
         await sleep(1500);
         continue;
       }
-      agentCursor = batch.cursor || agentCursor;
-      for (const event of batch.events || []) drawAgentEvent(event);
-      if (batch.agent) {
-        agentRun = batch.agent.run || "";
-        el("agent-stop").hidden = !batch.agent.busy;
-        if (!batch.agent.busy) agentState("");
+      assistantCursor = batch.cursor || assistantCursor;
+      for (const event of batch.events || []) drawAssistantEvent(event);
+      const state = batch.assistant;
+      if (state) {
+        agentRun = state.run || "";
+        el("agent-stop").hidden = !state.busy;
+        if (!state.busy) agentState("");
         // The snapshot is the authority on whether anything is still waiting.
         // A card left up after the run ended is a button answering a question
-        // nobody is asking any more.
-        if (!batch.agent.pending && agentApprovalToken) hideApproval("");
-        else if (batch.agent.pending &&
-                 batch.agent.pending.token !== agentApprovalToken) {
-          showApproval(batch.agent.pending);
+        // nobody is asking any more. It covers both desks: a maintenance
+        // approval and a spoken confirmation arrive here the same way, and
+        // the page does not need to know which is which — the token says.
+        if (!state.pending && agentApprovalToken) hideApproval("");
+        else if (state.pending &&
+                 state.pending.token !== agentApprovalToken) {
+          showApproval(state.pending);
         }
       }
     }
@@ -6038,62 +6079,66 @@ function agentBubble(role, text) {
   return node;
 }
 
-function drawAgentEvent(event) {
-  switch (event.type) {
-    case "agent.ask":
+// Seven kinds, and the page draws one of seven shapes. A kind per feature
+// would be a page that has to be edited every time the assistant learns
+// something, which is why `aipi5/assistant/events.py` keeps the list short.
+function drawAssistantEvent(event) {
+  const meta = event.meta || {};
+  switch (event.kind) {
+    case "user":
       agentBubble("user", event.text || "");
       break;
-    case "agent.say":
+    case "assistant":
       agentBubble("assistant", event.text || "");
       break;
-    case "agent.state":
-      agentState(event.state === "finishing" ? "Writing the answer…"
-                                             : "Thinking…");
-      break;
-    case "agent.tool": {
-      if (event.state === "running") {
-        agentState("Checking " + (event.summary || "…"));
-        break;
-      }
+    case "tool": {
       const row = agentRow("tool", "");
       const mark = document.createElement("b");
-      mark.textContent = event.ok ? "✓" : "✗";
+      mark.textContent = event.ok === false ? "✗" : "✓";
       row.appendChild(mark);
       row.appendChild(document.createTextNode(
-        (event.name || "") + (event.summary ? " — " + event.summary : "")));
+        event.text || event.tool || ""));
       break;
     }
-    case "agent.approval":
-      showApproval(event);
+    case "capture":
+      // The photograph the assistant just kept. `capture` is the `?t=` token,
+      // never a path — see `aipi5/assistant/events.py`.
+      if (event.capture) addCapture(event.capture, "assistant-feed");
       break;
-    case "agent.approval.gone":
-      hideApproval(event.outcome);
+    case "approval":
+      if (meta.gone) hideApproval(meta.outcome);
+      else showApproval({ token: meta.token, what: event.text,
+                          detail: meta.detail, warning: meta.warning });
       break;
-    case "agent.error":
-      agentRow("bad", event.error || "Something went wrong.");
+    case "error":
+      agentRow("bad", event.text || "Something went wrong.");
       break;
-    case "agent.done": {
+    case "done": {
       agentState("");
       el("agent-stop").hidden = true;
       const bits = [];
-      if (event.stopped) bits.push(event.stopped);
-      if (event.steps) bits.push(event.steps + " steps");
-      if (event.tool_calls) bits.push(event.tool_calls + " checks");
-      if (event.seconds) bits.push(event.seconds + "s");
+      if (event.text) bits.push(event.text);
+      if (meta.steps) bits.push(meta.steps + " steps");
+      if (meta.tool_calls) bits.push(meta.tool_calls + " checks");
+      if (meta.seconds) bits.push(Math.round(meta.seconds) + "s");
       if (bits.length) agentRow("done", bits.join(" · "));
       break;
     }
     default:
-      break;   // an event type this build does not know about is not an error
+      break;   // a kind this build does not know about is not an error
   }
 }
 
-async function agentSay(message) {
+// One POST helper for the three routes that change something. The path is
+// named at the call site rather than encoded in a message type, because these
+// are four routes with four shapes and a `type` field was how the old console
+// ended up able to send `agent.ask` from a text box.
+async function assistantPost(path, body) {
   try {
-    const response = await fetch("/api/agent/say", {
+    const response = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(message),
+      body: JSON.stringify(body || {}),
     });
     const answer = await response.json();
     if (!answer.ok && answer.error) agentRow("bad", answer.error);
@@ -6148,14 +6193,19 @@ function answerApproval(allow) {
   el("agent-approve").disabled = true;
   el("agent-deny").disabled = true;
   agentBubble("user", allow ? "Approved" : "No");
-  agentSay({ type: "agent.answer", token: agentApprovalToken, allow: allow });
+  // The token says which desk it belongs to; the page does not need to know.
+  // A maintenance approval and a spoken confirmation are answered the same
+  // way — see `Coordinator.answer_approval`.
+  assistantPost("/api/assistant/approval",
+                { token: agentApprovalToken, allow: allow });
+  agentApprovalToken = "";
 }
 
 el("agent-approve").addEventListener("click", () => answerApproval(true));
 el("agent-deny").addEventListener("click", () => answerApproval(false));
 
 el("agent-stop").addEventListener("click", () => {
-  agentSay({ type: "agent.stop", run: agentRun });
+  assistantPost("/api/assistant/cancel", { run: agentRun });
 });
 
 el("agent-compose").addEventListener("submit", (event) => {
@@ -6165,7 +6215,10 @@ el("agent-compose").addEventListener("submit", (event) => {
   if (!text) return;
   box.value = "";
   el("agent-hint").textContent = "";
-  agentSay({ type: "agent.ask", text: text });
+  // `source: "touch"`, because it was typed or dictated on the panel rather
+  // than sent from a phone. It changes nothing about which tools are offered
+  // — that is the whole point — and it is what the transcript records.
+  assistantPost("/api/assistant/ask", { text: text, source: "touch" });
 });
 
 // ── speaking into it ────────────────────────────────────────────────

@@ -192,25 +192,38 @@ class TestTheCameraLivesOnTheAssistantPage(unittest.TestCase):
         self.assertIn('camera: "assistant"', PAGE)
         self.assertNotIn('camera: "camera"', PAGE)
 
-    def test_the_picture_is_drawn_into_both_feeds(self):
-        # The same rule `addMessage` follows: one line, two feed elements, so
-        # navigating between the home screen and the Assistant never loses it.
+    def test_the_picture_reaches_both_screens_by_their_own_routes(self):
+        """One function, two callers, and they no longer share a feed.
+
+        The home screen's picture comes off the state poll; the Assistant
+        page's arrives as a `capture` row on `/api/assistant/events`. Drawing
+        into both from either caller is how the same photograph appears twice
+        on one page, which is exactly what splitting the streams was for.
+        """
         body = PAGE.split("function addCapture")[1].split("\nfunction ")[0]
         self.assertIn('el("main-feed")', body)
-        self.assertIn('el("assistant-feed")', body)
         self.assertIn("/api/camera/capture?t=", body)
         # A pruned still must remove its bubble rather than leave a broken
         # image in the middle of the conversation.
         self.assertIn("image.onerror", body)
+        # The home screen calls it with no feed named; the event stream names
+        # the Assistant feed.
+        self.assertIn("addCapture(state.camera_image)", PAGE)
+        self.assertIn('addCapture(event.capture, "assistant-feed")', PAGE)
 
-    def test_the_transcript_is_drained_before_the_picture_is_drawn(self):
+    def test_the_transcript_is_drained_before_the_home_screens_picture(self):
         """The picture follows the sentence, every time and not most times.
 
         The description and the reply are published a millisecond apart and
-        reach the page down two polls running at 500 and 1000 ms, so without
-        this the order was decided by whichever timer fired first — observed
-        both ways on the device. `addCapture` waits for the transcript, and
-        `drainFeed` coalesces so that waiting for it cannot append a row twice.
+        reach the home screen down two polls running at 500 and 1000 ms, so
+        without this the order was decided by whichever timer fired first —
+        observed both ways on the device. `addCapture` waits for the
+        transcript, and `drainFeed` coalesces so that waiting for it cannot
+        append a row twice.
+
+        The Assistant page solves the same problem on the server: `finish_turn`
+        publishes a queued photograph *after* the reply, so its rows arrive in
+        the right order and there is nothing to wait for.
         """
         body = PAGE.split("function addCapture")[1].split("\nfunction ")[0]
         self.assertIn("await drainFeed()", body)

@@ -127,9 +127,20 @@ class AgentBridge:
     """
 
     def __init__(self, proxy, events: EventSink, *, poll_s: float = BRIDGE_POLL_S,
-                 drain_s: float = BRIDGE_DRAIN_S):
+                 drain_s: float = BRIDGE_DRAIN_S, on_answer=None):
         self.proxy = proxy
         self.events = events
+        #: `on_answer(text, run_id)` — the run's *final* answer, once it is
+        #: finished. Called at `agent.done` and not before, which is the whole
+        #: of the decision: a run emits `agent.say` several times as it works
+        #: something out, and reading each one aloud would be the assistant
+        #: narrating a twelve-minute investigation into a room where somebody
+        #: asked one question. Whether it is worth speaking at all is the
+        #: caller's judgement — see `speak_delegated_answer` in `main.py`.
+        self.on_answer = on_answer
+        #: The most recent thing the run said, kept so `agent.done` has an
+        #: answer to hand over. Reset per run.
+        self._last_said = ""
         self.poll_s = poll_s
         self.drain_s = drain_s
         self._lock = threading.Lock()
@@ -172,6 +183,7 @@ class AgentBridge:
             self._run = str(run_id or "")[:64]
             self._state = "running"
             self._failed = False
+            self._last_said = ""
 
     def start(self, run_id: str) -> None:
         """Follow `run_id` and make sure something is reading the mailbox.
@@ -226,8 +238,11 @@ class AgentBridge:
                 continue
             self.events.publish(row.pop("kind"), "agent", **row)
             drawn += 1
+            if message.get("type") == "agent.say":
+                self._last_said = str(message.get("text", "")).strip()
             if message.get("type") == "agent.done":
                 self.stop()
+                self._finished(str(message.get("run", "")))
 
         snapshot = payload.get("agent")
         if isinstance(snapshot, dict):
@@ -236,6 +251,16 @@ class AgentBridge:
                 if not self._stop.is_set():
                     self._state = str(snapshot.get("state", "idle"))
         return drawn
+
+    def _finished(self, run_id: str) -> None:
+        """Offer the run's last words to whoever wanted them. Never raises."""
+        text, self._last_said = self._last_said, ""
+        if not text or self.on_answer is None:
+            return
+        try:
+            self.on_answer(text, run_id)
+        except Exception:                            # noqa: BLE001
+            log.exception("could not hand over the finished answer")
 
     def _loop(self) -> None:
         try:
@@ -316,7 +341,8 @@ class Coordinator:
         self.after_turn = after_turn
         self.turn_wait_s = turn_wait_s
         self.bridge = bridge if bridge is not None else (
-            AgentBridge(agent, self.events) if agent is not None else None)
+            AgentBridge(agent, self.events, on_answer=self._delegated_answer)
+            if agent is not None else None)
         #: One turn at a time. Two overlapping submissions share a
         #: `Conversation`, and interleaving them produces a history where the
         #: model answers one question with the tool results of another.
@@ -468,6 +494,22 @@ class Coordinator:
                     "error": str(answer.get("error", "")) or "the agent is not "
                                                              "answering"}
         return answer if answer else {"ok": True}
+
+    def _delegated_answer(self, text: str, run_id: str) -> None:
+        """A delegated run has finished. Offer its answer to the room.
+
+        `speak` decides whether to. It is `main.py`'s, and what it weighs is
+        whether the answer is short enough to hear, whether anybody is still
+        there, and whether the device is busy doing something else — none of
+        which this module can see. The transcript already has the answer
+        either way; speaking is the extra.
+        """
+        if self.speak is None:
+            return
+        try:
+            self.speak(text, run_id)
+        except Exception:                            # noqa: BLE001
+            log.exception("could not speak the delegated answer")
 
     # ── what a page needs to draw itself ────────────────────────────
 

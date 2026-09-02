@@ -133,7 +133,7 @@ class TestThePageIsWholeAndAddressable(unittest.TestCase):
         node instead — the text beside it is not a literal.
         """
         console = self.page[self.page.index("function agentRow"):]
-        console = console[:console.index("async function agentSay")]
+        console = console[:console.index("async function assistantPost")]
         self.assertNotIn("innerHTML", console)
         self.assertIn("textContent", console)
 
@@ -194,20 +194,44 @@ class TestTheWireMatches(unittest.TestCase):
                                  self.server, re.S).group(0)
                 self.assertIn("self._agent_missing()", body)
 
-    def test_the_page_may_send_three_messages_and_no_others(self):
-        """The list is what the *page* may originate, not what the runtime
-        understands. `agent.gesture` has its own route with its own bounds,
-        and `agent.open` is the assistant's message about a page somebody
-        asked for out loud — reachable from a text box it would be a URL bar
-        with a language model in it.
+    def test_the_page_no_longer_originates_an_agent_message_at_all(self):
+        """It posts to four named routes instead.
+
+        The old console sent `{type: "agent.ask"}` from its text box, and the
+        list of types it was allowed to send was what stood between that box
+        and the rest of the runtime's vocabulary — `agent.open` in particular,
+        which reachable from a text box would be a URL bar with a language
+        model in it. A route per action removes the question: there is no
+        `type` field to get wrong, and `/api/assistant/ask` reaches the
+        coordinator rather than the agent.
+
+        `AGENT_MESSAGES` is still enforced on `/api/agent/say`, which the phone
+        is still on.
         """
         from aipi5.ui.server import AGENT_MESSAGES
 
         self.assertEqual(AGENT_MESSAGES,
                          {"agent.ask", "agent.stop", "agent.answer"})
-        sent = set(re.findall(r'type: "(agent\.[a-z]+)"', self.page))
-        self.assertTrue(sent)
-        self.assertTrue(sent <= AGENT_MESSAGES, sent - AGENT_MESSAGES)
+        self.assertEqual(set(), set(re.findall(r'type: "(agent\.[a-z]+)"',
+                                               self.page)))
+        for route in ("/api/assistant/ask", "/api/assistant/cancel",
+                      "/api/assistant/approval", "/api/assistant/events"):
+            with self.subTest(route=route):
+                self.assertIn(route, self.page)
+
+    def test_the_page_reads_one_stream_and_not_two(self):
+        """`/api/feed` and `/api/assistant/events` carry the same spoken turns
+        at different levels. A page reading both draws every line twice, a
+        second apart, with nothing to say which was which."""
+        body = self.page[self.page.index("async function agentPoll"):]
+        body = body[:body.index("const sleep =")]
+        self.assertIn("/api/assistant/events", body)
+        self.assertNotIn("/api/feed", body)
+        # And the home screen's writer no longer touches the Assistant feed.
+        writer = self.page[self.page.index("function addMessage"):]
+        writer = writer[:writer.index("\n}")]
+        self.assertIn('el("main-feed")', writer)
+        self.assertNotIn('el("assistant-feed")', writer)
 
     def test_the_badge_is_published_with_the_rest_of_the_state(self):
         # Off the snapshot the browser flag already reads, so a closed console
