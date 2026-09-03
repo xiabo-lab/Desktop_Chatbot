@@ -2050,7 +2050,7 @@
   <div class="degraded" data-degraded></div>
 
   <div class="feed" id="main-feed">
-    <div class="empty"><span>小爱同学</span>Say the wake word, or tap a button below</div>
+    <div class="empty"><span>小爱同学</span><span data-i18n="assistant.say_wake_or_tap">Say the wake word, or tap a button below</span></div>
   </div>
 
   <div class="status" data-status>
@@ -2115,7 +2115,7 @@
      left off and is handed what it missed. -->
 <div id="page-assistant" class="page">
   <header>
-    <button class="back" data-back><span class="glyph">‹</span> Back</button>
+    <button class="back" data-back><span class="glyph">‹</span> <span data-i18n="nav.back">Back</span></button>
     <h1 data-i18n="assistant.assistant">ASSISTANT</h1>
     <!-- What a delegated run is doing, while it is doing it. In the header
          rather than in the transcript: it is replaced several times a run,
@@ -2134,7 +2134,7 @@
        turns at different levels, and a page reading both draws every line
        twice. The home screen is the one that still reads the feed. -->
   <div class="feed" id="assistant-feed">
-    <div class="empty"><span>小爱同学</span>Say the wake word, tap Listen, or type below</div>
+    <div class="empty"><span>小爱同学</span><span data-i18n="assistant.say_wake_tap_listen">Say the wake word, tap Listen, or type below</span></div>
   </div>
 
   <div class="status" data-status>
@@ -2195,7 +2195,7 @@
 
     <video id="call-self" autoplay playsinline muted></video>
 
-    <div id="call-banner"><span class="live"></span>REMOTE CALL ACTIVE</div>
+    <div id="call-banner"><span class="live"></span><span data-i18n="call.remote_call_active">REMOTE CALL ACTIVE</span></div>
     <div id="call-who"></div>
 
     <div id="call-status" data-i18n="call.not_connected">Not connected</div>
@@ -2239,7 +2239,7 @@
 <!-- ── games library ───────────────────────────────────────────── -->
 <div id="page-games" class="page">
   <header>
-    <button class="back" data-back><span class="glyph">‹</span> Back</button>
+    <button class="back" data-back><span class="glyph">‹</span> <span data-i18n="nav.back">Back</span></button>
     <h1 data-i18n="games.games">GAMES</h1>
     <div class="headline-weather" data-weather-headline></div>
   </header>
@@ -2356,7 +2356,7 @@
          nobody has chosen. -->
     <div class="game-sheet" id="sheet-yoga">
       <h2 data-i18n="game.yoga_coach">YOGA COACH</h2>
-      <p><span id="yoga-catalog-count" data-i18n="game.21_courses">21 courses</span>, each 15–20 minutes. Choose a class.</p>
+      <p><span id="yoga-catalog-count" data-i18n="game.21_courses">21 courses</span><span data-i18n="game.each_15_20">, each 15–20 minutes. Choose a class.</span></p>
       <div class="yoga-level-tabs">
         <button class="yoga-level-tab selected" data-yoga-level="beginner" data-i18n="game.beginner_7">BEGINNER · 7</button>
         <button class="yoga-level-tab" data-yoga-level="intermediate" data-i18n="game.intermediate_7">INTERMEDIATE · 7</button>
@@ -2373,7 +2373,7 @@
          stays disabled until somebody is really there. -->
     <div class="game-sheet on" id="sheet-start">
       <h2 id="start-title" data-i18n="game.fruit_ninja">Fruit Ninja</h2>
-      <p id="start-instruction">Stand where the camera can see your full upper body.<span id="start-round-copy"></span></p>
+      <p id="start-instruction"><span data-i18n="game.stand_where_camera">Stand where the camera can see your full upper body.</span><span id="start-round-copy"></span></p>
       <img id="game-preview" alt="">
       <div id="game-detected" class="no" data-i18n="game.looking_for_a_player">Looking for a player…</div>
       <div class="gesture-help" id="start-gesture-help">
@@ -2437,7 +2437,7 @@
      `#camera` through `ssh -L` — the same door `fromHash` exists for. -->
 <div id="page-camera" class="page">
   <header>
-    <button class="back" data-back><span class="glyph">‹</span> Back</button>
+    <button class="back" data-back><span class="glyph">‹</span> <span data-i18n="nav.back">Back</span></button>
     <h1 data-i18n="camera.camera">CAMERA</h1>
     <div class="status" data-status>
       <div class="dot"></div>
@@ -2523,28 +2523,28 @@
   <form id="birthday-form">
     <h2 id="birthday-dialog-title" data-i18n="calendar.add_birthday2">Add Birthday</h2>
     <div class="calendar-form-grid">
-      <label class="wide">Name
+      <label class="wide"><span data-i18n="calendar.name">Name</span>
         <input id="birthday-name" maxlength="80" required autocomplete="off">
       </label>
-      <label>Calendar
+      <label><span data-i18n="calendar.calendar">Calendar</span>
         <select id="birthday-calendar">
           <option value="solar" data-i18n="calendar.solar_gregorian">Solar / Gregorian</option>
           <option value="lunar" data-i18n="calendar.chinese_lunar">Chinese Lunar</option>
         </select>
       </label>
-      <label>Optional birth year
+      <label><span data-i18n="calendar.optional_birth_year">Optional birth year</span>
         <input id="birthday-year" type="number" min="1800" max="2100" inputmode="numeric">
       </label>
-      <label>Month
+      <label><span data-i18n="calendar.month">Month</span>
         <select id="birthday-month"></select>
       </label>
-      <label>Day
+      <label><span data-i18n="calendar.day">Day</span>
         <select id="birthday-day"></select>
       </label>
       <label id="birthday-leap-wrap" class="calendar-check wide" hidden>
-        <input id="birthday-leap" type="checkbox"> Leap lunar month (闰月)
+        <input id="birthday-leap" type="checkbox"> <span data-i18n="calendar.leap_lunar_month">Leap lunar month (闰月)</span>
       </label>
-      <label class="wide">Optional note
+      <label class="wide"><span data-i18n="calendar.optional_note">Optional note</span>
         <textarea id="birthday-note" maxlength="400"></textarea>
       </label>
     </div>
@@ -2576,7 +2576,7 @@
 
   <div id="wx-page">
     <div id="wx-bar">
-      <button class="back glass" data-back><span class="glyph">‹</span> Back</button>
+      <button class="back glass" data-back><span class="glyph">‹</span> <span data-i18n="nav.back">Back</span></button>
       <!-- The configured location. AIPI5 has one, set in config/aipi5.yaml,
            and there is no location search behind it to open — so this states
            where the numbers are from rather than pretending to be a control
@@ -2596,7 +2596,7 @@
           <div id="wx-day">—</div>
           <div id="wx-date"><span id="wx-date-text">—</span><span id="wx-fresh" hidden data-i18n="weather.recently_updated">Recently updated</span></div>
           <div id="wx-temp">--<sup>°</sup></div>
-          <div id="wx-feels">Feels like<b id="wx-feels-value">--°</b></div>
+          <div id="wx-feels"><span data-i18n="weather.feels_like">Feels like</span><b id="wx-feels-value">--°</b></div>
         </div>
         <div id="wx-right">
           <div id="wx-icon">·</div>
@@ -2657,7 +2657,7 @@
 <!-- ── files ───────────────────────────────────────────────────── -->
 <div id="page-files" class="page">
   <header>
-    <button class="back" data-back><span class="glyph">‹</span> Back</button>
+    <button class="back" data-back><span class="glyph">‹</span> <span data-i18n="nav.back">Back</span></button>
     <h1 data-i18n="files.file_transfer">FILE TRANSFER</h1>
     <div class="headline-weather" data-weather-headline></div>
   </header>
@@ -2691,7 +2691,7 @@
      and controls whose interaction needs a panel or phone. -->
 <div id="page-settings" class="page">
   <header>
-    <button class="back" data-back><span class="glyph">‹</span> Back</button>
+    <button class="back" data-back><span class="glyph">‹</span> <span data-i18n="nav.back">Back</span></button>
     <h1 data-i18n="settings.settings">SETTINGS</h1>
     <div class="headline-weather" data-weather-headline></div>
   </header>
@@ -3150,6 +3150,20 @@ let dismissedAt = 0;
 
 const STRINGS = {
   en: {
+    "weather.feels_like": "Feels like",
+    "calendar.optional_note": "Optional note",
+    "calendar.leap_lunar_month": "Leap lunar month (闰月)",
+    "calendar.day": "Day",
+    "calendar.month": "Month",
+    "calendar.optional_birth_year": "Optional birth year",
+    "calendar.calendar": "Calendar",
+    "calendar.name": "Name",
+    "game.stand_where_camera": "Stand where the camera can see your full upper body.",
+    "game.each_15_20": ", each 15–20 minutes. Choose a class.",
+    "call.remote_call_active": "REMOTE CALL ACTIVE",
+    "assistant.say_wake_tap_listen": "Say the wake word, tap Listen, or type below",
+    "assistant.say_wake_or_tap": "Say the wake word, or tap a button below",
+    "nav.back": "Back",
     "game.needs_the_hat": "Fruit Ninja requires the AI HAT+ 2.",
     "motion.no_device": "no device",
     "settings.that_did_not_work": "That did not work.",
@@ -3525,6 +3539,20 @@ const STRINGS = {
     "weather.sunset": "Sunset",
   },
   zh: {
+    "weather.feels_like": "体感",
+    "calendar.optional_note": "备注（可选）",
+    "calendar.leap_lunar_month": "闰月",
+    "calendar.day": "日",
+    "calendar.month": "月",
+    "calendar.optional_birth_year": "出生年份（可选）",
+    "calendar.calendar": "历法",
+    "calendar.name": "姓名",
+    "game.stand_where_camera": "站在摄像头能拍到你整个上半身的位置。",
+    "game.each_15_20": "，每节 15–20 分钟。请选择一节课。",
+    "call.remote_call_active": "远程通话进行中",
+    "assistant.say_wake_tap_listen": "说出唤醒词、点击“聆听”，或在下方输入",
+    "assistant.say_wake_or_tap": "说出唤醒词，或点击下方按钮",
+    "nav.back": "返回",
     "game.needs_the_hat": "水果忍者需要 AI HAT+ 2。",
     "motion.no_device": "没有设备",
     "settings.that_did_not_work": "操作未成功。",

@@ -149,24 +149,47 @@ class TestTheSweepCoveredThePage(unittest.TestCase):
     }
 
     def test_no_visible_english_is_unmarked(self):
+        """Walked with a tag stack rather than matched with a regex over whole
+        elements.
+
+        The regex this replaced asked for `<tag …>text</tag>` in one piece, so
+        it could not see a word sitting beside a nested element — and that is
+        exactly where six Back buttons hid: `<span class="glyph">‹</span> Back`
+        put the only English in the button into a bare text node the pattern
+        never looked at. Found on the device, in Chinese, with the word Back
+        still on the screen.
+        """
         text = page_text()
         body = text[text.index("<body"):]
         body = re.sub(r"<script.*?</script>", "", body, flags=re.S)
+        body = re.sub(r"<style.*?</style>", "", body, flags=re.S)
         body = re.sub(r"<!--.*?-->", "", body, flags=re.S)
 
         missed = []
-        for match in re.finditer(r"<(\w+)((?:\s[^<>]*)?)>([^<>]+)</\1>", body):
-            attrs, content = match.group(2), match.group(3).strip()
-            if "data-i18n" in attrs:
+        marked = 0            # how many open elements carry a key
+        for piece in re.split(r"(<[^>]*>)", body):
+            if piece.startswith("<"):
+                if piece.startswith("</"):
+                    if marked:
+                        marked -= 1
+                elif not piece.endswith("/>") and not re.match(
+                        r"<(?:br|hr|img|input|meta|link|source)\b", piece):
+                    marked += 1 if "data-i18n" in piece else 0
+                    # A tag that opens without a key still has to be popped,
+                    # so depth is tracked by counting only marked ones and
+                    # closing tags decrement whichever was innermost. Good
+                    # enough: a false negative here needs an unmarked element
+                    # nested inside a marked one, and a marked element's own
+                    # text is replaced wholesale anyway.
                 continue
-            if content in self.ALLOWED or len(content) < 2:
+            content = piece.strip()
+            if marked or not content or content in self.ALLOWED:
                 continue
             if not re.search(r"[A-Za-z]{2}", content):
                 continue
             missed.append(content)
         self.assertEqual([], missed,
                          "these read as English and carry no key: " + repr(missed))
-
 
 class TestApplyingIt(unittest.TestCase):
 
