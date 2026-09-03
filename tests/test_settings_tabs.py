@@ -116,11 +116,15 @@ class TestNothingWasLostInTheMove(TabCase):
                     self.assertEqual(1, self.settings.count(f'id="{ident}"'))
 
     def test_the_six_cards_are_all_still_there(self):
+        """Matched on the title text rather than the whole tag: the sweep that
+        made the page bilingual added a `data-i18n` attribute to every heading,
+        and the English stays in the element as its own text — which is the
+        property worth asserting."""
         for title in ("Volume", "Screensaver", "Slideshow source",
                       "Fruit Ninja", "AI Motion", "Display"):
             with self.subTest(card=title):
-                self.assertIn(f'<div class="set-title">{title}</div>',
-                              self.settings)
+                self.assertRegex(self.settings,
+                                 r'class="set-title"[^>]*>' + title + "<")
 
     def test_the_qr_overlay_is_not_inside_a_panel(self):
         """`#picker` is a fixed overlay that must survive a tab switch — it is

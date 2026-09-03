@@ -136,8 +136,13 @@ class TestCalendarAssets(unittest.TestCase):
         self.assertNotIn("background: #153251", css)
         self.assertIn(".cal-day.today { outline: 3px solid var(--cal-red)", css)
         self.assertNotIn("background: var(--cal-blue)", css)
-        self.assertIn('data-back>Back to Home Menu</button>', page)
-        self.assertIn('id="cal-today" class="cal-back-today">Back to Today</button>', page)
+        # Regex rather than a contiguous string: the bilingual sweep put a
+        # `data-i18n` attribute between the marker and the text. That the Back
+        # button carries `data-back` and says this is what matters.
+        self.assertRegex(page, r'data-back[^>]*>Back to Home Menu</button>')
+        self.assertRegex(
+            page,
+            r'id="cal-today" class="cal-back-today"[^>]*>Back to Today</button>')
         self.assertIn("grid-template-columns: 238px 1fr 190px", css)
 
     def test_every_calendar_asset_is_served_locally(self):

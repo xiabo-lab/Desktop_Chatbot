@@ -148,10 +148,15 @@ class TestThePageIsWholeAndAddressable(unittest.TestCase):
         only fills the box in. Both were 🎙 for one draft, which made the page
         ask a question it had no way to answer."""
         block = self._assistant()
-        self.assertIn('id="agent-mic" type="button"><span class="glyph">✎</span>'
-                      '<span class="label">Dictate</span>', block)
-        self.assertIn('id="assistant-listen"><span class="glyph">🎙</span>'
-                      '<span class="label">Listen</span>', block)
+        # Matched as glyph-and-label pairs rather than one contiguous string:
+        # the bilingual sweep put a `data-i18n` attribute on each label, and
+        # what this test is about is which glyph sits beside which word.
+        self.assertRegex(block, r'id="agent-mic"[^>]*>'
+                                r'<span class="glyph">✎</span>'
+                                r'<span class="label"[^>]*>Dictate</span>')
+        self.assertRegex(block, r'id="assistant-listen"[^>]*>'
+                                r'<span class="glyph">🎙</span>'
+                                r'<span class="label"[^>]*>Listen</span>')
 
     def test_a_hidden_button_is_actually_hidden(self):
         """`hidden` loses to the page's own `button { display: flex }`.

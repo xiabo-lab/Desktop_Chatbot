@@ -483,7 +483,10 @@ class TestBundledGameAssets(unittest.TestCase):
         page = (ASSET_ROOT.parent / "index.html").read_text(encoding="utf-8")
         self.assertIn("#game-pause {", page)
         self.assertIn("font-size: 21px; z-index: 7;", page)
-        self.assertIn('id="paused-exit">Return to Game Menu', page)
+        # Regex rather than a contiguous string: the bilingual sweep added a
+        # `data-i18n` attribute between the id and the text. The pairing of
+        # that id with those words is what the test is about.
+        self.assertRegex(page, r'id="paused-exit"[^>]*>Return to Game Menu')
         self.assertIn('gameId === "yoga"' + chr(10) + '      ? ""', page)
         self.assertIn('answer.data.game && id !== "yoga"', page)
 

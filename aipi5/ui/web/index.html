@@ -2055,7 +2055,7 @@
 
   <div class="status" data-status>
     <div class="dot"></div>
-    <div data-status-text>Ready</div>
+    <div data-status-text data-i18n="main.ready">Ready</div>
   </div>
 
   <div class="buttons">
@@ -2065,10 +2065,10 @@
          standing in front of the panel could answer. The dot in the corner is
          the Agent button's, kept: a run still going, or a question the agent
          is blocked on. -->
-    <button data-action="talk"><span class="glyph">💬</span><span class="label">Assistant</span>
+    <button data-action="talk"><span class="glyph">💬</span><span class="label" data-i18n="main.assistant">Assistant</span>
       <span id="agent-dot" hidden></span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
-    <button data-action="call"><span class="glyph">📞</span><span class="label">Call</span>
+    <button data-action="call"><span class="glyph">📞</span><span class="label" data-i18n="main.call">Call</span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
     <!-- No Camera button. The camera is not a destination any more: asking
          what the assistant can see is a question, the answer is a sentence
@@ -2076,26 +2076,26 @@
          the button lives on the Talk page beside Listen and the picture lands
          in the transcript there. `#camera` still opens the live preview for
          anybody looking at the device over `ssh -L` — see `fromHash`. -->
-    <button data-action="weather"><span class="glyph">🌤</span><span class="label">Weather</span>
+    <button data-action="weather"><span class="glyph">🌤</span><span class="label" data-i18n="main.weather">Weather</span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
-    <button data-page="calendar"><span class="glyph">📅</span><span class="label">Calendar</span></button>
-    <button data-action="kodama"><span class="glyph">🎵</span><span class="label">Music</span>
+    <button data-page="calendar"><span class="glyph">📅</span><span class="label" data-i18n="main.calendar">Calendar</span></button>
+    <button data-action="kodama"><span class="glyph">🎵</span><span class="label" data-i18n="main.music">Music</span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
     <!-- Navigation only, like Files and Settings below. Opening the library
          asks the assistant for nothing — the camera and the accelerator are
          taken when a *game* is opened, not when the shelf is looked at — so
          there is no work to rate limit and nothing to cool down. -->
-    <button data-page="games"><span class="glyph">🎮</span><span class="label">Game</span></button>
+    <button data-page="games"><span class="glyph">🎮</span><span class="label" data-i18n="main.game">Game</span></button>
     <!-- Navigation only. Every other button here posts an action into the
          assistant's queue because it asks for work — a capture, a fetch, a
          launch — and gets a ten-second cooldown for it. Opening a folder is
          not work, there is nothing for the voice loop to do about it, and
          nothing here may be rate limited into looking broken. -->
-    <button data-page="files"><span class="glyph">⇅</span><span class="label">Files</span></button>
+    <button data-page="files"><span class="glyph">⇅</span><span class="label" data-i18n="main.files">Files</span></button>
     <!-- Also navigation only, and for the same reason. What is on it is the
          screensaver: the schedule, the Google account behind the slideshow,
          and how long each photograph stays up — section 22. -->
-    <button data-page="settings"><span class="glyph">⚙</span><span class="label">Settings</span></button>
+    <button data-page="settings"><span class="glyph">⚙</span><span class="label" data-i18n="main.settings">Settings</span></button>
   </div>
 </div>
 
@@ -2116,12 +2116,12 @@
 <div id="page-assistant" class="page">
   <header>
     <button class="back" data-back><span class="glyph">‹</span> Back</button>
-    <h1>ASSISTANT</h1>
+    <h1 data-i18n="assistant.assistant">ASSISTANT</h1>
     <!-- What a delegated run is doing, while it is doing it. In the header
          rather than in the transcript: it is replaced several times a run,
          and a row per replacement is a transcript nobody can read. -->
     <div id="agent-state"></div>
-    <button class="back" id="agent-stop" hidden>Stop</button>
+    <button class="back" id="agent-stop" hidden data-i18n="assistant.stop">Stop</button>
     <div class="headline-weather" data-weather-headline></div>
   </header>
 
@@ -2139,7 +2139,7 @@
 
   <div class="status" data-status>
     <div class="dot"></div>
-    <div data-status-text>Ready</div>
+    <div data-status-text data-i18n="main.ready">Ready</div>
   </div>
 
   <!-- Above the compose row on purpose: a question about a change to this
@@ -2149,8 +2149,8 @@
     <pre id="agent-approval-detail" hidden></pre>
     <div id="agent-approval-warning" hidden></div>
     <div id="agent-approval-row">
-      <button id="agent-deny" type="button">No</button>
-      <button id="agent-approve" type="button">Do it</button>
+      <button id="agent-deny" type="button" data-i18n="assistant.no">No</button>
+      <button id="agent-approve" type="button" data-i18n="assistant.do_it">Do it</button>
     </div>
   </div>
 
@@ -2161,18 +2161,18 @@
        had no way to answer. -->
   <form id="agent-compose" autocomplete="off">
     <textarea id="agent-text" rows="1" enterkeyhint="send"
-      placeholder="Type, or press Dictate and speak…"></textarea>
-    <button id="agent-mic" type="button"><span class="glyph">✎</span><span class="label">Dictate</span></button>
+      placeholder="Type, or press Dictate and speak…" data-i18n-placeholder="assistant.compose_placeholder"></textarea>
+    <button id="agent-mic" type="button"><span class="glyph">✎</span><span class="label" data-i18n="assistant.dictate">Dictate</span></button>
     <button id="agent-send" type="submit"><span class="glyph">↑</span></button>
   </form>
   <div id="agent-hint"></div>
 
   <div class="buttons">
-    <button id="assistant-listen"><span class="glyph">🎙</span><span class="label">Listen</span></button>
+    <button id="assistant-listen"><span class="glyph">🎙</span><span class="label" data-i18n="assistant.listen">Listen</span></button>
     <!-- The camera, where it now lives. `data-action="camera"` rather than a
          handler of its own, so it shares the one server-side cooldown with
          every other way of asking — see `press`. -->
-    <button data-action="camera"><span class="glyph">👁</span><span class="label">What do you see?</span>
+    <button data-action="camera"><span class="glyph">👁</span><span class="label" data-i18n="assistant.what_do_you_see">What do you see?</span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
   </div>
 </div>
@@ -2188,9 +2188,9 @@
 
     <div id="call-placeholder">
       <span class="glyph">📞</span>
-      <b id="call-headline">No call</b>
-      <span id="call-blurb">A paired phone can call this device.</span>
-      <button id="call-out" hidden>Call my phone</button>
+      <b id="call-headline" data-i18n="call.no_call">No call</b>
+      <span id="call-blurb" data-i18n="call.a_paired_phone_can_call">A paired phone can call this device.</span>
+      <button id="call-out" hidden data-i18n="call.call_my_phone">Call my phone</button>
     </div>
 
     <video id="call-self" autoplay playsinline muted></video>
@@ -2198,7 +2198,7 @@
     <div id="call-banner"><span class="live"></span>REMOTE CALL ACTIVE</div>
     <div id="call-who"></div>
 
-    <div id="call-status">Not connected</div>
+    <div id="call-status" data-i18n="call.not_connected">Not connected</div>
 
     <!-- Drawn rather than typed. These were emoji, which is fine for the five
          buttons on the main screen — those carry a word underneath that says
@@ -2208,7 +2208,7 @@
          colour emoji font is installed. -->
     <div id="call-controls">
       <button id="call-mic" class="call-control" disabled
-              aria-label="Mute the microphone" title="Mute">
+              aria-label="Mute the microphone" data-i18n-aria-label="call.mute_the_microphone" title="Mute" data-i18n-title="call.mute">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <rect class="fill" x="9" y="2" width="6" height="11" rx="3"/>
           <path class="line" d="M5 11a7 7 0 0 0 14 0"/>
@@ -2221,10 +2221,10 @@
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path class="fill" d="M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.2.4 2.4.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.4 0 .8-.2 1l-2.3 2.2z"/>
         </svg>
-        <span class="label">End Call</span>
+        <span class="label" data-i18n="call.end_call">End Call</span>
       </button>
       <button id="call-cam" class="call-control" disabled
-              aria-label="Turn the camera off" title="Camera">
+              aria-label="Turn the camera off" data-i18n-aria-label="call.turn_the_camera_off" title="Camera" data-i18n-title="call.camera">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <rect class="fill" x="2" y="6" width="13" height="12" rx="2.5"/>
           <path class="fill" d="M16 10.2 22 7v10l-6-3.2z"/>
@@ -2240,7 +2240,7 @@
 <div id="page-games" class="page">
   <header>
     <button class="back" data-back><span class="glyph">‹</span> Back</button>
-    <h1>GAMES</h1>
+    <h1 data-i18n="games.games">GAMES</h1>
     <div class="headline-weather" data-weather-headline></div>
   </header>
   <!-- Filled from `/api/games` rather than written out here, so that the
@@ -2264,7 +2264,7 @@
       <div class="game-hud-top">
         <div>
           <div id="game-score">0</div>
-          <div id="game-best">BEST 0</div>
+          <div id="game-best" data-i18n="game.best_0">BEST 0</div>
           <div id="game-combo"></div>
           <div id="game-streak"></div>
         </div>
@@ -2288,36 +2288,36 @@
       <div class="detail" id="banner-detail"></div>
     </div>
 
-    <button id="game-pause"><span class="glyph">⏸</span><span>Pause</span></button>
+    <button id="game-pause"><span class="glyph">⏸</span><span data-i18n="game.pause">Pause</span></button>
 
     <div id="boxing-hud" aria-live="polite">
       <div class="boxing-health" id="boxing-opponent-health">
-        <div class="boxing-health-row"><span class="boxing-health-name">OPPONENT</span><span class="boxing-health-value" id="boxing-opponent-value">100 / 100</span></div>
+        <div class="boxing-health-row"><span class="boxing-health-name" data-i18n="game.opponent">OPPONENT</span><span class="boxing-health-value" id="boxing-opponent-value">100 / 100</span></div>
         <div class="boxing-health-track"><div class="boxing-health-delay"></div><div class="boxing-health-main"></div></div>
       </div>
       <div id="boxing-timer">1:30</div>
-      <div id="boxing-score">SCORE 0</div>
+      <div id="boxing-score" data-i18n="game.score_0">SCORE 0</div>
       <div id="boxing-combo"></div>
       <div id="boxing-prompt"></div>
       <div id="boxing-message"></div>
       <div id="boxing-slow"></div>
       <div class="boxing-health" id="boxing-player-health">
-        <div class="boxing-health-row"><span class="boxing-health-name">PLAYER</span><span class="boxing-health-value" id="boxing-player-value">100 / 100</span></div>
+        <div class="boxing-health-row"><span class="boxing-health-name" data-i18n="game.player">PLAYER</span><span class="boxing-health-value" id="boxing-player-value">100 / 100</span></div>
         <div class="boxing-health-track"><div class="boxing-health-delay"></div><div class="boxing-health-main"></div></div>
       </div>
     </div>
 
     <!-- Boxing selects a mode before the shared X-to-start screen. -->
     <div class="game-sheet" id="sheet-mode">
-      <h2>BOXING</h2>
-      <p>Choose how you want to step into the ring.</p>
+      <h2 data-i18n="game.boxing">BOXING</h2>
+      <p data-i18n="game.choose_how_you_want_to">Choose how you want to step into the ring.</p>
       <div class="boxing-mode-grid">
-        <button class="boxing-mode" id="boxing-training"><span class="glyph">◎</span><strong>TRAINING</strong><small>90 seconds of targets, defense prompts, and progressive combinations.</small></button>
-        <button class="boxing-mode" id="boxing-fight"><span class="glyph">🥊</span><strong>FIGHT OPPONENT</strong><small>Face an adaptive boxer. Block, dodge, parry, and counter.</small></button>
+        <button class="boxing-mode" id="boxing-training"><span class="glyph">◎</span><strong data-i18n="game.training">TRAINING</strong><small data-i18n="game.90_seconds_of_targets_defense">90 seconds of targets, defense prompts, and progressive combinations.</small></button>
+        <button class="boxing-mode" id="boxing-fight"><span class="glyph">🥊</span><strong data-i18n="game.fight_opponent">FIGHT OPPONENT</strong><small data-i18n="game.face_an_adaptive_boxer_block">Face an adaptive boxer. Block, dodge, parry, and counter.</small></button>
       </div>
-      <div class="boxing-difficulty"><span>DIFFICULTY</span><button data-boxing-difficulty="easy">Easy</button><button class="selected" data-boxing-difficulty="normal">Normal</button><button data-boxing-difficulty="hard">Hard</button></div>
-      <button id="boxing-fullscreen">Full Screen</button>
-      <button id="boxing-mode-back">Back to Games</button>
+      <div class="boxing-difficulty"><span data-i18n="game.difficulty">DIFFICULTY</span><button data-boxing-difficulty="easy" data-i18n="game.easy">Easy</button><button class="selected" data-boxing-difficulty="normal" data-i18n="game.normal">Normal</button><button data-boxing-difficulty="hard" data-i18n="game.hard">Hard</button></div>
+      <button id="boxing-fullscreen" data-i18n="game.full_screen">Full Screen</button>
+      <button id="boxing-mode-back" data-i18n="game.back_to_games">Back to Games</button>
     </div>
 
 
@@ -2336,11 +2336,11 @@
         <div class="spacer"></div>
         <div id="yoga-clock">--:--</div>
         <div class="spacer"></div>
-        <div id="yoga-score">SCORE &mdash;</div>
+        <div id="yoga-score" data-i18n="game.score_mdash">SCORE &mdash;</div>
         <div id="yoga-hold-clock">0</div>
       </div>
       <div id="yoga-card">
-        <div id="yoga-preview-tag">NEXT POSE</div>
+        <div id="yoga-preview-tag" data-i18n="game.next_pose">NEXT POSE</div>
         <div id="yoga-name"></div>
         <div id="yoga-sanskrit"></div>
         <div id="yoga-instruction"></div>
@@ -2355,67 +2355,67 @@
          Boxing picks a mode: an X held over this sheet must not start a class
          nobody has chosen. -->
     <div class="game-sheet" id="sheet-yoga">
-      <h2>YOGA COACH</h2>
-      <p><span id="yoga-catalog-count">21 courses</span>, each 15–20 minutes. Choose a class.</p>
+      <h2 data-i18n="game.yoga_coach">YOGA COACH</h2>
+      <p><span id="yoga-catalog-count" data-i18n="game.21_courses">21 courses</span>, each 15–20 minutes. Choose a class.</p>
       <div class="yoga-level-tabs">
-        <button class="yoga-level-tab selected" data-yoga-level="beginner">BEGINNER · 7</button>
-        <button class="yoga-level-tab" data-yoga-level="intermediate">INTERMEDIATE · 7</button>
-        <button class="yoga-level-tab" data-yoga-level="advanced">ADVANCED · 7</button>
+        <button class="yoga-level-tab selected" data-yoga-level="beginner" data-i18n="game.beginner_7">BEGINNER · 7</button>
+        <button class="yoga-level-tab" data-yoga-level="intermediate" data-i18n="game.intermediate_7">INTERMEDIATE · 7</button>
+        <button class="yoga-level-tab" data-yoga-level="advanced" data-i18n="game.advanced_7">ADVANCED · 7</button>
       </div>
       <div class="yoga-course-grid" id="yoga-course-grid"></div>
       <div class="yoga-sheet-actions">
-        <button id="yoga-review">Review 91 Poses</button>
-        <button id="yoga-back">Back to Games</button>
+        <button id="yoga-review" data-i18n="game.review_91_poses">Review 91 Poses</button>
+        <button id="yoga-back" data-i18n="game.back_to_games">Back to Games</button>
       </div>
     </div>
 
     <!-- Start. Section 20: a preview, a detection state, and a START that
          stays disabled until somebody is really there. -->
     <div class="game-sheet on" id="sheet-start">
-      <h2 id="start-title">Fruit Ninja</h2>
+      <h2 id="start-title" data-i18n="game.fruit_ninja">Fruit Ninja</h2>
       <p id="start-instruction">Stand where the camera can see your full upper body.<span id="start-round-copy"></span></p>
       <img id="game-preview" alt="">
-      <div id="game-detected" class="no">Looking for a player…</div>
+      <div id="game-detected" class="no" data-i18n="game.looking_for_a_player">Looking for a player…</div>
       <div class="gesture-help" id="start-gesture-help">
-        <span class="step">X</span><span>Cross both arms into an X to start</span>
+        <span class="step">X</span><span data-i18n="game.cross_both_arms_into_an">Cross both arms into an X to start</span>
       </div>
-      <button class="primary gesture-primary" id="start-play" disabled>START</button>
-      <button id="start-back">Back to Games</button>
+      <button class="primary gesture-primary" id="start-play" disabled data-i18n="game.start">START</button>
+      <button id="start-back" data-i18n="game.back_to_games">Back to Games</button>
     </div>
 
     <!-- Pause. Section 29. -->
     <div class="game-sheet" id="sheet-paused">
-      <h2>PAUSED</h2>
-      <button class="primary" id="paused-resume">Resume</button>
-      <button id="paused-restart">Restart</button>
-      <button id="paused-exit">Return to Game Menu</button>
+      <h2 data-i18n="game.paused">PAUSED</h2>
+      <button class="primary" id="paused-resume" data-i18n="game.resume">Resume</button>
+      <button id="paused-restart" data-i18n="game.restart">Restart</button>
+      <button id="paused-exit" data-i18n="game.return_to_game_menu">Return to Game Menu</button>
     </div>
 
     <!-- Game over. Section 28. -->
     <div class="game-sheet" id="sheet-over">
-      <h2>GAME OVER</h2>
+      <h2 data-i18n="game.game_over">GAME OVER</h2>
       <div class="sheet-rows">
-        <div><span class="label">SCORE</span><span class="big-score" id="over-score">0</span></div>
-        <div><span class="label">BEST</span><span class="big-score" id="over-best">0</span></div>
+        <div><span class="label" data-i18n="game.score">SCORE</span><span class="big-score" id="over-score">0</span></div>
+        <div><span class="label" data-i18n="game.best">BEST</span><span class="big-score" id="over-best">0</span></div>
       </div>
       <p id="over-detail"></p>
       <div class="boxing-results" id="boxing-results"></div>
       <div class="yoga-results" id="yoga-results"></div>
       <div class="gesture-help" id="over-gesture-help">
-        <span class="step">X</span><span>Cross both arms into an X to play again</span>
+        <span class="step">X</span><span data-i18n="game.cross_both_arms_into_an2">Cross both arms into an X to play again</span>
       </div>
-      <button class="primary gesture-primary" id="over-again">Play Again</button>
-      <button id="over-back">Back to Games</button>
+      <button class="primary gesture-primary" id="over-again" data-i18n="game.play_again">Play Again</button>
+      <button id="over-back" data-i18n="game.back_to_games">Back to Games</button>
     </div>
 
     <!-- Section 41's two failures, and section 43's third. One sheet: they
          differ only in what they say and they all offer the same two ways
          out, so three sheets would be three things to keep in step. -->
     <div class="game-sheet" id="sheet-error">
-      <h2 id="error-title">Camera unavailable</h2>
+      <h2 id="error-title" data-i18n="game.camera_unavailable">Camera unavailable</h2>
       <p id="error-detail"></p>
-      <button class="primary" id="error-retry">Retry</button>
-      <button id="error-back">Back to Games</button>
+      <button class="primary" id="error-retry" data-i18n="game.retry">Retry</button>
+      <button id="error-back" data-i18n="game.back_to_games">Back to Games</button>
     </div>
 
     <div id="game-gesture-cursor" aria-hidden="true"><span>✋</span></div>
@@ -2438,23 +2438,23 @@
 <div id="page-camera" class="page">
   <header>
     <button class="back" data-back><span class="glyph">‹</span> Back</button>
-    <h1>CAMERA</h1>
+    <h1 data-i18n="camera.camera">CAMERA</h1>
     <div class="status" data-status>
       <div class="dot"></div>
-      <div data-status-text>Ready</div>
+      <div data-status-text data-i18n="main.ready">Ready</div>
     </div>
   </header>
 
   <div id="camera-stage">
     <img id="camera-view" alt="">
-    <div id="camera-offline">The camera is not available.</div>
-    <div id="camera-answer"><span class="who">ASSISTANT</span><span id="camera-answer-text"></span></div>
+    <div id="camera-offline" data-i18n="camera.the_camera_is_not_available">The camera is not available.</div>
+    <div id="camera-answer"><span class="who" data-i18n="assistant.assistant">ASSISTANT</span><span id="camera-answer-text"></span></div>
   </div>
 
   <div class="buttons">
     <!-- `data-stay`: ask without leaving. The answer still appears over the
          preview here, and it also lands in the conversation on Talk. -->
-    <button data-action="camera" data-stay><span class="glyph">👁</span><span class="label">What do you see?</span>
+    <button data-action="camera" data-stay><span class="glyph">👁</span><span class="label" data-i18n="assistant.what_do_you_see">What do you see?</span>
       <span class="cooldown"></span><span class="cooldown-bar"></span></button>
   </div>
 </div>
@@ -2462,23 +2462,23 @@
 <!-- ── calendar ────────────────────────────────────────────────── -->
 <div id="page-calendar" class="page full">
   <header class="calendar-header">
-    <button class="back" data-back>Back to Home Menu</button>
-    <div class="calendar-nav" aria-label="Calendar navigation">
-      <button id="cal-prev" class="cal-arrow" aria-label="Previous month">‹</button>
+    <button class="back" data-back data-i18n="calendar.back_to_home_menu">Back to Home Menu</button>
+    <div class="calendar-nav" aria-label="Calendar navigation" data-i18n-aria-label="calendar.navigation">
+      <button id="cal-prev" class="cal-arrow" aria-label="Previous month" data-i18n-aria-label="calendar.previous_month">‹</button>
       <div id="cal-month-title" aria-live="polite"></div>
-      <button id="cal-next" class="cal-arrow" aria-label="Next month">›</button>
+      <button id="cal-next" class="cal-arrow" aria-label="Next month" data-i18n-aria-label="calendar.next_month">›</button>
     </div>
-    <button id="cal-today" class="cal-back-today">Back to Today</button>
+    <button id="cal-today" class="cal-back-today" data-i18n="calendar.back_to_today">Back to Today</button>
   </header>
   <div class="calendar-shell">
     <main class="calendar-left">
       <div class="cal-weekdays" aria-hidden="true">
-        <div>Sunday</div><div>Monday</div><div>Tuesday</div><div>Wednesday</div>
-        <div>Thursday</div><div>Friday</div><div>Saturday</div>
+        <div data-i18n="calendar.sunday">Sunday</div><div data-i18n="calendar.monday">Monday</div><div data-i18n="calendar.tuesday">Tuesday</div><div data-i18n="calendar.wednesday">Wednesday</div>
+        <div data-i18n="calendar.thursday">Thursday</div><div data-i18n="calendar.friday">Friday</div><div data-i18n="calendar.saturday">Saturday</div>
       </div>
-      <div id="cal-grid" role="grid" aria-label="Monthly calendar"></div>
+      <div id="cal-grid" role="grid" aria-label="Monthly calendar" data-i18n-aria-label="calendar.monthly"></div>
     </main>
-    <aside class="calendar-panel" aria-label="Holidays and birthdays">
+    <aside class="calendar-panel" aria-label="Holidays and birthdays" data-i18n-aria-label="calendar.holidays_and_birthdays">
       <div class="cal-panel-head">
         <div id="cal-panel-title"></div>
         <div id="cal-storage-note"></div>
@@ -2499,7 +2499,7 @@
         </section>
       </div>
       <button id="cal-birthday-settings" class="cal-birthday-settings"
-              aria-label="Open birthday settings">⚙ Birthday Settings</button>
+              aria-label="Open birthday settings" data-i18n-aria-label="calendar.open_birthday_settings" data-i18n="calendar.birthday_settings">⚙ Birthday Settings</button>
     </aside>
   </div>
 </div>
@@ -2507,29 +2507,29 @@
 <dialog id="birthday-settings-dialog" class="calendar-dialog birthday-settings-dialog">
   <div class="calendar-birthday-settings">
     <div class="calendar-settings-head">
-      <h2>Birthday Settings</h2>
+      <h2 data-i18n="calendar.birthday_settings2">Birthday Settings</h2>
       <button id="birthday-settings-dismiss" class="calendar-dialog-dismiss" type="button"
-              aria-label="Close birthday settings">×</button>
+              aria-label="Close birthday settings" data-i18n-aria-label="calendar.close_birthday_settings">×</button>
     </div>
     <div id="birthday-settings-list" class="birthday-settings-list"></div>
     <div class="calendar-dialog-actions">
-      <button id="birthday-settings-close" type="button">Close</button>
-      <button id="birthday-settings-add" class="primary" type="button">+ Add Birthday</button>
+      <button id="birthday-settings-close" type="button" data-i18n="calendar.close">Close</button>
+      <button id="birthday-settings-add" class="primary" type="button" data-i18n="calendar.add_birthday">+ Add Birthday</button>
     </div>
   </div>
 </dialog>
 
 <dialog id="birthday-dialog" class="calendar-dialog">
   <form id="birthday-form">
-    <h2 id="birthday-dialog-title">Add Birthday</h2>
+    <h2 id="birthday-dialog-title" data-i18n="calendar.add_birthday2">Add Birthday</h2>
     <div class="calendar-form-grid">
       <label class="wide">Name
         <input id="birthday-name" maxlength="80" required autocomplete="off">
       </label>
       <label>Calendar
         <select id="birthday-calendar">
-          <option value="solar">Solar / Gregorian</option>
-          <option value="lunar">Chinese Lunar</option>
+          <option value="solar" data-i18n="calendar.solar_gregorian">Solar / Gregorian</option>
+          <option value="lunar" data-i18n="calendar.chinese_lunar">Chinese Lunar</option>
         </select>
       </label>
       <label>Optional birth year
@@ -2550,19 +2550,19 @@
     </div>
     <div id="birthday-error" class="calendar-form-error" role="alert"></div>
     <div class="calendar-dialog-actions">
-      <button id="birthday-cancel" type="button">Cancel</button>
-      <button class="primary" type="submit">Save Birthday</button>
+      <button id="birthday-cancel" type="button" data-i18n="calendar.cancel">Cancel</button>
+      <button class="primary" type="submit" data-i18n="calendar.save_birthday">Save Birthday</button>
     </div>
   </form>
 </dialog>
 
 <dialog id="birthday-delete-dialog" class="calendar-dialog">
   <div class="calendar-confirm">
-    <h2>Delete Birthday</h2>
+    <h2 data-i18n="calendar.delete_birthday">Delete Birthday</h2>
     <p id="birthday-delete-text"></p>
     <div class="calendar-dialog-actions">
-      <button id="birthday-delete-cancel" type="button">Cancel</button>
-      <button id="birthday-delete-confirm" class="danger" type="button">Delete</button>
+      <button id="birthday-delete-cancel" type="button" data-i18n="calendar.cancel">Cancel</button>
+      <button id="birthday-delete-confirm" class="danger" type="button" data-i18n="calendar.delete">Delete</button>
     </div>
   </div>
 </dialog>
@@ -2583,7 +2583,7 @@
            that does nothing. -->
       <div id="wx-loc" class="glass"><span class="pin">📍</span><span id="wx-place">—</span></div>
       <div id="wx-updated"></div>
-      <button id="wx-refresh" class="glass" title="Refresh">⟳</button>
+      <button id="wx-refresh" class="glass" title="Refresh" data-i18n-title="files.refresh_title">⟳</button>
       <div id="wx-units" class="glass">
         <button data-unit="F">F°</button>
         <button data-unit="C">C°</button>
@@ -2594,7 +2594,7 @@
       <div id="wx-now" class="glass">
         <div>
           <div id="wx-day">—</div>
-          <div id="wx-date"><span id="wx-date-text">—</span><span id="wx-fresh" hidden>Recently updated</span></div>
+          <div id="wx-date"><span id="wx-date-text">—</span><span id="wx-fresh" hidden data-i18n="weather.recently_updated">Recently updated</span></div>
           <div id="wx-temp">--<sup>°</sup></div>
           <div id="wx-feels">Feels like<b id="wx-feels-value">--°</b></div>
         </div>
@@ -2607,8 +2607,8 @@
 
       <div id="wx-hourly">
         <div class="head">
-          <h2>Forecast Hourly</h2>
-          <button id="wx-full" class="pill">Check Full ›</button>
+          <h2 data-i18n="weather.forecast_hourly">Forecast Hourly</h2>
+          <button id="wx-full" class="pill" data-i18n="weather.check_full">Check Full ›</button>
         </div>
         <div id="wx-hours"></div>
       </div>
@@ -2618,7 +2618,7 @@
       <div id="wx-stats" class="glass"></div>
 
       <div id="wx-sun" class="glass">
-        <div class="ends"><span>Sunrise</span><span>Sunset</span></div>
+        <div class="ends"><span data-i18n="weather.sunrise">Sunrise</span><span data-i18n="weather.sunset">Sunset</span></div>
         <div class="times"><span id="wx-sunrise">—</span><span id="wx-sunset">—</span></div>
         <div id="wx-track"><div class="done"></div><div class="dot"></div></div>
         <div id="wx-daylight"></div>
@@ -2627,7 +2627,7 @@
       <div id="wx-advice">
         <div id="wx-marks" class="glass"></div>
         <div id="wx-outside" class="glass">
-          <h3>Should I go Outside?</h3>
+          <h3 data-i18n="weather.should_i_go_outside">Should I go Outside?</h3>
           <div class="line" id="wx-outside-line">—</div>
           <div id="wx-verdict"><span class="badge">·</span><span id="wx-verdict-text">—</span></div>
           <div id="wx-why"></div>
@@ -2658,17 +2658,17 @@
 <div id="page-files" class="page">
   <header>
     <button class="back" data-back><span class="glyph">‹</span> Back</button>
-    <h1>FILE TRANSFER</h1>
+    <h1 data-i18n="files.file_transfer">FILE TRANSFER</h1>
     <div class="headline-weather" data-weather-headline></div>
   </header>
 
   <div id="files-top">
-    <button id="files-upload"><span class="glyph">⬆</span><span class="label">Upload File</span></button>
+    <button id="files-upload"><span class="glyph">⬆</span><span class="label" data-i18n="files.upload_file">Upload File</span></button>
     <div id="files-sort">
-      <button data-sort="date" class="on">Newest</button>
-      <button data-sort="name">Name</button>
-      <button data-sort="size">Size</button>
-      <button id="files-refresh">Refresh</button>
+      <button data-sort="date" class="on" data-i18n="files.newest">Newest</button>
+      <button data-sort="name" data-i18n="files.name">Name</button>
+      <button data-sort="size" data-i18n="files.size">Size</button>
+      <button id="files-refresh" data-i18n="files.refresh">Refresh</button>
     </div>
     <div id="files-storage"></div>
   </div>
@@ -2692,7 +2692,7 @@
 <div id="page-settings" class="page">
   <header>
     <button class="back" data-back><span class="glyph">‹</span> Back</button>
-    <h1>SETTINGS</h1>
+    <h1 data-i18n="settings.settings">SETTINGS</h1>
     <div class="headline-weather" data-weather-headline></div>
   </header>
 
@@ -2700,10 +2700,10 @@
        here unchanged and kept every id, so the script that fills them
        needed no edit at all -- see `showSettingsTab`. -->
   <div id="settings-tabs" role="tablist">
-    <button class="set-tab on" role="tab" data-set-tab="hardware">System Hardware Info</button>
-    <button class="set-tab" role="tab" data-set-tab="game">Game Setting</button>
-    <button class="set-tab" role="tab" data-set-tab="system">System Setting</button>
-    <button class="set-tab" role="tab" data-set-tab="screensaver">Screensaver Setting</button>
+    <button class="set-tab on" role="tab" data-set-tab="hardware" data-i18n="settings.system_hardware_info">System Hardware Info</button>
+    <button class="set-tab" role="tab" data-set-tab="game" data-i18n="settings.game_setting">Game Setting</button>
+    <button class="set-tab" role="tab" data-set-tab="system" data-i18n="settings.system_setting">System Setting</button>
+    <button class="set-tab" role="tab" data-set-tab="screensaver" data-i18n="settings.screensaver_setting">Screensaver Setting</button>
   </div>
 
   <div id="settings-body">
@@ -2712,13 +2712,13 @@
            /sys at the moment it is asked, so a number on this card is the
            device's answer and not a value somebody typed into a file. -->
       <div class="set-section">
-        <div class="set-title">Device</div>
+        <div class="set-title" data-i18n="settings.device">Device</div>
         <div class="set-row">
-          <div class="set-label">Model</div>
+          <div class="set-label" data-i18n="settings.model">Model</div>
           <div class="set-value" id="set-hw-model">—</div>
         </div>
         <div class="set-row">
-          <div class="set-label">Processor</div>
+          <div class="set-label" data-i18n="settings.processor">Processor</div>
           <div class="set-value" id="set-hw-cpu">—</div>
         </div>
         <!-- A temperature with a word beside it. 59 degrees means nothing to
@@ -2726,26 +2726,26 @@
              the number alone is what makes people worry or not worry for the
              wrong reasons. -->
         <div class="set-row">
-          <div class="set-label">Temperature</div>
+          <div class="set-label" data-i18n="settings.temperature">Temperature</div>
           <div class="set-value" id="set-hw-temp">—</div>
         </div>
         <div class="set-row">
-          <div class="set-label">Memory</div>
+          <div class="set-label" data-i18n="settings.memory">Memory</div>
           <div class="set-value" id="set-hw-memory">—</div>
         </div>
         <div class="set-row">
-          <div class="set-label">Storage</div>
+          <div class="set-label" data-i18n="settings.storage">Storage</div>
           <div class="set-value" id="set-hw-disk">—</div>
         </div>
         <!-- Two uptimes, deliberately. "The Pi has been up nine days and the
              assistant four minutes" is exactly what somebody needs to see
              after a restart nobody asked for, and one number cannot say it. -->
         <div class="set-row">
-          <div class="set-label">Running since</div>
+          <div class="set-label" data-i18n="settings.running_since">Running since</div>
           <div class="set-value" id="set-hw-uptime">—</div>
         </div>
         <div class="set-row">
-          <div class="set-label">Software</div>
+          <div class="set-label" data-i18n="settings.software">Software</div>
           <div class="set-value" id="set-hw-software">—</div>
         </div>
         <div class="set-note" id="set-hw-note"></div>
@@ -2754,33 +2754,33 @@
       <!-- Section 44. Motion health comes from the device, not configuration,
            so a disconnected accelerator cannot look healthy here. -->
       <div class="set-section">
-        <div class="set-title">AI Motion</div>
+        <div class="set-title" data-i18n="settings.ai_motion">AI Motion</div>
 
         <div class="set-row">
-          <div class="set-label">AI accelerator</div>
+          <div class="set-label" data-i18n="settings.ai_accelerator">AI accelerator</div>
           <div class="set-value" id="set-hailo">—</div>
         </div>
         <div class="set-row">
-          <div class="set-label">Firmware</div>
+          <div class="set-label" data-i18n="settings.firmware">Firmware</div>
           <div class="set-value" id="set-hailo-fw">—</div>
         </div>
         <div class="set-row">
-          <div class="set-label">Pose model</div>
+          <div class="set-label" data-i18n="settings.pose_model">Pose model</div>
           <div class="set-value" id="set-pose-model">—</div>
         </div>
         <div class="set-row">
-          <div class="set-label">Camera</div>
+          <div class="set-label" data-i18n="settings.camera">Camera</div>
           <div class="set-value" id="set-motion-camera">—</div>
         </div>
         <div class="set-row">
-          <div class="set-label">Performance</div>
+          <div class="set-label" data-i18n="settings.performance">Performance</div>
           <div class="set-value" id="set-motion-fps">—</div>
         </div>
 
         <div class="set-buttons">
           <!-- Section 45's developer mode, off by default and reachable without
                a keyboard, which on this device means it has to be a button. -->
-          <button class="set-button" id="set-debug-pose">Debug Pose: Off</button>
+          <button class="set-button" id="set-debug-pose" data-i18n="settings.debug_pose_off">Debug Pose: Off</button>
         </div>
         <div class="set-note" id="set-motion-note"></div>
       </div>
@@ -2788,9 +2788,9 @@
 
     <div class="set-panel" data-set-panel="game">
       <div class="set-section">
-        <div class="set-title">Fruit Ninja</div>
+        <div class="set-title" data-i18n="game.fruit_ninja">Fruit Ninja</div>
         <div class="set-row">
-          <div class="set-label">Play time</div>
+          <div class="set-label" data-i18n="settings.play_time">Play time</div>
           <div class="set-value" id="set-game-time">—</div>
         </div>
         <div class="set-buttons" id="set-game-times">
@@ -2800,16 +2800,16 @@
           <button class="set-button" data-game-seconds="240">240s</button>
           <button class="set-button" data-game-seconds="300">300s</button>
         </div>
-        <div class="set-note" id="set-game-note">Choose how long the next round lasts.</div>
+        <div class="set-note" id="set-game-note" data-i18n="settings.choose_how_long_the_next">Choose how long the next round lasts.</div>
 
         <div class="set-row">
-          <div class="set-label">Difficulty</div>
+          <div class="set-label" data-i18n="settings.difficulty">Difficulty</div>
           <div class="set-value" id="set-game-difficulty">—</div>
         </div>
         <div class="set-buttons" id="set-game-difficulties">
-          <button class="set-button" data-difficulty="easy">Easy</button>
-          <button class="set-button" data-difficulty="normal">Normal</button>
-          <button class="set-button" data-difficulty="hard">Hard</button>
+          <button class="set-button" data-difficulty="easy" data-i18n="game.easy">Easy</button>
+          <button class="set-button" data-difficulty="normal" data-i18n="game.normal">Normal</button>
+          <button class="set-button" data-difficulty="hard" data-i18n="game.hard">Hard</button>
         </div>
         <div class="set-note" id="set-difficulty-note"></div>
 
@@ -2818,17 +2818,38 @@
              somebody to finish their round first answers a question they did
              not ask. -->
         <div class="set-row">
-          <div class="set-label">Game sound</div>
+          <div class="set-label" data-i18n="settings.game_sound">Game sound</div>
           <div class="set-value" id="set-game-sound">—</div>
         </div>
         <div class="set-buttons" id="set-game-sounds">
-          <button class="set-button" data-sound="on">On</button>
-          <button class="set-button" data-sound="off">Off</button>
+          <button class="set-button" data-sound="on" data-i18n="settings.on">On</button>
+          <button class="set-button" data-sound="off" data-i18n="settings.off">Off</button>
         </div>
       </div>
     </div>
 
     <div class="set-panel" data-set-panel="system">
+      <!-- The two labels here are each written in their own language on
+           purpose, and neither goes through the translation table. Somebody
+           who cannot read the language the screen is currently in has to be
+           able to find their way back, and a button reading 中文 while the
+           page is in Chinese would be no help at all. -->
+      <div class="set-section">
+        <div class="set-title" data-i18n="settings.language">Language</div>
+        <div class="set-row">
+          <div class="set-label" data-i18n="settings.on_this_screen">On this screen</div>
+          <div class="set-value" id="set-language">—</div>
+        </div>
+        <div class="set-buttons" id="set-languages">
+          <button class="set-button" data-lang="en">English</button>
+          <button class="set-button" data-lang="zh">中文</button>
+        </div>
+        <div class="set-note" data-i18n="settings.changes_the_writing">
+          Changes the writing on this screen. The assistant still answers in
+          whichever language you speak to it.
+        </div>
+      </div>
+
       <!-- What is running, and how it is changed. Deliberately not a button
            that pretends: a control that responds and does nothing is one
            somebody presses twice and then reports as broken, while a greyed
@@ -2836,15 +2857,15 @@
            feature. There is no update server for this device to ask, so the
            honest thing is to say what to do instead. -->
       <div class="set-section">
-        <div class="set-title">Software Update</div>
+        <div class="set-title" data-i18n="settings.software_update">Software Update</div>
         <div class="set-row">
-          <div class="set-label">Version</div>
+          <div class="set-label" data-i18n="settings.version">Version</div>
           <div class="set-value" id="set-version">—</div>
         </div>
         <div class="set-buttons">
-          <button class="set-button" id="set-update" disabled>Check for Update</button>
+          <button class="set-button" id="set-update" disabled data-i18n="settings.check_for_update">Check for Update</button>
         </div>
-        <div class="set-note">
+        <div class="set-note" data-i18n="settings.not_built_yet_aipi5_is">
           Not built yet. AIPI5 is updated by running ./scripts/deploy.sh from
           the machine it is developed on; nothing on the network offers it a
           newer version to find.
@@ -2852,16 +2873,16 @@
       </div>
 
       <div class="set-section">
-        <div class="set-title">Volume</div>
+        <div class="set-title" data-i18n="settings.volume">Volume</div>
         <div class="set-row volume-row">
-          <label class="set-label" for="set-volume">All applications</label>
+          <label class="set-label" for="set-volume" data-i18n="settings.all_applications">All applications</label>
           <div class="volume-control">
             <input id="set-volume" type="range" min="0" max="100" step="1"
-                   value="100" aria-label="Master volume">
+                   value="100" aria-label="Master volume" data-i18n-aria-label="settings.master_volume">
             <output id="set-volume-value" for="set-volume">100%</output>
           </div>
         </div>
-        <div class="set-note" id="set-volume-note">
+        <div class="set-note" id="set-volume-note" data-i18n="settings.controls_game_call_kodama_lite">
           Controls Game, Call, Kodama-Lite, Browser, and Agent Talk together.
         </div>
       </div>
@@ -2870,17 +2891,17 @@
            covering the screen, and that is a guess about window geometry. This
            row is the one that is always here, for the day the guess is wrong. -->
       <div class="set-section">
-        <div class="set-title">Display</div>
+        <div class="set-title" data-i18n="settings.display">Display</div>
 
         <div class="set-row">
-          <div class="set-label">Full screen</div>
+          <div class="set-label" data-i18n="settings.full_screen">Full screen</div>
           <div class="set-value" id="set-fullscreen">—</div>
         </div>
 
         <div class="set-buttons">
-          <button class="set-button" id="set-go-fullscreen">Go Full Screen</button>
+          <button class="set-button" id="set-go-fullscreen" data-i18n="settings.go_full_screen">Go Full Screen</button>
         </div>
-        <div class="set-note">
+        <div class="set-note" data-i18n="settings.the_kiosk_starts_full_screen">
           The kiosk starts full-screen. If the window's close button was pressed
           and a title bar appeared, this puts it back.
         </div>
@@ -2889,14 +2910,14 @@
 
     <div class="set-panel" data-set-panel="screensaver">
       <div class="set-section">
-        <div class="set-title">Screensaver</div>
+        <div class="set-title" data-i18n="settings.screensaver">Screensaver</div>
 
         <div class="set-row">
-          <div class="set-label">Enabled</div>
+          <div class="set-label" data-i18n="settings.enabled">Enabled</div>
           <div class="set-value" id="set-enabled">—</div>
         </div>
         <div class="set-row">
-          <div class="set-label">Idle timeout</div>
+          <div class="set-label" data-i18n="settings.idle_timeout">Idle timeout</div>
           <div class="set-value" id="set-timeout">—</div>
         </div>
         <!-- The schedule, editable. It used to be read-only here and said
@@ -2912,7 +2933,7 @@
              already on the screen. The ladder covers the times people actually
              pick; the pair either side of it covers everything between. -->
         <div class="set-row">
-          <div class="set-label">Day</div>
+          <div class="set-label" data-i18n="settings.day">Day</div>
           <div class="set-value" id="set-day">—</div>
         </div>
         <div class="set-buttons" id="set-day-times">
@@ -2920,20 +2941,20 @@
           <button class="set-button" data-day-start="06:30">06:30</button>
           <button class="set-button" data-day-start="07:00">07:00</button>
           <button class="set-button" data-day-start="08:00">08:00</button>
-          <button class="set-button" data-nudge="day_start" data-by="-30">−30 min</button>
-          <button class="set-button" data-nudge="day_start" data-by="30">+30 min</button>
+          <button class="set-button" data-nudge="day_start" data-by="-30" data-i18n="settings.30_min">−30 min</button>
+          <button class="set-button" data-nudge="day_start" data-by="30" data-i18n="settings.30_min2">+30 min</button>
         </div>
         <div class="set-row">
-          <div class="set-label">Day shows</div>
+          <div class="set-label" data-i18n="settings.day_shows">Day shows</div>
           <div class="set-value" id="set-day-mode">—</div>
         </div>
         <div class="set-buttons" id="set-day-modes">
-          <button class="set-button" data-day-mode="photos">Google Photos</button>
-          <button class="set-button" data-day-mode="clock">Time + Weather</button>
+          <button class="set-button" data-day-mode="photos" data-i18n="settings.google_photos">Google Photos</button>
+          <button class="set-button" data-day-mode="clock" data-i18n="settings.time_weather">Time + Weather</button>
         </div>
 
         <div class="set-row">
-          <div class="set-label">Night</div>
+          <div class="set-label" data-i18n="settings.night">Night</div>
           <div class="set-value" id="set-night">—</div>
         </div>
         <div class="set-buttons" id="set-night-times">
@@ -2941,22 +2962,22 @@
           <button class="set-button" data-night-start="21:00">21:00</button>
           <button class="set-button" data-night-start="22:00">22:00</button>
           <button class="set-button" data-night-start="23:00">23:00</button>
-          <button class="set-button" data-nudge="night_start" data-by="-30">−30 min</button>
-          <button class="set-button" data-nudge="night_start" data-by="30">+30 min</button>
+          <button class="set-button" data-nudge="night_start" data-by="-30" data-i18n="settings.30_min">−30 min</button>
+          <button class="set-button" data-nudge="night_start" data-by="30" data-i18n="settings.30_min2">+30 min</button>
         </div>
         <div class="set-row">
-          <div class="set-label">Night shows</div>
+          <div class="set-label" data-i18n="settings.night_shows">Night shows</div>
           <div class="set-value" id="set-night-mode">—</div>
         </div>
         <!-- Two choices, not three. `clock` and `weather` are the same screen
              — the manager only ever branches on `photos` — so a third button
              would offer a distinction this device does not make. -->
         <div class="set-buttons" id="set-night-modes">
-          <button class="set-button" data-night-mode="photos">Google Photos</button>
-          <button class="set-button" data-night-mode="weather">Time + Weather</button>
+          <button class="set-button" data-night-mode="photos" data-i18n="settings.google_photos">Google Photos</button>
+          <button class="set-button" data-night-mode="weather" data-i18n="settings.time_weather">Time + Weather</button>
         </div>
         <div class="set-row">
-          <div class="set-label">Showing now</div>
+          <div class="set-label" data-i18n="settings.showing_now">Showing now</div>
           <div class="set-value" id="set-mode">—</div>
         </div>
         <!-- The idle-power behaviour, where somebody standing at the device can
@@ -2964,7 +2985,7 @@
              exists to answer yes to, and the panel is closer to hand than the
              journal is. -->
         <div class="set-row">
-          <div class="set-label">Camera while asleep</div>
+          <div class="set-label" data-i18n="settings.camera_while_asleep">Camera while asleep</div>
           <div class="set-value" id="set-camera-idle">—</div>
         </div>
         <!-- Section 25 asks for the timezone to be diagnosable: "the night
@@ -2976,10 +2997,10 @@
       </div>
 
       <div class="set-section">
-        <div class="set-title">Slideshow source</div>
+        <div class="set-title" data-i18n="settings.slideshow_source">Slideshow source</div>
 
         <div class="set-row">
-          <div class="set-label">Google Photos</div>
+          <div class="set-label" data-i18n="settings.google_photos">Google Photos</div>
           <div class="set-value" id="set-account">—</div>
         </div>
         <!-- **Not "Album".** The Google Photos Picker API does not hand back an
@@ -2988,23 +3009,23 @@
              that adding a picture to that album in Google Photos would make it
              appear here. It would not. See aipi5/photos/__init__.py. -->
         <div class="set-row">
-          <div class="set-label">Selected photos</div>
+          <div class="set-label" data-i18n="settings.selected_photos">Selected photos</div>
           <div class="set-value" id="set-album">—</div>
         </div>
         <div class="set-row">
-          <div class="set-label">Photo interval</div>
+          <div class="set-label" data-i18n="settings.photo_interval">Photo interval</div>
           <div class="set-value" id="set-interval">—</div>
         </div>
         <div class="set-row">
-          <div class="set-label">Cached</div>
+          <div class="set-label" data-i18n="settings.cached">Cached</div>
           <div class="set-value" id="set-cache">—</div>
         </div>
 
         <div class="set-buttons">
-          <button class="set-button" id="set-pick">Change Photos</button>
-          <button class="set-button" id="set-sync">Sync Now</button>
-          <button class="set-button" id="set-reconnect">Reconnect</button>
-          <button class="set-button danger" id="set-disconnect">Disconnect</button>
+          <button class="set-button" id="set-pick" data-i18n="settings.change_photos">Change Photos</button>
+          <button class="set-button" id="set-sync" data-i18n="settings.sync_now">Sync Now</button>
+          <button class="set-button" id="set-reconnect" data-i18n="settings.reconnect">Reconnect</button>
+          <button class="set-button danger" id="set-disconnect" data-i18n="settings.disconnect">Disconnect</button>
         </div>
         <div class="set-note" id="set-photos-note"></div>
 
@@ -3022,14 +3043,14 @@
      leaves the device by being photographed. See aipi5/photos/__init__.py. -->
 <div id="picker">
   <div id="picker-card">
-    <div id="picker-title">Scan with your phone</div>
+    <div id="picker-title" data-i18n="settings.scan_with_your_phone">Scan with your phone</div>
     <div id="picker-qr"></div>
-    <div id="picker-help">
+    <div id="picker-help" data-i18n="settings.open_the_code_on_a">
       Open the code on a phone signed in to your Google account, choose the
       photos you want, and they will appear here.
     </div>
-    <div id="picker-status">Waiting…</div>
-    <button class="set-button" id="picker-close">Cancel</button>
+    <div id="picker-status" data-i18n="settings.waiting">Waiting…</div>
+    <button class="set-button" id="picker-close" data-i18n="calendar.cancel">Cancel</button>
   </div>
 </div>
 
@@ -3069,18 +3090,18 @@
     <div id="ss-stale"></div>
   </div>
 
-  <div id="ss-hint">Touch the screen or say 小爱同学</div>
+  <div id="ss-hint" data-i18n="screensaver.touch_or_say">Touch the screen or say 小爱同学</div>
 </div>
 
 <!-- Shown only while the window is not covering the screen; see
      `drawFullscreenButton`. In the normal kiosk state there is nothing to
      restore and this is one more thing a finger can hit by accident. -->
-<button id="go-fullscreen"><span class="glyph">⛶</span><span class="label">Full Screen</span></button>
+<button id="go-fullscreen"><span class="glyph">⛶</span><span class="label" data-i18n="game.full_screen">Full Screen</span></button>
 
 <div id="shutdown">
   <div id="sd-count">3</div>
-  <div id="sd-what">Shutting down</div>
-  <div id="sd-hint">Touch anywhere to cancel</div>
+  <div id="sd-what" data-i18n="settings.shutting_down">Shutting down</div>
+  <div id="sd-hint" data-i18n="settings.touch_anywhere_to_cancel">Touch anywhere to cancel</div>
 </div>
 
 <script src="/assets/calendar/solarlunar.min.js?v=3.1.0"></script>
@@ -3110,6 +3131,446 @@ let screensaverOn = false;
 // carries the server's older opinion — does not immediately put it back. The
 // server learns about the touch through the action it queued.
 let dismissedAt = 0;
+
+// ── the two languages ───────────────────────────────────────────────
+//
+// One table, in this file rather than an asset, because `test_ui_script_runs`
+// evaluates the page's longest script block under Node and a table loaded
+// separately would leave `t()` undefined there — turning the suite's most
+// valuable UI test into a false green.
+//
+// **The English stays in the markup as the element's own text**, with
+// `data-i18n` naming the key beside it. That is not redundancy: the page is
+// readable as HTML, it still says something in English if the script ever
+// dies, and every existing test that asserts on an English string keeps
+// passing. The sweep only ever overwrites text that is already there.
+//
+// Chinese needs no font work here: the page has led with "Noto Sans CJK SC"
+// since it was written, which is why it already renders 小爱同学.
+
+const STRINGS = {
+  en: {
+    "assistant.compose_placeholder": "Type, or press Dictate and speak…",
+    "call.mute_the_microphone": "Mute the microphone",
+    "call.mute": "Mute",
+    "call.turn_the_camera_off": "Turn the camera off",
+    "call.camera": "Camera",
+    "calendar.navigation": "Calendar navigation",
+    "calendar.previous_month": "Previous month",
+    "calendar.next_month": "Next month",
+    "calendar.monthly": "Monthly calendar",
+    "calendar.holidays_and_birthdays": "Holidays and birthdays",
+    "calendar.open_birthday_settings": "Open birthday settings",
+    "calendar.close_birthday_settings": "Close birthday settings",
+    "files.refresh_title": "Refresh",
+    "settings.master_volume": "Master volume",
+    "screensaver.touch_or_say": "Touch the screen or say 小爱同学",
+    "settings.language": "Language",
+    "settings.on_this_screen": "On this screen",
+    "settings.changes_the_writing": "Changes the writing on this screen. The assistant still answers in whichever language you speak to it.",
+    "assistant.assistant": "ASSISTANT",
+    "assistant.dictate": "Dictate",
+    "assistant.do_it": "Do it",
+    "assistant.listen": "Listen",
+    "assistant.no": "No",
+    "assistant.stop": "Stop",
+    "assistant.what_do_you_see": "What do you see?",
+    "calendar.add_birthday": "+ Add Birthday",
+    "calendar.add_birthday2": "Add Birthday",
+    "calendar.back_to_home_menu": "Back to Home Menu",
+    "calendar.back_to_today": "Back to Today",
+    "calendar.birthday_settings": "⚙ Birthday Settings",
+    "calendar.birthday_settings2": "Birthday Settings",
+    "calendar.cancel": "Cancel",
+    "calendar.chinese_lunar": "Chinese Lunar",
+    "calendar.close": "Close",
+    "calendar.delete": "Delete",
+    "calendar.delete_birthday": "Delete Birthday",
+    "calendar.friday": "Friday",
+    "calendar.monday": "Monday",
+    "calendar.saturday": "Saturday",
+    "calendar.save_birthday": "Save Birthday",
+    "calendar.solar_gregorian": "Solar / Gregorian",
+    "calendar.sunday": "Sunday",
+    "calendar.thursday": "Thursday",
+    "calendar.tuesday": "Tuesday",
+    "calendar.wednesday": "Wednesday",
+    "call.a_paired_phone_can_call": "A paired phone can call this device.",
+    "call.call_my_phone": "Call my phone",
+    "call.end_call": "End Call",
+    "call.no_call": "No call",
+    "call.not_connected": "Not connected",
+    "camera.camera": "CAMERA",
+    "camera.the_camera_is_not_available": "The camera is not available.",
+    "files.file_transfer": "FILE TRANSFER",
+    "files.name": "Name",
+    "files.newest": "Newest",
+    "files.refresh": "Refresh",
+    "files.size": "Size",
+    "files.upload_file": "Upload File",
+    "game.21_courses": "21 courses",
+    "game.90_seconds_of_targets_defense": "90 seconds of targets, defense prompts, and progressive combinations.",
+    "game.advanced_7": "ADVANCED · 7",
+    "game.back_to_games": "Back to Games",
+    "game.beginner_7": "BEGINNER · 7",
+    "game.best": "BEST",
+    "game.best_0": "BEST 0",
+    "game.boxing": "BOXING",
+    "game.camera_unavailable": "Camera unavailable",
+    "game.choose_how_you_want_to": "Choose how you want to step into the ring.",
+    "game.cross_both_arms_into_an": "Cross both arms into an X to start",
+    "game.cross_both_arms_into_an2": "Cross both arms into an X to play again",
+    "game.difficulty": "DIFFICULTY",
+    "game.easy": "Easy",
+    "game.face_an_adaptive_boxer_block": "Face an adaptive boxer. Block, dodge, parry, and counter.",
+    "game.fight_opponent": "FIGHT OPPONENT",
+    "game.fruit_ninja": "Fruit Ninja",
+    "game.full_screen": "Full Screen",
+    "game.game_over": "GAME OVER",
+    "game.hard": "Hard",
+    "game.intermediate_7": "INTERMEDIATE · 7",
+    "game.looking_for_a_player": "Looking for a player…",
+    "game.next_pose": "NEXT POSE",
+    "game.normal": "Normal",
+    "game.opponent": "OPPONENT",
+    "game.pause": "Pause",
+    "game.paused": "PAUSED",
+    "game.play_again": "Play Again",
+    "game.player": "PLAYER",
+    "game.restart": "Restart",
+    "game.resume": "Resume",
+    "game.retry": "Retry",
+    "game.return_to_game_menu": "Return to Game Menu",
+    "game.review_91_poses": "Review 91 Poses",
+    "game.score": "SCORE",
+    "game.score_0": "SCORE 0",
+    "game.score_mdash": "SCORE &mdash;",
+    "game.start": "START",
+    "game.training": "TRAINING",
+    "game.yoga_coach": "YOGA COACH",
+    "games.games": "GAMES",
+    "main.assistant": "Assistant",
+    "main.calendar": "Calendar",
+    "main.call": "Call",
+    "main.files": "Files",
+    "main.game": "Game",
+    "main.music": "Music",
+    "main.ready": "Ready",
+    "main.settings": "Settings",
+    "main.weather": "Weather",
+    "settings.30_min": "−30 min",
+    "settings.30_min2": "+30 min",
+    "settings.ai_accelerator": "AI accelerator",
+    "settings.ai_motion": "AI Motion",
+    "settings.all_applications": "All applications",
+    "settings.cached": "Cached",
+    "settings.camera": "Camera",
+    "settings.camera_while_asleep": "Camera while asleep",
+    "settings.change_photos": "Change Photos",
+    "settings.check_for_update": "Check for Update",
+    "settings.choose_how_long_the_next": "Choose how long the next round lasts.",
+    "settings.controls_game_call_kodama_lite": "Controls Game, Call, Kodama-Lite, Browser, and Agent Talk together.",
+    "settings.day": "Day",
+    "settings.day_shows": "Day shows",
+    "settings.debug_pose_off": "Debug Pose: Off",
+    "settings.device": "Device",
+    "settings.difficulty": "Difficulty",
+    "settings.disconnect": "Disconnect",
+    "settings.display": "Display",
+    "settings.enabled": "Enabled",
+    "settings.firmware": "Firmware",
+    "settings.full_screen": "Full screen",
+    "settings.game_setting": "Game Setting",
+    "settings.game_sound": "Game sound",
+    "settings.go_full_screen": "Go Full Screen",
+    "settings.google_photos": "Google Photos",
+    "settings.hand_control_has_the_camera": "Hand control has the camera &mdash; pictures, calls\n  and games come back when the browser closes",
+    "settings.hand_control_is_off_mdash": "Hand control is off &mdash; tap to use it again",
+    "settings.idle_timeout": "Idle timeout",
+    "settings.memory": "Memory",
+    "settings.model": "Model",
+    "settings.night": "Night",
+    "settings.night_shows": "Night shows",
+    "settings.not_built_yet_aipi5_is": "Not built yet. AIPI5 is updated by running ./scripts/deploy.sh from\n          the machine it is developed on; nothing on the network offers it a\n          newer version to find.",
+    "settings.off": "Off",
+    "settings.on": "On",
+    "settings.open_the_code_on_a": "Open the code on a phone signed in to your Google account, choose the\n      photos you want, and they will appear here.",
+    "settings.performance": "Performance",
+    "settings.photo_interval": "Photo interval",
+    "settings.play_time": "Play time",
+    "settings.pose_model": "Pose model",
+    "settings.processor": "Processor",
+    "settings.reconnect": "Reconnect",
+    "settings.running_since": "Running since",
+    "settings.scan_with_your_phone": "Scan with your phone",
+    "settings.screensaver": "Screensaver",
+    "settings.screensaver_setting": "Screensaver Setting",
+    "settings.selected_photos": "Selected photos",
+    "settings.settings": "SETTINGS",
+    "settings.showing_now": "Showing now",
+    "settings.shutting_down": "Shutting down",
+    "settings.slideshow_source": "Slideshow source",
+    "settings.software": "Software",
+    "settings.software_update": "Software Update",
+    "settings.storage": "Storage",
+    "settings.sync_now": "Sync Now",
+    "settings.system_hardware_info": "System Hardware Info",
+    "settings.system_setting": "System Setting",
+    "settings.temperature": "Temperature",
+    "settings.the_kiosk_starts_full_screen": "The kiosk starts full-screen. If the window's close button was pressed\n          and a title bar appeared, this puts it back.",
+    "settings.time_weather": "Time + Weather",
+    "settings.touch_anywhere_to_cancel": "Touch anywhere to cancel",
+    "settings.version": "Version",
+    "settings.volume": "Volume",
+    "settings.waiting": "Waiting…",
+    "weather.check_full": "Check Full ›",
+    "weather.forecast_hourly": "Forecast Hourly",
+    "weather.recently_updated": "Recently updated",
+    "weather.should_i_go_outside": "Should I go Outside?",
+    "weather.sunrise": "Sunrise",
+    "weather.sunset": "Sunset",
+  },
+  zh: {
+    "assistant.compose_placeholder": "输入文字，或按口述说话…",
+    "call.mute_the_microphone": "静音麦克风",
+    "call.mute": "静音",
+    "call.turn_the_camera_off": "关闭摄像头",
+    "call.camera": "摄像头",
+    "calendar.navigation": "日历导航",
+    "calendar.previous_month": "上个月",
+    "calendar.next_month": "下个月",
+    "calendar.monthly": "月历",
+    "calendar.holidays_and_birthdays": "节日与生日",
+    "calendar.open_birthday_settings": "打开生日设置",
+    "calendar.close_birthday_settings": "关闭生日设置",
+    "files.refresh_title": "刷新",
+    "settings.master_volume": "主音量",
+    "screensaver.touch_or_say": "触摸屏幕，或者说 小爱同学",
+    "settings.language": "语言",
+    "settings.on_this_screen": "屏幕上的文字",
+    "settings.changes_the_writing": "只改变这块屏幕上的文字。助手仍然用你说话的语言回答。",
+    "assistant.assistant": "助手",
+    "assistant.dictate": "口述",
+    "assistant.do_it": "好的",
+    "assistant.listen": "聆听",
+    "assistant.no": "不要",
+    "assistant.stop": "停止",
+    "assistant.what_do_you_see": "你看到了什么？",
+    "calendar.add_birthday": "+ 添加生日",
+    "calendar.add_birthday2": "添加生日",
+    "calendar.back_to_home_menu": "返回主页",
+    "calendar.back_to_today": "回到今天",
+    "calendar.birthday_settings": "⚙ 生日设置",
+    "calendar.birthday_settings2": "生日设置",
+    "calendar.cancel": "取消",
+    "calendar.chinese_lunar": "农历",
+    "calendar.close": "关闭",
+    "calendar.delete": "删除",
+    "calendar.delete_birthday": "删除生日",
+    "calendar.friday": "星期五",
+    "calendar.monday": "星期一",
+    "calendar.saturday": "星期六",
+    "calendar.save_birthday": "保存生日",
+    "calendar.solar_gregorian": "公历",
+    "calendar.sunday": "星期日",
+    "calendar.thursday": "星期四",
+    "calendar.tuesday": "星期二",
+    "calendar.wednesday": "星期三",
+    "call.a_paired_phone_can_call": "已配对的手机可以呼叫这台设备。",
+    "call.call_my_phone": "打给我的手机",
+    "call.end_call": "挂断",
+    "call.no_call": "没有通话",
+    "call.not_connected": "未连接",
+    "camera.camera": "摄像头",
+    "camera.the_camera_is_not_available": "摄像头当前不可用。",
+    "files.file_transfer": "文件传输",
+    "files.name": "名称",
+    "files.newest": "最新",
+    "files.refresh": "刷新",
+    "files.size": "大小",
+    "files.upload_file": "上传文件",
+    "game.21_courses": "21 节课",
+    "game.90_seconds_of_targets_defense": "90 秒的目标、防守提示和逐步进阶的组合拳。",
+    "game.advanced_7": "高级 · 7",
+    "game.back_to_games": "返回游戏",
+    "game.beginner_7": "初级 · 7",
+    "game.best": "最高",
+    "game.best_0": "最高 0",
+    "game.boxing": "拳击",
+    "game.camera_unavailable": "摄像头不可用",
+    "game.choose_how_you_want_to": "选择你想怎么上场。",
+    "game.cross_both_arms_into_an": "双臂交叉成 X 开始",
+    "game.cross_both_arms_into_an2": "双臂交叉成 X 再玩一次",
+    "game.difficulty": "难度",
+    "game.easy": "简单",
+    "game.face_an_adaptive_boxer_block": "面对会适应你的拳手。格挡、闪避、招架、反击。",
+    "game.fight_opponent": "对战",
+    "game.fruit_ninja": "水果忍者",
+    "game.full_screen": "全屏",
+    "game.game_over": "游戏结束",
+    "game.hard": "困难",
+    "game.intermediate_7": "中级 · 7",
+    "game.looking_for_a_player": "正在寻找玩家…",
+    "game.next_pose": "下一个动作",
+    "game.normal": "普通",
+    "game.opponent": "对手",
+    "game.pause": "暂停",
+    "game.paused": "已暂停",
+    "game.play_again": "再玩一次",
+    "game.player": "玩家",
+    "game.restart": "重新开始",
+    "game.resume": "继续",
+    "game.retry": "重试",
+    "game.return_to_game_menu": "返回游戏菜单",
+    "game.review_91_poses": "浏览 91 个动作",
+    "game.score": "得分",
+    "game.score_0": "得分 0",
+    "game.score_mdash": "得分 —",
+    "game.start": "开始",
+    "game.training": "训练",
+    "game.yoga_coach": "瑜伽教练",
+    "games.games": "游戏",
+    "main.assistant": "助手",
+    "main.calendar": "日历",
+    "main.call": "通话",
+    "main.files": "文件",
+    "main.game": "游戏",
+    "main.music": "音乐",
+    "main.ready": "就绪",
+    "main.settings": "设置",
+    "main.weather": "天气",
+    "settings.30_min": "−30 分钟",
+    "settings.30_min2": "+30 分钟",
+    "settings.ai_accelerator": "AI 加速器",
+    "settings.ai_motion": "AI 体感",
+    "settings.all_applications": "所有应用",
+    "settings.cached": "已缓存",
+    "settings.camera": "摄像头",
+    "settings.camera_while_asleep": "休眠时的摄像头",
+    "settings.change_photos": "更换照片",
+    "settings.check_for_update": "检查更新",
+    "settings.choose_how_long_the_next": "选择下一局持续多久。",
+    "settings.controls_game_call_kodama_lite": "同时控制游戏、通话、Kodama-Lite、浏览器和助手语音。",
+    "settings.day": "白天",
+    "settings.day_shows": "白天显示",
+    "settings.debug_pose_off": "姿态调试：关",
+    "settings.device": "设备",
+    "settings.difficulty": "难度",
+    "settings.disconnect": "断开连接",
+    "settings.display": "显示",
+    "settings.enabled": "已启用",
+    "settings.firmware": "固件",
+    "settings.full_screen": "全屏",
+    "settings.game_setting": "游戏设置",
+    "settings.game_sound": "游戏声音",
+    "settings.go_full_screen": "进入全屏",
+    "settings.google_photos": "Google 相册",
+    "settings.hand_control_has_the_camera": "手势控制正在使用摄像头 — 关闭浏览器后，拍照、通话和游戏会恢复",
+    "settings.hand_control_is_off_mdash": "手势控制已关闭 — 点击可重新启用",
+    "settings.idle_timeout": "空闲超时",
+    "settings.memory": "内存",
+    "settings.model": "型号",
+    "settings.night": "夜间",
+    "settings.night_shows": "夜间显示",
+    "settings.not_built_yet_aipi5_is": "尚未实现。AIPI5 通过在开发用的电脑上运行 ./scripts/deploy.sh 来更新；网络上没有可供这台设备查询的新版本。",
+    "settings.off": "关",
+    "settings.on": "开",
+    "settings.open_the_code_on_a": "在已登录你 Google 账号的手机上打开这个二维码，选好照片，它们就会出现在这里。",
+    "settings.performance": "性能",
+    "settings.photo_interval": "切换间隔",
+    "settings.play_time": "游戏时长",
+    "settings.pose_model": "姿态模型",
+    "settings.processor": "处理器",
+    "settings.reconnect": "重新连接",
+    "settings.running_since": "已运行",
+    "settings.scan_with_your_phone": "用手机扫码",
+    "settings.screensaver": "屏保",
+    "settings.screensaver_setting": "屏保设置",
+    "settings.selected_photos": "已选照片",
+    "settings.settings": "设置",
+    "settings.showing_now": "当前显示",
+    "settings.shutting_down": "正在关机",
+    "settings.slideshow_source": "幻灯片来源",
+    "settings.software": "软件",
+    "settings.software_update": "软件更新",
+    "settings.storage": "存储",
+    "settings.sync_now": "立即同步",
+    "settings.system_hardware_info": "系统硬件信息",
+    "settings.system_setting": "系统设置",
+    "settings.temperature": "温度",
+    "settings.the_kiosk_starts_full_screen": "这块屏幕启动时是全屏的。如果窗口的关闭按钮被按过、标题栏出现了，这个按钮会把它恢复。",
+    "settings.time_weather": "时间 + 天气",
+    "settings.touch_anywhere_to_cancel": "触摸屏幕任意位置可取消",
+    "settings.version": "版本",
+    "settings.volume": "音量",
+    "settings.waiting": "等待中…",
+    "weather.check_full": "查看完整 ›",
+    "weather.forecast_hourly": "逐小时预报",
+    "weather.recently_updated": "刚刚更新",
+    "weather.should_i_go_outside": "适合出门吗？",
+    "weather.sunrise": "日出",
+    "weather.sunset": "日落",
+  },
+};
+
+//: Which language the writing on this screen is in. **Not** which language the
+//: assistant answers in — that is decided per sentence by what it heard, and a
+//: household where one person speaks English and another Chinese would be
+//: badly served by a setting that overrode it.
+let uiLang = "en";
+const LANG_KEY = "aipi5.ui.lang";
+
+function t(key, vars) {
+  const table = STRINGS[uiLang] || STRINGS.en;
+  let text = table[key] !== undefined ? table[key]
+           : STRINGS.en[key] !== undefined ? STRINGS.en[key] : key;
+  if (vars) {
+    for (const name in vars) text = text.split("{" + name + "}").join(vars[name]);
+  }
+  return text;
+}
+
+function applyLanguage(next) {
+  uiLang = next === "zh" ? "zh" : "en";
+  // Not cosmetic: Chromium picks its CJK line-breaking and font variants from
+  // this, so a page that changes its words without changing this one attribute
+  // wraps Chinese as though it were English.
+  document.documentElement.lang = uiLang === "zh" ? "zh-CN" : "en";
+
+  for (const node of document.querySelectorAll("[data-i18n]")) {
+    node.textContent = t(node.dataset.i18n);
+  }
+  for (const node of document.querySelectorAll("[data-i18n-title]")) {
+    node.title = t(node.dataset.i18nTitle);
+  }
+  for (const node of document.querySelectorAll("[data-i18n-aria-label]")) {
+    node.setAttribute("aria-label", t(node.dataset.i18nAriaLabel));
+  }
+  for (const node of document.querySelectorAll("[data-i18n-placeholder]")) {
+    node.placeholder = t(node.dataset.i18nPlaceholder);
+  }
+
+  for (const button of document.querySelectorAll("[data-lang]")) {
+    button.classList.toggle("selected", button.dataset.lang === uiLang);
+  }
+  try { localStorage.setItem(LANG_KEY, uiLang); } catch (e) { /* private mode */ }
+
+  // Anything the script wrote rather than the markup is still in the old
+  // language until whatever draws it runs again. Most of the page redraws
+  // within half a second on its own poll; the settings panel is the one a
+  // person is looking at when they press this, so it is redrawn here.
+  if (currentPage === "settings") drawSettings();
+}
+
+function startLanguage() {
+  // `?lang=zh` as well as the button, because this panel has no keyboard and
+  // an ssh tunnel is how it is reached when something has gone wrong — the
+  // same reasoning `fromHash` already records for pages.
+  let wanted = null;
+  try { wanted = localStorage.getItem(LANG_KEY); } catch (e) { /* private mode */ }
+  const asked = new URLSearchParams(location.search).get("lang");
+  applyLanguage(asked || wanted || "en");
+}
 
 // ── pages ───────────────────────────────────────────────────────────
 
@@ -3710,6 +4171,10 @@ async function postGameSetting(body, noteId) {
   }
 }
 
+for (const button of document.querySelectorAll("[data-lang]")) {
+  button.addEventListener("click", () => applyLanguage(button.dataset.lang));
+}
+
 for (const button of document.querySelectorAll("[data-difficulty]")) {
   button.addEventListener("click",
     () => postGameSetting({ difficulty: button.dataset.difficulty },
@@ -3843,6 +4308,7 @@ async function drawSettings() {
     // for Update button.
     const me = info.aipi5 || {};
     el("set-version").textContent = me.version ? `AIPI5 ${me.version}` : "—";
+    el("set-language").textContent = uiLang === "zh" ? "中文" : "English";
   }
   if (settingsTab === "game") drawGameSettings();
   if (settingsTab === "hardware") {
@@ -10322,6 +10788,7 @@ setInterval(drawClock, 1000);
 // poll, so it counts down smoothly instead of in half-second steps.
 setInterval(drawCooldowns, 250);
 drawClock();
+startLanguage();
 fromHash();
 pollState();
 pollFeed();
@@ -10332,8 +10799,8 @@ pollFeed();
 </script>
 <script src="/assets/yoga/yoga.js?v=20260821-courses"></script>
 <script type="module" src="/assets/yoga/yoga3d.js?v=20260824-ankles5"></script>
-<div id="hand-resume" hidden>Hand control is off &mdash; tap to use it again</div>
-<div id="hand-busy" hidden>Hand control has the camera &mdash; pictures, calls
+<div id="hand-resume" hidden data-i18n="settings.hand_control_is_off_mdash">Hand control is off &mdash; tap to use it again</div>
+<div id="hand-busy" hidden data-i18n="settings.hand_control_has_the_camera">Hand control has the camera &mdash; pictures, calls
   and games come back when the browser closes</div>
 </body>
 </html>
