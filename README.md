@@ -5,8 +5,8 @@ milliseconds **or** a conversation with GPT — plus weather, local news, bedtim
 stories, a camera that can describe the room, local person detection, and a
 1280×800 touchscreen that gives way to a clock when nobody is there.
 
-**Status: deployed and running on `aipi5.local`.** 1,511 tests pass off the
-device and 1,526 on it — the difference is the hardware-bound ones, which skip
+**Status: deployed and running on `aipi5.local`.** 2,021 tests pass off the
+device and 2,022 on it — the difference is the hardware-bound ones, which skip
 where there is no camera and no accelerator to bind to. Verified on the device: SenseVoice loads, both Piper voices
 speak, the wake model loads, the OpenAI model answers, live weather and local
 news reach the speaker, Kodama-Lite starts by command and answers over MPRIS,
@@ -981,7 +981,7 @@ written up in §69 of `REPORT.md`.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests -t .    # 1,949 tests, no hardware needed
+python -m unittest discover -s tests -t .    # 2,021 tests, no hardware needed
 ```
 
 No microphone, no camera, no accelerator, no network, no API key. That

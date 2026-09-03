@@ -4107,6 +4107,36 @@ that was hand control holding it during a browser test twenty minutes earlier.
 The camera is fine. A diagnosis drawn from a single log line, with no way to
 test the thing itself, is what that tool can do.
 
-The suite is **1,949 tests, 25 skipped, no failures** on Windows and on the Pi
-(where one pre-existing error, `test_yoga_coach3d.py` importing pytest, is not
-this work's).
+#### The field test
+
+What closes most of that list is somebody standing in front of the panel
+saying things to it, and the awkward part of asking anybody to do that is
+knowing *what* to say. So the phrases are written down, in both languages,
+with what each one should do:
+
+<https://claude.ai/code/artifact/1975c689-8e3a-43ef-9792-0a66c4deec15>
+
+Thirty-eight checks, grouped by which path the request takes — the fast
+router, the model, the agent — because that is what decides which of them can
+break. The wording was read out of the device's own command registry and tool
+list rather than written from memory: thirty spoken commands across six
+plugins, seventeen model tools. That exercise immediately found one thing
+wrong, which is the argument for doing it that way — the prompt had been
+telling the model that no application has a spoken close command, and
+`kodama.quit` has always had four.
+
+Ten of the checks are marked as behaviour that moved this week and is
+therefore the most likely to have regressed. The consent section deliberately
+includes the negative cases — say nothing, press *No* — because "nothing
+happened" is the property that matters there and the only way to see it is to
+try.
+
+A note for anybody reading this from the repository: that link is a private
+page belonging to the account that generated it, so it will not open for
+everybody. The phrases in it are all recoverable from
+`aipi5/llm/tools.py` and each plugin's `commands()`.
+
+The suite is **2,021 tests, 25 skipped, no failures** on Windows and 2,022 on
+the Pi (where one pre-existing error, `test_yoga_coach3d.py` importing pytest,
+is not this work's). `ruff check .` is clean on both, against the rule set in
+`ruff.toml`.
