@@ -268,6 +268,10 @@ class GamesConfig:
     #: The default until the touchscreen has saved a choice. GameManager
     #: validates it against the five durations the UI offers.
     round_seconds: int = 120
+    #: How hard Fruit Ninja is until the touchscreen has saved a choice.
+    #: `easy`, `normal` or `hard`; the values behind each live beside the
+    #: spawner fields they override, in `aipi5/games/fruit_ninja/fruit.py`.
+    difficulty: str = "normal"
     #: Draw the skeleton, the raw wrist coordinates and the frame timings over
     #: the game. Section 45: off by default.
     debug: bool = False
@@ -949,6 +953,9 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
                 (60, 120, 180, 240, 300), 120, "games.round_seconds"),
             debug=bool(games.get("debug", False)),
             sound=bool(games.get("sound", True)),
+            difficulty=_one_of(games.get("difficulty", "normal"),
+                               ("easy", "normal", "hard"), "normal",
+                               "games.difficulty"),
         ),
         screensaver=ScreensaverConfig(
             enabled=bool(screensaver.get("enabled", True)),

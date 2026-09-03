@@ -963,7 +963,16 @@ class _Handler(BaseHTTPRequestHandler):
                 games.set_debug(bool(payload.get("on")))
                 self._json({"ok": True, "debug": games.debug})
             elif path == "/api/game/settings":
-                self._json(games.set_round_seconds(payload.get("round_seconds")))
+                # One field per request, the way the page sends them: a tap on
+                # the difficulty must not restate the round length and race a
+                # tap somebody made a moment earlier.
+                if "difficulty" in payload:
+                    self._json(games.set_difficulty(payload.get("difficulty")))
+                elif "sound" in payload:
+                    self._json(games.set_sound(payload.get("sound")))
+                else:
+                    self._json(
+                        games.set_round_seconds(payload.get("round_seconds")))
             else:
                 self._json({"error": "not found"}, 404)
         except GameError as exc:

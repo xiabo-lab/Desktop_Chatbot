@@ -36,7 +36,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from aipi5.games.fruit_ninja import collision, ultimate
-from aipi5.games.fruit_ninja.fruit import HEIGHT, WIDTH, Fruit, Spawner
+from aipi5.games.fruit_ninja.fruit import (DEFAULT_DIFFICULTY, HEIGHT,
+                                           WIDTH, Fruit, Spawner)
 from aipi5.games.fruit_ninja.ultimate import UltimateDragon
 from aipi5.motion import geometry
 
@@ -267,6 +268,12 @@ class Session:
     state: State = State.READY
     fruit: list[Fruit] = field(default_factory=list)
     spawner: Spawner = field(default_factory=Spawner)
+    #: Which setting this round was played on. Carried on the session rather
+    #: than read from the manager when the round ends, so a score is filed
+    #: under the difficulty it was *earned* on — somebody who changes the
+    #: setting while the score screen is up must not have their run moved to
+    #: another table. The spawner above is already set from it.
+    difficulty: str = DEFAULT_DIFFICULTY
     #: Slashes to draw, as screen-space segments. Drained by the page each
     #: poll; capped so a page that stops reading cannot grow this without
     #: bound.

@@ -2801,6 +2801,30 @@
           <button class="set-button" data-game-seconds="300">300s</button>
         </div>
         <div class="set-note" id="set-game-note">Choose how long the next round lasts.</div>
+
+        <div class="set-row">
+          <div class="set-label">Difficulty</div>
+          <div class="set-value" id="set-game-difficulty">—</div>
+        </div>
+        <div class="set-buttons" id="set-game-difficulties">
+          <button class="set-button" data-difficulty="easy">Easy</button>
+          <button class="set-button" data-difficulty="normal">Normal</button>
+          <button class="set-button" data-difficulty="hard">Hard</button>
+        </div>
+        <div class="set-note" id="set-difficulty-note"></div>
+
+        <!-- Not locked while a game is running, unlike the two above. This one
+             is wanted *because* something is too loud right now, and asking
+             somebody to finish their round first answers a question they did
+             not ask. -->
+        <div class="set-row">
+          <div class="set-label">Game sound</div>
+          <div class="set-value" id="set-game-sound">—</div>
+        </div>
+        <div class="set-buttons" id="set-game-sounds">
+          <button class="set-button" data-sound="on">On</button>
+          <button class="set-button" data-sound="off">Off</button>
+        </div>
       </div>
     </div>
 
@@ -3646,6 +3670,35 @@ function showSettingsTab(name) {
   settingsTab = SET_TABS.includes(name) ? name : "hardware";
   // The schedule controls. Each sends only what it changed, so a tap on a mode
 // cannot overwrite a time somebody set a moment earlier.
+// The two new game settings, posted the same way the round length is. One
+// field per request: a tap on the difficulty must not restate the play time
+// and race a tap somebody made a moment earlier.
+async function postGameSetting(body, noteId) {
+  try {
+    const response = await fetch("/api/game/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Setting refused");
+    renderGameSettings(data);
+  } catch (err) {
+    el(noteId).textContent = err.message || "The assistant did not answer.";
+  }
+}
+
+for (const button of document.querySelectorAll("[data-difficulty]")) {
+  button.addEventListener("click",
+    () => postGameSetting({ difficulty: button.dataset.difficulty },
+                          "set-difficulty-note"));
+}
+for (const button of document.querySelectorAll("[data-sound]")) {
+  button.addEventListener("click",
+    () => postGameSetting({ sound: button.dataset.sound === "on" },
+                          "set-difficulty-note"));
+}
+
 for (const button of document.querySelectorAll("[data-day-start]")) {
   button.addEventListener("click",
     () => queueSchedule({ day_start: button.dataset.dayStart }));
@@ -4043,6 +4096,30 @@ function renderGameSettings(info) {
   el("set-game-note").textContent = info.locked
     ? "Leave the current game before changing its play time."
     : `Applies to the next round. Best score at this length: ${choice.best || 0}.`;
+
+  const level = info.difficulty || "normal";
+  const levels = info.difficulties || [];
+  const here = levels.find((item) => item.name === level) || {};
+  el("set-game-difficulty").textContent =
+    level.charAt(0).toUpperCase() + level.slice(1);
+  for (const button of document.querySelectorAll("[data-difficulty]")) {
+    button.classList.toggle("selected", button.dataset.difficulty === level);
+    button.disabled = Boolean(info.locked);
+  }
+  // Each difficulty keeps its own record, so the number beside the buttons has
+  // to follow the choice rather than sit there looking like one score.
+  el("set-difficulty-note").textContent = info.locked
+    ? "Leave the current game before changing how hard it is."
+    : "Harder throws faster and sends more bombs. " +
+      `Best on ${level} at this length: ${here.best || 0}.`;
+
+  gameSoundOn = info.sound !== false;
+  el("set-game-sound").textContent = gameSoundOn ? "On" : "Off";
+  el("set-game-sound").classList.toggle("off", !gameSoundOn);
+  for (const button of document.querySelectorAll("[data-sound]")) {
+    button.classList.toggle("selected",
+      (button.dataset.sound === "on") === gameSoundOn);
+  }
 }
 
 async function drawGameSettings() {
@@ -6963,6 +7040,10 @@ let gameId = "";                    // which game is open
 let dismissedGameId = "";           // an exited game awaiting server closure
 let gameCloseRequest = null;         // prevents reopen racing the old close
 let gameSounds = null;              // lazily built AudioContext
+// Whether the games make any noise. Owned by the device — the settings
+// page writes it and every status poll carries it back — so it survives a
+// reload and a restart, unlike a flag the page kept to itself.
+let gameSoundOn = true;
 let gameFps = 0;
 let gameOpening = false;            // an /api/game/open is in flight
 let gameNames = {};                 // id -> display name, from the catalogue
@@ -9715,6 +9796,11 @@ function drawGameDebug(state) {
 // kept anyway as a belt for a browser started without the flag, where a touch
 // will then unlock it.
 function gameAudio() {
+  // The one place every game noise passes through, so the setting is honoured
+  // by the slices, the bombs and the ultimate alike rather than by whichever
+  // of them somebody remembered. `gameSoundOn` follows the device on every
+  // status poll, so turning it off quietens a round already in progress.
+  if (!gameSoundOn) return null;
   if (!gameSounds) {
     const Ctor = window.AudioContext || window.webkitAudioContext;
     if (!Ctor) return null;

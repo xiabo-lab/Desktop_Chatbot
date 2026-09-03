@@ -340,6 +340,21 @@ games:
   # are 60, 120, 180, 240 and 300 seconds; this is the first-run default.
   settings: ~/.config/aipi5/game-settings.json
   round_seconds: 120
+  # How hard Fruit Ninja is: `easy`, `normal` or `hard`. This is the default
+  # until somebody chooses on the Game tab of the settings page, which then
+  # writes ~/.config/aipi5/game-settings.json and wins over this.
+  #
+  # What each one changes is the pace and the bombs — the gap between throws,
+  # how quickly it tightens, and how often one of them explodes. Nothing about
+  # the fruit, the blade or the ultimate moves, because those are the game
+  # rather than its difficulty. The values live beside the fields they
+  # override, in `aipi5/games/fruit_ninja/fruit.py`.
+  #
+  # `normal` is not a preset that happens to match the old behaviour; it is
+  # the spawner's own defaults, by construction. So a normal two-minute round
+  # is exactly the game as it was before this setting existed, and the high
+  # scores from then still stand against it.
+  difficulty: normal
   # The skeleton, the raw wrist coordinates and the frame timings, drawn over
   # the game. Off by default; the Settings page turns it on.
   debug: false

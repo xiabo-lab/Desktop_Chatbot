@@ -33,6 +33,8 @@ import threading
 import time
 
 from aipi5.games.boxing.game import BoxingSession
+from aipi5.games.fruit_ninja.fruit import (DEFAULT_DIFFICULTY,
+                                           spawner_for)
 from aipi5.games.fruit_ninja.game import HighScores, Session as FruitSession, State
 from aipi5.games.yoga.game import YogaSession
 from aipi5.games.yoga.lesson import COURSES as YOGA_COURSES
@@ -90,6 +92,12 @@ WATCHDOG_S = 5.0
 ROUND_SECONDS_OPTIONS: tuple[int, ...] = (60, 120, 180, 240, 300)
 DEFAULT_ROUND_SECONDS = 120
 
+# How hard the round is, as an allow-list for the same reason as above. The
+# values themselves live beside the spawner fields they override, in
+# `aipi5/games/fruit_ninja/fruit.py`, because that is where the tuning
+# reasoning is written down.
+DIFFICULTY_OPTIONS: tuple[str, ...] = ("easy", "normal", "hard")
+
 
 class GameError(RuntimeError):
     """A game could not start. The message is written to go on screen."""
@@ -136,8 +144,16 @@ class GameManager:
         # path from it keeps those tests inside their temporary directory.
         self.settings_path = (getattr(cfg, "settings", None)
                               or cfg.scores.with_name("game-settings.json"))
+        saved = self._saved_settings()
         self.round_seconds = self._load_round_seconds(
-            getattr(cfg, "round_seconds", DEFAULT_ROUND_SECONDS))
+            getattr(cfg, "round_seconds", DEFAULT_ROUND_SECONDS), saved)
+        self.difficulty = self._load_difficulty(
+            getattr(cfg, "difficulty", DEFAULT_DIFFICULTY), saved)
+        #: Whether the games make any noise. Read from the configuration and
+        #: changeable from the settings page; the page asks on every status
+        #: poll and gates its own audio context on it, so this switches a round
+        #: already in progress.
+        self.sound = self._load_sound(bool(getattr(cfg, "sound", True)), saved)
         self._start_gesture = CrossedArmsGesture(
             confidence=min(0.4, motion_cfg.keypoint_confidence))
 
@@ -164,7 +180,37 @@ class GameManager:
             games.append(item)
         return games
 
-    def _load_round_seconds(self, fallback) -> int:
+    def _saved_settings(self) -> dict:
+        """What the touchscreen chose last time, or an empty dict.
+
+        Read once at startup and shared by the three loaders below, so a
+        settings file is opened once rather than three times — and so the three
+        cannot disagree about whether it was readable.
+        """
+        try:
+            saved = json.loads(self.settings_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, TypeError, ValueError) as exc:
+            log.warning("could not read the game settings at %s: %s",
+                        self.settings_path, exc)
+            return {}
+        return saved if isinstance(saved, dict) else {}
+
+    def _load_difficulty(self, fallback, saved: dict) -> str:
+        for value in (saved.get("difficulty"), fallback):
+            if isinstance(value, str) and value.lower() in DIFFICULTY_OPTIONS:
+                return value.lower()
+            if value is not None:
+                log.warning("games difficulty %r is not one of %s; using %r",
+                            value, DIFFICULTY_OPTIONS, DEFAULT_DIFFICULTY)
+        return DEFAULT_DIFFICULTY
+
+    def _load_sound(self, fallback: bool, saved: dict) -> bool:
+        chosen = saved.get("sound")
+        return bool(fallback if chosen is None else chosen)
+
+    def _load_round_seconds(self, fallback, saved: dict) -> int:
         try:
             configured = int(fallback)
         except (TypeError, ValueError):
@@ -175,26 +221,30 @@ class GameManager:
             configured = DEFAULT_ROUND_SECONDS
 
         try:
-            saved = json.loads(self.settings_path.read_text(encoding="utf-8"))
             seconds = int(saved.get("round_seconds", configured))
             if seconds not in ROUND_SECONDS_OPTIONS:
                 raise ValueError(f"unsupported duration {seconds}")
             return seconds
-        except FileNotFoundError:
-            return configured
-        except (AttributeError, OSError, TypeError, ValueError) as exc:
-            log.warning("could not read the game settings at %s: %s",
+        except (AttributeError, TypeError, ValueError) as exc:
+            log.warning("the saved round length at %s is unusable: %s",
                         self.settings_path, exc)
             return configured
 
-    def _score_key(self, game_id: str, seconds: int | float | None = None) -> str:
-        """A fair high-score table for each round length.
+    def _score_key(self, game_id: str, seconds: int | float | None = None,
+                   difficulty: str | None = None) -> str:
+        """A fair high-score table for each round length and difficulty.
 
-        The original 120-second table keeps its original key, so every score
-        already on the deployed device remains visible after this upgrade.
+        **The defaults keep the bare key.** A two-minute round on `normal` is
+        the game as it was before either setting existed, so it still answers
+        to `fruit-ninja` and every score already on the deployed device stays
+        visible. Anything else earns its own table: an easy score and a hard
+        one are not the same achievement and must not compete for the same
+        line on the tile — the same reasoning boxing and yoga already use.
         """
         duration = int(self.round_seconds if seconds is None else seconds)
-        return game_id if duration == DEFAULT_ROUND_SECONDS else f"{game_id}:{duration}"
+        level = self.difficulty if difficulty is None else difficulty
+        key = game_id if duration == DEFAULT_ROUND_SECONDS else f"{game_id}:{duration}"
+        return key if level == DEFAULT_DIFFICULTY else f"{key}:{level}"
 
     def _session_score_key(self, game_id: str, session=None) -> str:
         """Keep records comparable within a game mode and difficulty."""
@@ -210,7 +260,11 @@ class GameManager:
                 return f"yoga:{session.course_id}"
             return f"yoga:{session.difficulty}" if session.difficulty else "yoga"
         seconds = getattr(session, "duration", None)
-        return self._score_key(game_id, seconds)
+        # The difficulty the round was *played* on, not the one selected now:
+        # somebody who changes the setting while the score screen is up must
+        # not have their run filed under the new table.
+        level = getattr(session, "difficulty", None)
+        return self._score_key(game_id, seconds, level)
 
     def settings(self) -> dict:
         """The touchscreen-selectable game settings and per-length records."""
@@ -221,11 +275,72 @@ class GameManager:
             "round_seconds": selected,
             "choices": [
                 {"seconds": seconds,
-                 "best": self.scores.best(self._score_key("fruit-ninja", seconds))}
+                 "best": self.scores.best(
+                     self._score_key("fruit-ninja", seconds))}
                 for seconds in ROUND_SECONDS_OPTIONS
             ],
+            "difficulty": self.difficulty,
+            "difficulties": [
+                {"name": name,
+                 "best": self.scores.best(
+                     self._score_key("fruit-ninja", selected, name))}
+                for name in DIFFICULTY_OPTIONS
+            ],
+            "sound": self.sound,
             "locked": active,
         }
+
+    def set_difficulty(self, value) -> dict:
+        """Persist one of the three settings, for the next Fruit Ninja round."""
+        wanted = str(value or "").strip().lower()
+        if wanted not in DIFFICULTY_OPTIONS:
+            raise GameError("choose easy, normal or hard")
+        with self._lock:
+            if self.active:
+                raise GameError("leave the current game before changing how "
+                                "hard it is")
+            self.difficulty = wanted
+        self._save_settings()
+        log.info("Game: Fruit Ninja difficulty set to %s", wanted)
+        self._on_change()
+        return self.settings()
+
+    def set_sound(self, on) -> dict:
+        """Turn the games' own noises on or off.
+
+        Not locked while a game is running, unlike the two above: this one is
+        wanted *because* something is too loud right now, and telling somebody
+        to finish their round first would be answering the wrong question. The
+        page gates its audio context on the next status poll, so it takes
+        effect within half a second.
+        """
+        with self._lock:
+            self.sound = bool(on)
+        self._save_settings()
+        log.info("Game: sound %s", "on" if self.sound else "off")
+        self._on_change()
+        return self.settings()
+
+    def _save_settings(self) -> None:
+        """Write all three together. Never raises.
+
+        All three, because this file is rewritten whole: saving only the value
+        that changed would drop the other two, and the symptom would be a
+        difficulty that quietly reset itself the next time somebody moved the
+        round length.
+        """
+        payload = {"round_seconds": self.round_seconds,
+                   "difficulty": self.difficulty,
+                   "sound": self.sound}
+        try:
+            self.settings_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.settings_path.with_suffix(
+                self.settings_path.suffix + ".tmp")
+            temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            temporary.replace(self.settings_path)
+        except OSError as exc:
+            log.warning("could not save the game settings at %s: %s",
+                        self.settings_path, exc)
 
     def set_round_seconds(self, value) -> dict:
         """Persist one allowed duration, for the next Fruit Ninja round."""
@@ -241,15 +356,7 @@ class GameManager:
                 raise GameError("leave the current game before changing its play time")
             self.round_seconds = seconds
 
-        try:
-            self.settings_path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = self.settings_path.with_suffix(self.settings_path.suffix + ".tmp")
-            temporary.write_text(json.dumps({"round_seconds": seconds}, indent=2),
-                                 encoding="utf-8")
-            temporary.replace(self.settings_path)
-        except OSError as exc:
-            log.warning("could not save the game settings at %s: %s",
-                        self.settings_path, exc)
+        self._save_settings()
         log.info("Game: Fruit Ninja round set to %d seconds", seconds)
         self._on_change()
         return self.settings()
@@ -322,10 +429,17 @@ class GameManager:
                     speak=self._speak)
             else:
                 duration = float(self.round_seconds)
+                level = self.difficulty
                 self.session = FruitSession(
                     duration=duration,
                     time_left=duration,
-                    best=self.scores.best(self._score_key(game_id, duration)))
+                    difficulty=level,
+                    # The pace and the bombs, from the chosen setting. `normal`
+                    # is the spawner's own defaults by construction, so this is
+                    # not a second copy of the tuning.
+                    spawner=spawner_for(level),
+                    best=self.scores.best(
+                        self._score_key(game_id, duration, level)))
             self._start_gesture.reset()
 
             # The screensaver first, because a player standing still while the

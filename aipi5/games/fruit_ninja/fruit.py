@@ -360,6 +360,61 @@ class Fruit:
         }
 
 
+#: Three settings of the same round, as overrides on `Spawner`'s fields.
+#:
+#: **`normal` is empty on purpose.** It is not a preset that happens to match
+#: today's values — it is today's values, by construction, so the tuning
+#: reasoning written across the fields below stays the one source of truth and
+#: cannot drift from a table repeating it. A round played on `normal` is the
+#: round this game has always been, and the high scores from before this
+#: setting existed stay comparable with it.
+#:
+#: What changes and why: the opening gap and the floor it ramps down to are the
+#: pace, `ramp_over` is how quickly the round gets there, and `bomb_chance`
+#: with `bomb_after` is how punishing it is. Nothing here touches the fruit's
+#: size, the blade, the combo window or the ultimate — those are the game, not
+#: its difficulty, and a setting that changed them would be a different game
+#: wearing the same name.
+DIFFICULTY: dict[str, dict] = {
+    "easy": {
+        # Half again as much room between throws, a floor that never gets as
+        # thick, and a longer climb to reach it. For somebody who has not
+        # played this before, or a child: the screen stays readable.
+        "interval": 1.10,
+        "floor": 0.40,
+        "ramp_over": 100.0,
+        # Rarer, and not until a third of a short round has gone by.
+        "bomb_chance": 0.04,
+        "bomb_after": 20.0,
+    },
+    "normal": {},
+    "hard": {
+        # A quarter faster at the open, a floor a third thicker than normal's,
+        # and it arrives twenty seconds sooner — so the busy stretch is most of
+        # the round rather than the end of it.
+        "interval": 0.58,
+        "floor": 0.19,
+        "ramp_over": 65.0,
+        "bomb_chance": 0.11,
+        "bomb_after": 6.0,
+    },
+}
+
+#: What a device with no setting yet plays, and what the score tables were
+#: built from.
+DEFAULT_DIFFICULTY = "normal"
+
+
+def spawner_for(difficulty: str = DEFAULT_DIFFICULTY) -> "Spawner":
+    """A `Spawner` set for one difficulty. Unknown names play `normal`.
+
+    Unknown-is-normal rather than an error: this value arrives from a JSON
+    file somebody may have edited, and a game that refuses to start because of
+    a typo in a settings file is worse than one that plays its usual round.
+    """
+    return Spawner(**DIFFICULTY.get(difficulty, DIFFICULTY[DEFAULT_DIFFICULTY]))
+
+
 @dataclass
 class Spawner:
     """Decides when to throw something, and what.
