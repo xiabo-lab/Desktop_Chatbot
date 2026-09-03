@@ -178,8 +178,13 @@ class TestOnlyTheVisibleTabDoesWork(TabCase):
                       self.body)
 
     def test_the_accelerator_is_only_opened_for_the_tab_that_shows_it(self):
-        self.assertIn('if (settingsTab === "hardware") drawMotionSettings();',
-                      self.body)
+        """Both hardware draws sit behind the one guard. Asserted as "inside
+        the branch" rather than as an exact line, so adding a third row to
+        that tab does not fail a test about polling."""
+        closes = "\n  }"
+        guarded = between(self.body, 'if (settingsTab === "hardware") {', closes)
+        self.assertIn("drawMotionSettings();", guarded)
+        self.assertIn("drawHardware(", guarded)
 
     def test_the_one_shared_request_is_still_unconditional(self):
         """Gating it would save nothing and add a fourth thing to be stale."""

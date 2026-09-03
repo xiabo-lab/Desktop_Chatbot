@@ -2708,6 +2708,49 @@
 
   <div id="settings-body">
     <div class="set-panel on" data-set-panel="hardware">
+      <!-- What the device physically is. Everything here is read off /proc and
+           /sys at the moment it is asked, so a number on this card is the
+           device's answer and not a value somebody typed into a file. -->
+      <div class="set-section">
+        <div class="set-title">Device</div>
+        <div class="set-row">
+          <div class="set-label">Model</div>
+          <div class="set-value" id="set-hw-model">—</div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Processor</div>
+          <div class="set-value" id="set-hw-cpu">—</div>
+        </div>
+        <!-- A temperature with a word beside it. 59 degrees means nothing to
+             somebody who does not already know what is normal for a Pi, and
+             the number alone is what makes people worry or not worry for the
+             wrong reasons. -->
+        <div class="set-row">
+          <div class="set-label">Temperature</div>
+          <div class="set-value" id="set-hw-temp">—</div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Memory</div>
+          <div class="set-value" id="set-hw-memory">—</div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Storage</div>
+          <div class="set-value" id="set-hw-disk">—</div>
+        </div>
+        <!-- Two uptimes, deliberately. "The Pi has been up nine days and the
+             assistant four minutes" is exactly what somebody needs to see
+             after a restart nobody asked for, and one number cannot say it. -->
+        <div class="set-row">
+          <div class="set-label">Running since</div>
+          <div class="set-value" id="set-hw-uptime">—</div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Software</div>
+          <div class="set-value" id="set-hw-software">—</div>
+        </div>
+        <div class="set-note" id="set-hw-note"></div>
+      </div>
+
       <!-- Section 44. Motion health comes from the device, not configuration,
            so a disconnected accelerator cannot look healthy here. -->
       <div class="set-section">
@@ -3644,7 +3687,92 @@ async function drawSettings() {
     drawPickState(photos.pick || {});
   }
   if (settingsTab === "game") drawGameSettings();
-  if (settingsTab === "hardware") drawMotionSettings();
+  if (settingsTab === "hardware") {
+    drawHardware(info.hardware || {}, info);
+    drawMotionSettings();
+  }
+}
+
+// ── what the device is ──────────────────────────────────────────────
+//
+// Everything here arrives on `/api/system` under `hardware`, read off /proc
+// and /sys at the moment it was asked. Every field is optional: the reader
+// leaves out what it cannot find rather than inventing a null, so each row
+// falls back to a dash on a machine that has no thermal zone.
+
+function gigabytes(bytes) {
+  return (bytes / 1073741824).toFixed(bytes >= 10737418240 ? 0 : 1) + " GB";
+}
+
+// Warm and hot rather than a bare number, and the thresholds are the Pi's own:
+// it starts easing the clock back at 80 and hard-limits at 85, so 75 is the
+// point where somebody should care and 85 is where the games really do slow
+// down. Below that a temperature is just weather.
+function heatWord(celsius) {
+  if (celsius >= 80) return "hot";
+  if (celsius >= 70) return "warm";
+  return "normal";
+}
+
+function sinceWords(seconds) {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+function drawHardware(hw, info) {
+  const dash = (node, text) => { el(node).textContent = text || "—"; };
+
+  dash("set-hw-model", hw.model
+    ? `${hw.model}${hw.serial ? `  ·  ${hw.serial}` : ""}` : "");
+  dash("set-hw-cpu", hw.cpus
+    ? `${hw.cpus} cores${hw.load ? `  ·  load ${hw.load.join(" / ")}` : ""}` : "");
+
+  if (hw.cpu_temp_c === undefined) {
+    dash("set-hw-temp", "");
+    el("set-hw-temp").classList.remove("off");
+  } else {
+    const word = heatWord(hw.cpu_temp_c);
+    el("set-hw-temp").textContent = `${hw.cpu_temp_c} °C  ·  ${word}`;
+    el("set-hw-temp").classList.toggle("off", word === "hot");
+  }
+
+  const mem = hw.memory || {};
+  dash("set-hw-memory", mem.total
+    ? `${gigabytes(mem.available || 0)} free of ${gigabytes(mem.total)}` : "");
+  const disk = hw.disk || {};
+  dash("set-hw-disk", disk.total
+    ? `${gigabytes(disk.free || 0)} free of ${gigabytes(disk.total)}` : "");
+
+  // The two clocks side by side. Only one of them resets when the assistant
+  // restarts, which is the whole reason both are here.
+  const own = (info.aipi5 || {}).uptime_s;
+  const parts = [];
+  if (hw.uptime_s !== undefined) parts.push(`device ${sinceWords(hw.uptime_s)}`);
+  if (own !== undefined) parts.push(`assistant ${sinceWords(own)}`);
+  dash("set-hw-uptime", parts.join("  ·  "));
+
+  // `aia_bridge.version()` answers "unknown" when the adjacent checkout has
+  // no version to report, and a row reading "AIA unknown" is a row saying
+  // nothing at more length than saying nothing.
+  const me = info.aipi5 || {};
+  const aia = me.aia && me.aia !== "unknown" ? `  ·  AIA ${me.aia}` : "";
+  dash("set-hw-software", me.version
+    ? `AIPI5 ${me.version}${aia}` +
+      `${hw.kernel ? `  ·  Linux ${hw.kernel}` : ""}` +
+      `${hw.arch ? ` (${hw.arch})` : ""}` : "");
+
+  // Only ever says something when there is something to say: the reader
+  // returns nothing at all while the firmware is happy. Under-voltage is the
+  // classic cause of "the games got slow" and is invisible from every other
+  // reading on this page.
+  el("set-hw-note").textContent = hw.throttled
+    ? `The power supply or the heat is holding this device back right now: ${hw.throttled}.`
+    : "";
+  el("set-hw-note").classList.toggle("off", !hw.throttled);
 }
 
 function showVolume(level) {

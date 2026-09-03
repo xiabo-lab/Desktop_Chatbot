@@ -42,7 +42,7 @@ import time
 from contextlib import ExitStack
 from dataclasses import replace
 
-from aipi5.core import aia_bridge
+from aipi5.core import aia_bridge, hardware
 
 from aia.audio import wake as wake_mod
 from aia.audio.capture import Microphone
@@ -996,6 +996,12 @@ class Assistant:
                       "config": str(self.settings.source or "defaults")},
             "display": {"width": self.settings.display.width,
                         "height": self.settings.display.height},
+            # What the device physically is: board, temperature, memory, disk.
+            # On `/api/system` rather than a route of its own, because the
+            # settings page already polls this one every four seconds for the
+            # same screen and a second endpoint would be a second request for
+            # it. Never raises — see `aipi5/core/hardware.py`.
+            "hardware": hardware.snapshot(),
             "location": self.settings.location.label,
             "stt": self.stt.describe() if self.stt else {"engine": "not started"},
             "tts": self.speaker.describe() if self.speaker else [],
