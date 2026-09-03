@@ -89,9 +89,12 @@ class TestNothingWasLostInTheMove(TabCase):
         "hardware": ("set-hailo", "set-hailo-fw", "set-pose-model",
                      "set-motion-camera", "set-motion-fps", "set-debug-pose",
                      "set-motion-note"),
-        "game": ("set-game-time", "set-game-times", "set-game-note"),
+        "game": ("set-game-time", "set-game-times", "set-game-note",
+                 "set-game-difficulty", "set-game-difficulties",
+                 "set-difficulty-note", "set-game-sound", "set-game-sounds"),
         "system": ("set-volume", "set-volume-value", "set-volume-note",
-                   "set-fullscreen", "set-go-fullscreen"),
+                   "set-fullscreen", "set-go-fullscreen",
+                   "set-version", "set-update"),
         "screensaver": ("set-enabled", "set-timeout", "set-day", "set-night",
                         "set-mode", "set-camera-idle", "set-schedule-note",
                         "set-account", "set-album", "set-interval", "set-cache",
@@ -127,6 +130,34 @@ class TestNothingWasLostInTheMove(TabCase):
         for tab in TABS:
             with self.subTest(tab=tab):
                 self.assertNotIn('id="picker"', self.panel(tab))
+
+
+class TestThePlaceholderLooksLikeOne(TabCase):
+    """A control that responds and does nothing is one somebody presses twice
+    and then reports as broken. A greyed one with a sentence under it has never
+    once been mistaken for a feature."""
+
+    def test_the_button_is_disabled_in_the_markup(self):
+        self.assertIn('id="set-update" disabled', self.settings)
+
+    def test_nothing_listens_to_it(self):
+        """Not even a handler that says "coming soon" — that is a response,
+        and a response is what makes it look wired."""
+        self.assertNotIn('el("set-update")', self.page)
+        self.assertNotIn("set-update\").addEventListener", self.page)
+
+    def test_it_says_how_the_device_is_actually_updated(self):
+        """An honest placeholder says what to do instead."""
+        panel = self.panel("system")
+        self.assertIn("deploy.sh", panel)
+        self.assertIn("Not built yet", panel)
+
+    def test_the_version_row_is_not_inert(self):
+        """It answers "what am I running", which is the real question behind
+        reaching for the button."""
+        body = between(self.page, "async function drawSettings()",
+                       "\nfunction ")
+        self.assertIn('el("set-version").textContent', body)
 
 
 class TestSwitchingTabs(TabCase):

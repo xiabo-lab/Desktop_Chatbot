@@ -2829,6 +2829,28 @@
     </div>
 
     <div class="set-panel" data-set-panel="system">
+      <!-- What is running, and how it is changed. Deliberately not a button
+           that pretends: a control that responds and does nothing is one
+           somebody presses twice and then reports as broken, while a greyed
+           one with a sentence under it has never once been mistaken for a
+           feature. There is no update server for this device to ask, so the
+           honest thing is to say what to do instead. -->
+      <div class="set-section">
+        <div class="set-title">Software Update</div>
+        <div class="set-row">
+          <div class="set-label">Version</div>
+          <div class="set-value" id="set-version">—</div>
+        </div>
+        <div class="set-buttons">
+          <button class="set-button" id="set-update" disabled>Check for Update</button>
+        </div>
+        <div class="set-note">
+          Not built yet. AIPI5 is updated by running ./scripts/deploy.sh from
+          the machine it is developed on; nothing on the network offers it a
+          newer version to find.
+        </div>
+      </div>
+
       <div class="set-section">
         <div class="set-title">Volume</div>
         <div class="set-row volume-row">
@@ -3814,6 +3836,13 @@ async function drawSettings() {
   if (settingsTab === "screensaver") {
     drawPhotoSettings(photos);
     drawPickState(photos.pick || {});
+  }
+  if (settingsTab === "system") {
+    // The one part of the update section that is not inert. It answers "what
+    // am I running", which is the real question behind reaching for a Check
+    // for Update button.
+    const me = info.aipi5 || {};
+    el("set-version").textContent = me.version ? `AIPI5 ${me.version}` : "—";
   }
   if (settingsTab === "game") drawGameSettings();
   if (settingsTab === "hardware") {
