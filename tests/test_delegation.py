@@ -145,15 +145,21 @@ class TestTheTool(DelegationCase):
         self.assertIn("you are it", page)
 
     def test_the_prompt_keeps_shut_down_and_close_apart(self):
-        """`shutdown` is a real spoken command with a confirmation. Closing an
-        application is not a command at all -- no plugin declares one -- so
-        offering "shut down" to somebody who asked to close a browser offers
-        to turn off the machine."""
+        """`shutdown` is a real spoken command with a confirmation, so
+        offering it to somebody who asked to close a browser offers to turn the
+        machine off instead.
+
+        Closing is only a command for the *music player* -- `kodama.quit`,
+        "close kodama", 退出软件. The prompt said there was no such command for
+        anything, which is wrong in the one place it is right to say so; the
+        browser is the one with nothing behind it.
+        """
         from aipi5.llm import prompts
 
-        closing = prompts.BASE[prompts.BASE.index("cannot close an application"):]
+        closing = prompts.BASE[prompts.BASE.index("Closing an application"):]
         closing = closing[:closing.index("- **Never tell")]
-        self.assertIn("no** spoken command", closing)
+        self.assertIn("music player", closing)
+        self.assertIn("such command for the browser", closing)
         self.assertIn("maintenance agent", closing)
 
     def test_the_schema_covers_doing_and_not_only_asking(self):
