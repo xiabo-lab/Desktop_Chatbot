@@ -195,6 +195,47 @@ class ScreensaverManager:
             "held_by": self._held_by,
         }
 
+    #: What each half of the day may show. Two, not three: `clock` and
+    #: `weather` are the same screen — `_scheduled` only ever branches on
+    #: `photos` — so offering both would be offering a choice the device does
+    #: not make. The spellings differ because the configuration has always
+    #: used `day_mode: photos|clock` and `night_mode: weather|clock|photos`,
+    #: and changing a deployed file's vocabulary to tidy an inconsistency is a
+    #: worse trade than carrying it.
+    DAY_MODES = ("photos", "clock")
+    NIGHT_MODES = ("photos", "weather")
+
+    def set_schedule(self, day_start: int | None = None,
+                     night_start: int | None = None,
+                     day_mode: str | None = None,
+                     night_mode: str | None = None) -> dict:
+        """Move the boundaries or change what each half shows. Returns
+        `describe()`.
+
+        **No restart and no watcher.** `mode()` re-reads the schedule every
+        time it is called and `Assistant.publish` calls it twice a second, so
+        a change here is on the screen within half a second of the button.
+
+        Times arrive already parsed, in minutes; modes are validated against
+        the two tuples above. Whoever calls this is responsible for writing the
+        value to the configuration afterwards — see
+        `aipi5/core/screen_settings.py`, which does both and rolls this back if
+        the write fails.
+        """
+        if day_mode is not None:
+            if day_mode not in self.DAY_MODES:
+                raise ValueError(f"the day screen cannot be {day_mode!r}")
+            self.day_mode = day_mode
+        if night_mode is not None:
+            if night_mode not in self.NIGHT_MODES:
+                raise ValueError(f"the night screen cannot be {night_mode!r}")
+            self.night_mode = night_mode
+        self.schedule.set(day_start, night_start)
+        log.info("[screensaver] schedule now %s day=%s, %s night=%s",
+                 self.schedule.day, self.day_mode,
+                 self.schedule.describe()["night_window"], self.night_mode)
+        return self.describe()
+
     def describe(self) -> dict:
         """`/api/system`, for the settings page."""
         payload = {

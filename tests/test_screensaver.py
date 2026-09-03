@@ -244,10 +244,18 @@ class TestTheScreensaverIsVisualOnly(unittest.TestCase):
         # The only thing a wake does here is take the screensaver down. If this
         # object ever grows a side effect, it has to be a deliberate change to
         # this list rather than something that arrived with a feature.
+        #
+        # `set_schedule` and the two mode tuples were added when the settings
+        # page learned to move the day/night boundary. Deliberately: this test
+        # failed first and adding the names here is the deliberation it asks
+        # for. It changes what the object *is told*, never what it does on a
+        # wake — `mode()` still consults the policy and the clock and nothing
+        # else.
         public = sorted(name for name in dir(ScreensaverManager)
                         if not name.startswith("_"))
-        self.assertEqual(public, ["describe", "held_by", "hold", "log_startup",
-                                  "mode", "release", "snapshot"])
+        self.assertEqual(public, ["DAY_MODES", "NIGHT_MODES", "describe",
+                                  "held_by", "hold", "log_startup", "mode",
+                                  "release", "set_schedule", "snapshot"])
 
 
 class TestIdleHardware(unittest.TestCase):

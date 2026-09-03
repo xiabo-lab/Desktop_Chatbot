@@ -130,6 +130,25 @@ class ScheduleManager:
         return cls(parse_hhmm(cfg.day_start, DEFAULT_DAY_START),
                    parse_hhmm(cfg.night_start, DEFAULT_NIGHT_START))
 
+    def set(self, day_start: int | None = None,
+            night_start: int | None = None) -> None:
+        """Move one or both boundaries. Minutes past midnight, already parsed.
+
+        A method rather than letting callers assign the attributes, so the
+        day-equals-night warning is re-run: two boundaries at the same minute
+        make `Window.contains` answer "always day", and the night screen then
+        never appears at all. The route above this refuses that outright; this
+        is the second line, for a caller that arrives some other way.
+        """
+        if day_start is not None:
+            self.day_start = int(day_start) % MINUTES_A_DAY
+        if night_start is not None:
+            self.night_start = int(night_start) % MINUTES_A_DAY
+        if self.day_start == self.night_start:
+            log.warning("screensaver: day and night both start at %s, so the "
+                        "night screen will never be shown",
+                        format_hhmm(self.day_start))
+
     @property
     def day(self) -> Window:
         """The daytime span. Night is its complement, never stored separately.

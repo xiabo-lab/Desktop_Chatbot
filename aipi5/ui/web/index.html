@@ -2853,13 +2853,61 @@
           <div class="set-label">Idle timeout</div>
           <div class="set-value" id="set-timeout">—</div>
         </div>
+        <!-- The schedule, editable. It used to be read-only here and said
+             why: the times live in one place in the YAML and "a second way to
+             set them is a second thing that can disagree". That is an argument
+             against a second *store*, and there still is not one — this writes
+             the same file, through the same editor the volume slider uses, and
+             the page always renders the running value rather than the file.
+             See `aipi5/core/screen_settings.py`.
+
+             Buttons and not a text field: there is no keyboard on this device,
+             and every other control on this page is a choice between things
+             already on the screen. The ladder covers the times people actually
+             pick; the pair either side of it covers everything between. -->
         <div class="set-row">
-          <div class="set-label">Day slideshow</div>
+          <div class="set-label">Day</div>
           <div class="set-value" id="set-day">—</div>
         </div>
+        <div class="set-buttons" id="set-day-times">
+          <button class="set-button" data-day-start="06:00">06:00</button>
+          <button class="set-button" data-day-start="06:30">06:30</button>
+          <button class="set-button" data-day-start="07:00">07:00</button>
+          <button class="set-button" data-day-start="08:00">08:00</button>
+          <button class="set-button" data-nudge="day_start" data-by="-30">−30 min</button>
+          <button class="set-button" data-nudge="day_start" data-by="30">+30 min</button>
+        </div>
         <div class="set-row">
-          <div class="set-label">Night screen</div>
+          <div class="set-label">Day shows</div>
+          <div class="set-value" id="set-day-mode">—</div>
+        </div>
+        <div class="set-buttons" id="set-day-modes">
+          <button class="set-button" data-day-mode="photos">Google Photos</button>
+          <button class="set-button" data-day-mode="clock">Time + Weather</button>
+        </div>
+
+        <div class="set-row">
+          <div class="set-label">Night</div>
           <div class="set-value" id="set-night">—</div>
+        </div>
+        <div class="set-buttons" id="set-night-times">
+          <button class="set-button" data-night-start="20:00">20:00</button>
+          <button class="set-button" data-night-start="21:00">21:00</button>
+          <button class="set-button" data-night-start="22:00">22:00</button>
+          <button class="set-button" data-night-start="23:00">23:00</button>
+          <button class="set-button" data-nudge="night_start" data-by="-30">−30 min</button>
+          <button class="set-button" data-nudge="night_start" data-by="30">+30 min</button>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Night shows</div>
+          <div class="set-value" id="set-night-mode">—</div>
+        </div>
+        <!-- Two choices, not three. `clock` and `weather` are the same screen
+             — the manager only ever branches on `photos` — so a third button
+             would offer a distinction this device does not make. -->
+        <div class="set-buttons" id="set-night-modes">
+          <button class="set-button" data-night-mode="photos">Google Photos</button>
+          <button class="set-button" data-night-mode="weather">Time + Weather</button>
         </div>
         <div class="set-row">
           <div class="set-label">Showing now</div>
@@ -2873,11 +2921,11 @@
           <div class="set-label">Camera while asleep</div>
           <div class="set-value" id="set-camera-idle">—</div>
         </div>
-        <!-- Section 22 asks for the schedule to be visible and section 25 for
-             the timezone to be diagnosable. Both are read-only here on purpose:
-             they live in one place in the YAML so they can be changed without
-             touching the screensaver logic, and a second way to set them is a
-             second thing that can disagree. -->
+        <!-- Section 25 asks for the timezone to be diagnosable: "the night
+             screen came on an hour early" is a timezone question every time,
+             and the boot log is not something somebody standing here can
+             read. The timeout and `enabled` stay read-only — they are set in
+             the YAML, and nobody has asked to change them from the screen. -->
         <div class="set-note" id="set-schedule-note"></div>
       </div>
 
@@ -3596,7 +3644,37 @@ let settingsTab = "hardware";
 
 function showSettingsTab(name) {
   settingsTab = SET_TABS.includes(name) ? name : "hardware";
-  for (const button of document.querySelectorAll("[data-set-tab]")) {
+  // The schedule controls. Each sends only what it changed, so a tap on a mode
+// cannot overwrite a time somebody set a moment earlier.
+for (const button of document.querySelectorAll("[data-day-start]")) {
+  button.addEventListener("click",
+    () => queueSchedule({ day_start: button.dataset.dayStart }));
+}
+for (const button of document.querySelectorAll("[data-night-start]")) {
+  button.addEventListener("click",
+    () => queueSchedule({ night_start: button.dataset.nightStart }));
+}
+for (const button of document.querySelectorAll("[data-day-mode]")) {
+  button.addEventListener("click",
+    () => queueSchedule({ day_mode: button.dataset.dayMode }));
+}
+for (const button of document.querySelectorAll("[data-night-mode]")) {
+  button.addEventListener("click",
+    () => queueSchedule({ night_mode: button.dataset.nightMode }));
+}
+// The half-hour nudges, for the times the ladder does not list. Computed from
+// what is on screen rather than from the server, so four quick taps move two
+// hours instead of all landing on the same half hour.
+for (const button of document.querySelectorAll("[data-nudge]")) {
+  button.addEventListener("click", () => {
+    const field = button.dataset.nudge;
+    const shown = (schedulePending || {})[field] || scheduleShown[field];
+    if (!shown) return;
+    queueSchedule({ [field]: clockText(minutesOf(shown) + Number(button.dataset.by)) });
+  });
+}
+
+for (const button of document.querySelectorAll("[data-set-tab]")) {
     button.classList.toggle("on", button.dataset.setTab === settingsTab);
   }
   for (const panel of document.querySelectorAll("[data-set-panel]")) {
@@ -3649,12 +3727,7 @@ async function drawSettings() {
   el("set-enabled").classList.toggle("off", !screen.enabled);
   el("set-timeout").textContent =
     `${Math.round(screen.timeout_s || 0)} seconds with nobody in the room`;
-  el("set-day").textContent =
-    `${screen.day_window || "—"}  ·  ${screen.day_mode === "photos"
-      ? "Google Photos slideshow" : "Time + Weather"}`;
-  el("set-night").textContent =
-    `${screen.night_window || "—"}  ·  ${screen.night_mode === "photos"
-      ? "Google Photos slideshow" : "Time + Weather"}`;
+  drawSchedule(screen);
   el("set-mode").textContent = MODE_TEXT[screen.mode] || screen.mode || "—";
   // Three facts in one line, because they are only useful together: whether the
   // camera is released right now, whether the detector is parked with it, and
@@ -3674,7 +3747,10 @@ async function drawSettings() {
   // every time.
   el("set-schedule-note").textContent =
     `Timezone ${screen.timezone || "unset"}, local time ${screen.local_time || "—"}. ` +
-    `The schedule and the timeout are set in config/aipi5.yaml. ` +
+    (screen.persistent === false
+      ? "This device is running on defaults, so a change here lasts until the next restart. "
+      : "Saved to config/aipi5.yaml on this device; a deploy does not overwrite it. ") +
+    `The idle timeout is set in that file. ` +
     (screen.held_by ? `Held off right now by ${screen.held_by}.` : "");
 
   // Only what is on screen. `/api/system` above answers every tab in one
@@ -3690,6 +3766,110 @@ async function drawSettings() {
   if (settingsTab === "hardware") {
     drawHardware(info.hardware || {}, info);
     drawMotionSettings();
+  }
+}
+
+// ── the screensaver schedule ────────────────────────────────────────
+//
+// One boundary, two halves, and what each half shows. Changes apply to the
+// running manager at once — `mode()` re-reads the schedule every half second —
+// and are written to `config/aipi5.yaml`, which a deploy does not overwrite.
+//
+// Debounced like the volume slider and for the same reason: `+30` tapped four
+// times is four requests that can land out of order, and the last one to
+// arrive would win rather than the last one pressed.
+
+const SCHEDULE_DEBOUNCE_MS = 250;
+let schedulePending = null;
+let scheduleSending = false;
+let scheduleShown = {};
+
+function minutesOf(text) {
+  const [hours, mins] = String(text || "").split(":");
+  return (Number(hours) * 60 + Number(mins)) || 0;
+}
+
+function clockText(minutes) {
+  const day = ((minutes % 1440) + 1440) % 1440;
+  return String(Math.floor(day / 60)).padStart(2, "0") + ":" +
+         String(day % 60).padStart(2, "0");
+}
+
+const MODE_WORDS = { photos: "Google Photos slideshow",
+                     clock: "Time + Weather", weather: "Time + Weather" };
+
+function drawSchedule(screen) {
+  // While a tap is in flight the server's answer is behind the finger, so the
+  // page keeps showing what was asked for. Same guard the volume slider uses
+  // against its own four-second poll.
+  if (schedulePending || scheduleSending) return;
+  scheduleShown = screen;
+
+  el("set-day").textContent = screen.day_window || "—";
+  el("set-night").textContent = screen.night_window || "—";
+  el("set-day-mode").textContent = MODE_WORDS[screen.day_mode] || "—";
+  el("set-night-mode").textContent = MODE_WORDS[screen.night_mode] || "—";
+
+  for (const button of document.querySelectorAll("[data-day-start]")) {
+    button.classList.toggle("selected",
+      button.dataset.dayStart === screen.day_start);
+  }
+  for (const button of document.querySelectorAll("[data-night-start]")) {
+    button.classList.toggle("selected",
+      button.dataset.nightStart === screen.night_start);
+  }
+  for (const button of document.querySelectorAll("[data-day-mode]")) {
+    button.classList.toggle("selected",
+      button.dataset.dayMode === screen.day_mode);
+  }
+  for (const button of document.querySelectorAll("[data-night-mode]")) {
+    button.classList.toggle("selected",
+      button.dataset.nightMode === screen.night_mode);
+  }
+}
+
+function queueSchedule(change) {
+  // Latest wins, merged rather than replaced: two taps on different rows
+  // before the first lands must both be kept.
+  schedulePending = Object.assign(schedulePending || {}, change);
+  // Repaint from what was asked for, so the button lights under the finger
+  // rather than after the round trip.
+  const guess = Object.assign({}, scheduleShown, change);
+  if (change.day_start) guess.day_window = `${change.day_start}–${scheduleShown.night_start || ""}`;
+  if (change.night_start) guess.night_window = `${change.night_start}–${scheduleShown.day_start || ""}`;
+  const held = schedulePending;
+  schedulePending = null;
+  drawSchedule(guess);
+  schedulePending = held;
+  setTimeout(flushSchedule, SCHEDULE_DEBOUNCE_MS);
+}
+
+async function flushSchedule() {
+  if (scheduleSending || !schedulePending) return;
+  scheduleSending = true;
+  try {
+    while (schedulePending) {
+      const sending = schedulePending;
+      schedulePending = null;
+      const response = await fetch("/api/screensaver", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sending),
+      });
+      const answer = await response.json();
+      if (!answer.ok) {
+        // The device refused it — a time that is not a time, or both halves
+        // starting at once. Say so where the schedule is, and let the next
+        // poll put the real values back.
+        el("set-schedule-note").textContent = answer.error || "That did not work.";
+        return;
+      }
+      if (!schedulePending) drawSchedule(answer);
+    }
+  } catch (err) {
+    el("set-schedule-note").textContent = "The assistant is not answering.";
+  } finally {
+    scheduleSending = false;
   }
 }
 

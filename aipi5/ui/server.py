@@ -37,6 +37,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from aipi5.calendar import BirthdayError
+from aipi5.core.screen_settings import ScheduleError
 from aipi5.call import signaling as call_signaling
 from aipi5.files import web as files_web
 from aipi5.files.store import FileError
@@ -449,7 +450,8 @@ class _Handler(BaseHTTPRequestHandler):
                         "/api/assistant/ask", "/api/assistant/cancel",
                         "/api/assistant/approval",
                         "/api/hand/debug", "/api/hand/pause",
-                        "/api/calendar/birthdays", "/api/volume"):
+                        "/api/calendar/birthdays", "/api/volume",
+                        "/api/screensaver"):
             # Drained before it is refused. The 404 is written and the socket
             # closed, and a body still sitting in the kernel's receive queue at
             # that moment is an RST on Windows and a reset connection on the
@@ -498,6 +500,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/api/volume":
             self._volume_post(payload)
+            return
+
+        if path == "/api/screensaver":
+            self._screensaver_post(payload)
             return
 
         if path.startswith("/api/game/"):
@@ -1379,6 +1385,40 @@ class _Handler(BaseHTTPRequestHandler):
         answer["ok"] = ok
         self._json(answer, 200 if ok else 503)
 
+    def _screensaver_post(self, payload: dict) -> None:
+        """Move the day/night boundary, or change what each half shows.
+
+        Reading it back is `/api/system`'s `screensaver`, which already carries
+        the running schedule — so there is no GET here.
+
+        The validation lives in `ScreensaverSettings`, which knows why a value
+        is wrong; this handler chooses the status code and nothing else. 400
+        for a value somebody typed, 503 for a device with no screensaver to
+        configure.
+        """
+        settings = getattr(self.ui, "screen_settings", None)
+        if settings is None:
+            self._json({"ok": False,
+                        "error": "this build has no screensaver to set"}, 503)
+            return
+
+        fields = ("day_start", "night_start", "day_mode", "night_mode")
+        # Only what was sent. The page changes one thing per tap and must not
+        # have to restate the other three, which is how two taps in flight come
+        # to overwrite one another.
+        wanted = {name: payload[name] for name in fields if name in payload}
+        if not wanted:
+            self._json({"ok": False, "error": "nothing to change"}, 400)
+            return
+
+        try:
+            answer = settings.set(**wanted)
+        except ScheduleError as exc:
+            self._json({"ok": False, "error": str(exc)}, 400)
+            return
+        answer["ok"] = True
+        self._json(answer)
+
     def _weather(self, params: dict) -> None:
         """Today's weather, for the weather page.
 
@@ -1707,7 +1747,8 @@ class WebUI:
     def __init__(self, cfg, *, state, history, info,
                  weather=None, news=None, camera=None, call=None,
                  on_call_change=lambda: None, countdown=None, files=None,
-                 photos=None, screen=None, games=None, on_wake=lambda why: None,
+                 photos=None, screen=None, screen_settings=None,
+                 games=None, on_wake=lambda why: None,
                  agent=None, hands=None, birthdays=None, volume=None,
                  dictation=None, coordinator=None):
         self.cfg = cfg
@@ -1723,6 +1764,10 @@ class WebUI:
         # place rather than spread across HTTP handlers.
         self.games = games
         self.birthdays = birthdays
+        # Applies a schedule change to the running manager and writes it to
+        # the deployed configuration. Optional, so a test can build a server
+        # with no screensaver behind it — `_screensaver_post` answers 503.
+        self.screen_settings = screen_settings
         # The agent, or None where it is not installed. The same `AgentProxy`
         # the call server holds — one socket, not two. This server forwards a
         # hand gesture to the agent's browser (`_gesture_post`) and, since the

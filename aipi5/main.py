@@ -42,7 +42,7 @@ import time
 from contextlib import ExitStack
 from dataclasses import replace
 
-from aipi5.core import aia_bridge, hardware
+from aipi5.core import aia_bridge, hardware, screen_settings
 
 from aia.audio import wake as wake_mod
 from aia.audio.capture import Microphone
@@ -501,6 +501,13 @@ class Assistant:
             day_mode=settings.screensaver.day_mode,
             night_mode=settings.screensaver.night_mode,
             timezone=settings.location.timezone)
+        # The screen's half of the schedule: applies to the manager above and
+        # writes the same `config/aipi5.yaml` the volume slider does, so a
+        # boundary set with a finger survives a restart. See
+        # `aipi5/core/screen_settings.py` for why a second *editor* of one
+        # store is not the second *store* the old comment warned about.
+        self.screen_settings = screen_settings.ScreensaverSettings(
+            self.screen, settings.source)
         # Hand control's half of the camera. Built whether or not the agent is
         # installed -- it does nothing at all until something tells it a
         # browser is open, and that only ever comes from the agent.
@@ -558,6 +565,7 @@ class Assistant:
                          call=self.call, on_call_change=self.on_call_change,
                          countdown=self.countdown, files=self.files,
                          photos=self.photos, screen=self.screen,
+                         screen_settings=self.screen_settings,
                          volume=self.volume,
                          agent=self.agent,
                          coordinator=self.coordinator,

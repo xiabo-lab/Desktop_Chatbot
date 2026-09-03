@@ -384,9 +384,17 @@ screensaver:
   wake_grace_seconds: 300
 
   # What the idle screen shows, and when. **This is the only place the
-  # schedule is written down** — `aipi5/screensaver/schedule.py` reads it and
+  # schedule is stored** — `aipi5/screensaver/schedule.py` reads it and
   # nothing else has an opinion — so the times can be moved here without
   # touching any screensaver logic.
+  #
+  # It is no longer the only place it is *written*: the Screensaver tab of the
+  # settings page edits these four keys, through the same line-based editor
+  # the volume slider uses (`aipi5/core/yaml_edit.py`), preserving these
+  # comments and the quotes below. One store, two editors — see
+  # `aipi5/core/screen_settings.py` for why that is not the thing the old
+  # comment warned about. `scripts/deploy.sh` protects this file, so what the
+  # screen writes here survives a deploy.
   #
   #     07:00 – 21:00   the Google Photos slideshow
   #     21:01 – 06:59   the clock and the weather
@@ -400,6 +408,13 @@ screensaver:
   # written down anywhere to go stale. The timezone in the `location` block
   # above is what the weather provider is told; the *system* timezone is what
   # decides this. They should agree, and on this device they do.
+  #
+  # **The quotes are load-bearing.** `07:00` unquoted loads as the string
+  # "07:00", but `21:01` unquoted loads as the integer 1261 — YAML 1.1 reads a
+  # colon-separated number as sexagesimal. So dropping them works for one of
+  # these two values and silently breaks the other, leaving a file that still
+  # parses. `aipi5/core/yaml_edit.py` keeps whatever quoting it finds for
+  # exactly this reason.
   day_start: "07:00"
   night_start: "21:01"
 
