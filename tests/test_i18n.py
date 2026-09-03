@@ -109,6 +109,15 @@ class TestEveryKeyIsRealAndUsed(unittest.TestCase):
         # A boundary before the `t`, or this matches `createElemen*t(*"button")`
         # and every other call whose name happens to end in one.
         cls.used |= set(re.findall(r'(?<![\w.$])t\("([\w.]+)"', cls.page))
+        # Some keys are reached a step removed: `MODE_TEXT` maps a wire value
+        # to a key and the call site does `t(MODE_TEXT[mode])`, because the
+        # language can change long after that table was built. A key named
+        # anywhere outside the table counts as used — what this is really for
+        # is the key nothing mentions at all.
+        table = cls.page.index("const STRINGS = {")
+        outside = (cls.page[:table]
+                   + cls.page[cls.page.index("\n};", table):])
+        cls.used |= {key for key in cls.defined if f'"{key}"' in outside}
 
     def test_every_key_the_page_asks_for_exists(self):
         """`t()` falls back to the key itself, so a missing one renders as
