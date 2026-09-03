@@ -28,12 +28,12 @@ setting does.
 from __future__ import annotations
 
 import logging
-import os
 import subprocess
 import threading
 from pathlib import Path
 
 from aipi5.core import aia_bridge  # noqa: F401  — puts AIA on sys.path
+from aipi5.core import yaml_edit
 
 from aia.plugins.base import CommandSpec, Plugin, Result
 from aia.plugins.kodama import parse_level
@@ -183,51 +183,18 @@ class VolumeControl:
 
 
 def _persist(path: Path, percent: int) -> None:
-    """Atomically replace the existing ``audio.volume`` scalar.
+    """Set `audio.volume` in the deployed configuration.
 
-    This intentionally does not round-trip YAML: doing so would discard the
-    deployment file's comments and formatting. The key must already exist,
-    matching the same conservative rule used by the agent's configuration
-    editor.
+    The line-based edit this used to do by hand now lives in
+    `aipi5/core/yaml_edit.py`, because the screensaver schedule became a second
+    thing the screen writes and the quoting rule in there is the kind of
+    detail that gets fixed once and reintroduced by the copy.
+
+    Still not a YAML round trip, for the reason it never was: dumping the file
+    back would discard every comment in it, and the comments are most of the
+    file.
     """
-    text = path.read_text(encoding="utf-8")
-    lines = text.splitlines(keepends=True)
-    in_audio = False
-    changed = False
-    for index, line in enumerate(lines):
-        content = line.rstrip("\r\n")
-        stripped = content.strip()
-        if content and not content[0].isspace():
-            in_audio = stripped == "audio:"
-            continue
-        if not in_audio or not stripped.startswith("volume:"):
-            continue
-        before_comment, marker, comment = content.partition("#")
-        indent = before_comment[:len(before_comment) - len(before_comment.lstrip())]
-        ending = line[len(content):]
-        rebuilt = f"{indent}volume: {percent}"
-        if marker:
-            rebuilt += f"  # {comment.strip()}"
-        lines[index] = rebuilt + ending
-        changed = True
-        break
-    if not changed:
-        raise OSError(f"there is no audio.volume setting in {path}")
-
-    updated = "".join(lines)
-    if updated == text:
-        return
-    stat = path.stat()
-    temporary = path.with_name(f".{path.name}.volume-{os.getpid()}")
-    try:
-        with open(temporary, "w", encoding="utf-8", newline="") as handle:
-            handle.write(updated)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temporary, stat.st_mode & 0o777)
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    yaml_edit.write_scalar(path, "audio", "volume", percent)
 
 
 class SystemVolume(Plugin):
