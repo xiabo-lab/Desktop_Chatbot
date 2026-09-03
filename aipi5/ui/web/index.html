@@ -1715,6 +1715,23 @@
   /* Rows of label and value, at a size somebody can read standing up. Nothing
      here is a text field: this device has no keyboard, so every control is a
      button or a choice between things already on the screen. */
+  /* The tab strip is a third flex child of `.page`, between the header and
+     the scrolling body -- so the tabs stay put and only the panel scrolls,
+     which is what makes them reachable with a thumb on a full page. */
+  #settings-tabs { display: flex; gap: 10px; flex: 0 0 auto; margin-bottom: 14px; }
+  .set-tab {
+    flex: 1 1 0; min-width: 0; height: 62px; font-size: 19px;
+    flex-direction: row; padding: 0 12px;
+  }
+  /* The same green `.set-button.selected` uses, so the page has one visual
+     language for "this is the one you picked" rather than two. */
+  .set-tab.on {
+    background: #35d47d; border-color: #35d47d; color: #04140c;
+    box-shadow: 0 0 0 1px rgba(117,255,173,0.18),
+                0 8px 22px rgba(20,184,95,0.20);
+  }
+  .set-panel { display: none; }
+  .set-panel.on { display: block; }
   #settings-body { flex: 1; overflow-y: auto; padding-right: 6px; }
   .set-section {
     background: var(--panel); border: 1px solid var(--panel-edge);
@@ -2679,166 +2696,184 @@
     <div class="headline-weather" data-weather-headline></div>
   </header>
 
+  <!-- Four tabs rather than one long scroll. The six cards below moved
+       here unchanged and kept every id, so the script that fills them
+       needed no edit at all -- see `showSettingsTab`. -->
+  <div id="settings-tabs" role="tablist">
+    <button class="set-tab on" role="tab" data-set-tab="hardware">System Hardware Info</button>
+    <button class="set-tab" role="tab" data-set-tab="game">Game Setting</button>
+    <button class="set-tab" role="tab" data-set-tab="system">System Setting</button>
+    <button class="set-tab" role="tab" data-set-tab="screensaver">Screensaver Setting</button>
+  </div>
+
   <div id="settings-body">
-    <div class="set-section">
-      <div class="set-title">Volume</div>
-      <div class="set-row volume-row">
-        <label class="set-label" for="set-volume">All applications</label>
-        <div class="volume-control">
-          <input id="set-volume" type="range" min="0" max="100" step="1"
-                 value="100" aria-label="Master volume">
-          <output id="set-volume-value" for="set-volume">100%</output>
+    <div class="set-panel on" data-set-panel="hardware">
+      <!-- Section 44. Motion health comes from the device, not configuration,
+           so a disconnected accelerator cannot look healthy here. -->
+      <div class="set-section">
+        <div class="set-title">AI Motion</div>
+
+        <div class="set-row">
+          <div class="set-label">AI accelerator</div>
+          <div class="set-value" id="set-hailo">—</div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Firmware</div>
+          <div class="set-value" id="set-hailo-fw">—</div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Pose model</div>
+          <div class="set-value" id="set-pose-model">—</div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Camera</div>
+          <div class="set-value" id="set-motion-camera">—</div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Performance</div>
+          <div class="set-value" id="set-motion-fps">—</div>
+        </div>
+
+        <div class="set-buttons">
+          <!-- Section 45's developer mode, off by default and reachable without
+               a keyboard, which on this device means it has to be a button. -->
+          <button class="set-button" id="set-debug-pose">Debug Pose: Off</button>
+        </div>
+        <div class="set-note" id="set-motion-note"></div>
+      </div>
+    </div>
+
+    <div class="set-panel" data-set-panel="game">
+      <div class="set-section">
+        <div class="set-title">Fruit Ninja</div>
+        <div class="set-row">
+          <div class="set-label">Play time</div>
+          <div class="set-value" id="set-game-time">—</div>
+        </div>
+        <div class="set-buttons" id="set-game-times">
+          <button class="set-button" data-game-seconds="60">60s</button>
+          <button class="set-button" data-game-seconds="120">120s</button>
+          <button class="set-button" data-game-seconds="180">180s</button>
+          <button class="set-button" data-game-seconds="240">240s</button>
+          <button class="set-button" data-game-seconds="300">300s</button>
+        </div>
+        <div class="set-note" id="set-game-note">Choose how long the next round lasts.</div>
+      </div>
+    </div>
+
+    <div class="set-panel" data-set-panel="system">
+      <div class="set-section">
+        <div class="set-title">Volume</div>
+        <div class="set-row volume-row">
+          <label class="set-label" for="set-volume">All applications</label>
+          <div class="volume-control">
+            <input id="set-volume" type="range" min="0" max="100" step="1"
+                   value="100" aria-label="Master volume">
+            <output id="set-volume-value" for="set-volume">100%</output>
+          </div>
+        </div>
+        <div class="set-note" id="set-volume-note">
+          Controls Game, Call, Kodama-Lite, Browser, and Agent Talk together.
         </div>
       </div>
-      <div class="set-note" id="set-volume-note">
-        Controls Game, Call, Kodama-Lite, Browser, and Agent Talk together.
+
+      <!-- The floating button only appears when the page can tell it is not
+           covering the screen, and that is a guess about window geometry. This
+           row is the one that is always here, for the day the guess is wrong. -->
+      <div class="set-section">
+        <div class="set-title">Display</div>
+
+        <div class="set-row">
+          <div class="set-label">Full screen</div>
+          <div class="set-value" id="set-fullscreen">—</div>
+        </div>
+
+        <div class="set-buttons">
+          <button class="set-button" id="set-go-fullscreen">Go Full Screen</button>
+        </div>
+        <div class="set-note">
+          The kiosk starts full-screen. If the window's close button was pressed
+          and a title bar appeared, this puts it back.
+        </div>
       </div>
     </div>
 
-    <div class="set-section">
-      <div class="set-title">Screensaver</div>
+    <div class="set-panel" data-set-panel="screensaver">
+      <div class="set-section">
+        <div class="set-title">Screensaver</div>
 
-      <div class="set-row">
-        <div class="set-label">Enabled</div>
-        <div class="set-value" id="set-enabled">—</div>
-      </div>
-      <div class="set-row">
-        <div class="set-label">Idle timeout</div>
-        <div class="set-value" id="set-timeout">—</div>
-      </div>
-      <div class="set-row">
-        <div class="set-label">Day slideshow</div>
-        <div class="set-value" id="set-day">—</div>
-      </div>
-      <div class="set-row">
-        <div class="set-label">Night screen</div>
-        <div class="set-value" id="set-night">—</div>
-      </div>
-      <div class="set-row">
-        <div class="set-label">Showing now</div>
-        <div class="set-value" id="set-mode">—</div>
-      </div>
-      <!-- The idle-power behaviour, where somebody standing at the device can
-           check it. "Is the camera light off?" is the question this feature
-           exists to answer yes to, and the panel is closer to hand than the
-           journal is. -->
-      <div class="set-row">
-        <div class="set-label">Camera while asleep</div>
-        <div class="set-value" id="set-camera-idle">—</div>
-      </div>
-      <!-- Section 22 asks for the schedule to be visible and section 25 for
-           the timezone to be diagnosable. Both are read-only here on purpose:
-           they live in one place in the YAML so they can be changed without
-           touching the screensaver logic, and a second way to set them is a
-           second thing that can disagree. -->
-      <div class="set-note" id="set-schedule-note"></div>
-    </div>
-
-    <div class="set-section">
-      <div class="set-title">Slideshow source</div>
-
-      <div class="set-row">
-        <div class="set-label">Google Photos</div>
-        <div class="set-value" id="set-account">—</div>
-      </div>
-      <!-- **Not "Album".** The Google Photos Picker API does not hand back an
-           album — it hands back the photographs a person selected, once. A
-           label saying "Album" would promise something the API cannot do:
-           that adding a picture to that album in Google Photos would make it
-           appear here. It would not. See aipi5/photos/__init__.py. -->
-      <div class="set-row">
-        <div class="set-label">Selected photos</div>
-        <div class="set-value" id="set-album">—</div>
-      </div>
-      <div class="set-row">
-        <div class="set-label">Photo interval</div>
-        <div class="set-value" id="set-interval">—</div>
-      </div>
-      <div class="set-row">
-        <div class="set-label">Cached</div>
-        <div class="set-value" id="set-cache">—</div>
+        <div class="set-row">
+          <div class="set-label">Enabled</div>
+          <div class="set-value" id="set-enabled">—</div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Idle timeout</div>
+          <div class="set-value" id="set-timeout">—</div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Day slideshow</div>
+          <div class="set-value" id="set-day">—</div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Night screen</div>
+          <div class="set-value" id="set-night">—</div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Showing now</div>
+          <div class="set-value" id="set-mode">—</div>
+        </div>
+        <!-- The idle-power behaviour, where somebody standing at the device can
+             check it. "Is the camera light off?" is the question this feature
+             exists to answer yes to, and the panel is closer to hand than the
+             journal is. -->
+        <div class="set-row">
+          <div class="set-label">Camera while asleep</div>
+          <div class="set-value" id="set-camera-idle">—</div>
+        </div>
+        <!-- Section 22 asks for the schedule to be visible and section 25 for
+             the timezone to be diagnosable. Both are read-only here on purpose:
+             they live in one place in the YAML so they can be changed without
+             touching the screensaver logic, and a second way to set them is a
+             second thing that can disagree. -->
+        <div class="set-note" id="set-schedule-note"></div>
       </div>
 
-      <div class="set-buttons">
-        <button class="set-button" id="set-pick">Change Photos</button>
-        <button class="set-button" id="set-sync">Sync Now</button>
-        <button class="set-button" id="set-reconnect">Reconnect</button>
-        <button class="set-button danger" id="set-disconnect">Disconnect</button>
-      </div>
-      <div class="set-note" id="set-photos-note"></div>
+      <div class="set-section">
+        <div class="set-title">Slideshow source</div>
 
-      <!-- The sets the person has picked before, so switching back to one is
-           a tap rather than another trip to the phone. -->
-      <div id="set-collections"></div>
-    </div>
+        <div class="set-row">
+          <div class="set-label">Google Photos</div>
+          <div class="set-value" id="set-account">—</div>
+        </div>
+        <!-- **Not "Album".** The Google Photos Picker API does not hand back an
+             album — it hands back the photographs a person selected, once. A
+             label saying "Album" would promise something the API cannot do:
+             that adding a picture to that album in Google Photos would make it
+             appear here. It would not. See aipi5/photos/__init__.py. -->
+        <div class="set-row">
+          <div class="set-label">Selected photos</div>
+          <div class="set-value" id="set-album">—</div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Photo interval</div>
+          <div class="set-value" id="set-interval">—</div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">Cached</div>
+          <div class="set-value" id="set-cache">—</div>
+        </div>
 
-    <div class="set-section">
-      <div class="set-title">Fruit Ninja</div>
-      <div class="set-row">
-        <div class="set-label">Play time</div>
-        <div class="set-value" id="set-game-time">—</div>
-      </div>
-      <div class="set-buttons" id="set-game-times">
-        <button class="set-button" data-game-seconds="60">60s</button>
-        <button class="set-button" data-game-seconds="120">120s</button>
-        <button class="set-button" data-game-seconds="180">180s</button>
-        <button class="set-button" data-game-seconds="240">240s</button>
-        <button class="set-button" data-game-seconds="300">300s</button>
-      </div>
-      <div class="set-note" id="set-game-note">Choose how long the next round lasts.</div>
-    </div>
+        <div class="set-buttons">
+          <button class="set-button" id="set-pick">Change Photos</button>
+          <button class="set-button" id="set-sync">Sync Now</button>
+          <button class="set-button" id="set-reconnect">Reconnect</button>
+          <button class="set-button danger" id="set-disconnect">Disconnect</button>
+        </div>
+        <div class="set-note" id="set-photos-note"></div>
 
-    <!-- Section 44. Motion health comes from the device, not configuration,
-         so a disconnected accelerator cannot look healthy here. -->
-    <div class="set-section">
-      <div class="set-title">AI Motion</div>
-
-      <div class="set-row">
-        <div class="set-label">AI accelerator</div>
-        <div class="set-value" id="set-hailo">—</div>
-      </div>
-      <div class="set-row">
-        <div class="set-label">Firmware</div>
-        <div class="set-value" id="set-hailo-fw">—</div>
-      </div>
-      <div class="set-row">
-        <div class="set-label">Pose model</div>
-        <div class="set-value" id="set-pose-model">—</div>
-      </div>
-      <div class="set-row">
-        <div class="set-label">Camera</div>
-        <div class="set-value" id="set-motion-camera">—</div>
-      </div>
-      <div class="set-row">
-        <div class="set-label">Performance</div>
-        <div class="set-value" id="set-motion-fps">—</div>
-      </div>
-
-      <div class="set-buttons">
-        <!-- Section 45's developer mode, off by default and reachable without
-             a keyboard, which on this device means it has to be a button. -->
-        <button class="set-button" id="set-debug-pose">Debug Pose: Off</button>
-      </div>
-      <div class="set-note" id="set-motion-note"></div>
-    </div>
-
-    <!-- The floating button only appears when the page can tell it is not
-         covering the screen, and that is a guess about window geometry. This
-         row is the one that is always here, for the day the guess is wrong. -->
-    <div class="set-section">
-      <div class="set-title">Display</div>
-
-      <div class="set-row">
-        <div class="set-label">Full screen</div>
-        <div class="set-value" id="set-fullscreen">—</div>
-      </div>
-
-      <div class="set-buttons">
-        <button class="set-button" id="set-go-fullscreen">Go Full Screen</button>
-      </div>
-      <div class="set-note">
-        The kiosk starts full-screen. If the window's close button was pressed
-        and a title bar appeared, this puts it back.
+        <!-- The sets the person has picked before, so switching back to one is
+             a tap rather than another trip to the phone. -->
+        <div id="set-collections"></div>
       </div>
     </div>
   </div>
@@ -3508,8 +3543,39 @@ const SETTINGS_POLL_MS = 4000;
 // phone, and the answer should land within a second of them finishing.
 const PICKER_POLL_MS = 1500;
 
-function startSettings() {
+// Which of the four cards is on screen. Remembered between visits, because
+// somebody adjusting a screensaver boundary leaves and comes back several
+// times over, and re-finding the tab each time is friction on a device whose
+// only input is a finger. Same shape as the weather page's unit toggle.
+const SET_TABS = ["hardware", "game", "system", "screensaver"];
+const SET_TAB_KEY = "aipi5.settings.tab";
+let settingsTab = "hardware";
+
+function showSettingsTab(name) {
+  settingsTab = SET_TABS.includes(name) ? name : "hardware";
+  for (const button of document.querySelectorAll("[data-set-tab]")) {
+    button.classList.toggle("on", button.dataset.setTab === settingsTab);
+  }
+  for (const panel of document.querySelectorAll("[data-set-panel]")) {
+    panel.classList.toggle("on", panel.dataset.setPanel === settingsTab);
+  }
+  // The body scrolls, and the scroll position belongs to the panel that was
+  // in it. Leaving it alone opens the next tab halfway down.
+  el("settings-body").scrollTop = 0;
+  // The QR code is a fixed overlay outside the panels, so switching tab would
+  // otherwise leave it hanging over the Game settings. The pick itself carries
+  // on regardless — this only stops watching it.
+  if (settingsTab !== "screensaver") closePicker("hide");
+  try { localStorage.setItem(SET_TAB_KEY, settingsTab); } catch (e) { /* private mode */ }
+  // Straight away, so a tab is never blank for the four seconds until the
+  // next tick.
   drawSettings();
+}
+
+function startSettings() {
+  let remembered = null;
+  try { remembered = localStorage.getItem(SET_TAB_KEY); } catch (e) { /* private mode */ }
+  showSettingsTab(remembered || "hardware");
   if (settingsTimer) clearInterval(settingsTimer);
   settingsTimer = setInterval(drawSettings, SETTINGS_POLL_MS);
 }
@@ -3568,10 +3634,17 @@ async function drawSettings() {
     `The schedule and the timeout are set in config/aipi5.yaml. ` +
     (screen.held_by ? `Held off right now by ${screen.held_by}.` : "");
 
-  drawPhotoSettings(photos);
-  drawPickState(photos.pick || {});
-  drawGameSettings();
-  drawMotionSettings();
+  // Only what is on screen. `/api/system` above answers every tab in one
+  // request and is fetched regardless, but these three are separate round
+  // trips — and `drawMotionSettings` opens the accelerator over PCIe to ask
+  // its firmware version, which is real work to do every four seconds for
+  // somebody reading a different tab.
+  if (settingsTab === "screensaver") {
+    drawPhotoSettings(photos);
+    drawPickState(photos.pick || {});
+  }
+  if (settingsTab === "game") drawGameSettings();
+  if (settingsTab === "hardware") drawMotionSettings();
 }
 
 function showVolume(level) {
@@ -3887,6 +3960,10 @@ el("set-debug-pose").addEventListener("click", async () => {
     el("set-motion-note").textContent = "The assistant did not answer.";
   }
 });
+
+for (const button of document.querySelectorAll("[data-set-tab]")) {
+  button.addEventListener("click", () => showSettingsTab(button.dataset.setTab));
+}
 
 for (const button of document.querySelectorAll("[data-game-seconds]")) {
   button.addEventListener("click", async () => {
