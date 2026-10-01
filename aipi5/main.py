@@ -93,7 +93,7 @@ from aipi5.llm.client import OpenAIClient
 from aipi5.llm.conversation import Conversation
 from aipi5.llm.tools import ToolBox
 from aipi5.photos.service import GooglePhotosService
-from aipi5.screensaver import (IdleHardware, ScheduleManager,
+from aipi5.screensaver import (DisplayPower, IdleHardware, ScheduleManager,
                                ScreensaverManager)
 from aipi5.tools.clock import Clock
 from aipi5.tools.news import NewsService
@@ -484,7 +484,10 @@ class Assistant:
         self.screensaver = ScreensaverPolicy(
             settings.screensaver.timeout_seconds,
             settings.screensaver.enabled,
-            wake_grace_seconds=settings.screensaver.wake_grace_seconds)
+            wake_grace_seconds=settings.screensaver.wake_grace_seconds,
+            camera_timeout_seconds=(
+                settings.screensaver.camera_timeout_seconds),
+            display_off_seconds=settings.screensaver.display_off_seconds)
         # The daytime slideshow's photographs. Built unconditionally, started
         # only when it is on, and never fatal — the same shape as the call
         # server, and for the same reason: a settings page that can say "no
@@ -522,14 +525,16 @@ class Assistant:
             send=self._hand_gesture,
             screen=self.screen)
         self.watcher: PresenceWatcher | None = None
-        # What the idle screen switches off. The camera goes away with the
-        # screensaver and comes back with a touch — the whole of that handoff,
-        # including why it is worth the trade, is in `screensaver/power.py`. The
-        # watcher is passed as a callable because it does not exist yet: it is
-        # built in `start()`, after the camera has been opened.
+        # The two hardware idle stages. The watcher is passed as a callable
+        # because it does not exist yet: it is built in `start()`, after the
+        # camera has been opened. DisplayPower keeps Chromium alive and uses
+        # Wayland output power, so the touchscreen can still deliver the first
+        # wake-only touch while the panel is dark.
         self.idle_hardware = IdleHardware(
             self.camera, lambda: self.watcher,
             enabled=settings.screensaver.release_camera)
+        self.display_power = DisplayPower(
+            enabled=settings.screensaver.power_off_display)
 
         # ── AI Motion games ──────────────────────────────────────────
         #
@@ -968,9 +973,18 @@ class Assistant:
         else:
             self.screen.release("choosing photos")
 
-        screen = self.screen.snapshot()
-        # The camera goes away with the screen and comes back with it.
-        self.idle_hardware.screen_changed(screen["showing"])
+        call = self._call_snapshot()
+        # `ringing` is earlier than `live`: the trusted phone has reached the
+        # Pi, but the browser has not answered yet. Light the physical panel at
+        # that first state without waking the camera; the live transition below
+        # will lend the camera only after answer.
+        screen = self.screen.snapshot(
+            display_attention=call.get("state") == "ringing")
+        # Power the monitor on first, so a wake touch becomes visible before
+        # reopening the slower USB camera. On the way to idle the booleans turn
+        # true in the opposite order: camera at 1 min, display at 30 min.
+        self.display_power.screen_changed(screen["display_off"])
+        self.idle_hardware.camera_changed(screen["camera_idle"])
         self.ui_state.update(
             assistant=self.machine.state.value,
             presence=self.tracker.state.value,
@@ -981,7 +995,7 @@ class Assistant:
             screensaver_mode=screen["mode"],
             kodama_running=self.player.available(),
             degraded=self.report.degraded if self.report else [],
-            call=self._call_snapshot(),
+            call=call,
             # Two fields, so a page that is *not* on the game can notice that
             # it should be — the same job `call` does when the phone rings,
             # and needed for the same reason: a game started by voice has to
@@ -1029,6 +1043,7 @@ class Assistant:
             # dark camera light and a parked detector have one explanation to
             # read rather than three to correlate.
             "idle_hardware": self.idle_hardware.describe(),
+            "display_power": self.display_power.describe(),
             "photos": self.photos.describe(),
             # Visible because a stalled housekeeping thread is exactly the
             # kind of failure that otherwise shows up only as "the camera
@@ -1350,6 +1365,9 @@ class Assistant:
             # Before the hardware it touches, so a tick cannot land on a
             # camera or a weather session that is being closed underneath it.
             ("housekeeping", self.housekeeping.stop),
+            # Never leave the physical panel powered down after the process
+            # that owns its touchscreen wake endpoint has gone away.
+            ("display", lambda: self.display_power.screen_changed(False)),
             # Before the camera and before presence, because a game holds both
             # the Brio and a configured model on the accelerator and gives them
             # back through here. Closing the camera first would leave the pose

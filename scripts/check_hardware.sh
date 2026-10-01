@@ -57,6 +57,8 @@ else
 fi
 [[ -n "${WAYLAND_DISPLAY:-}" ]] && ok "compositor" "$WAYLAND_DISPLAY" \
                                 || note "compositor" "not in a Wayland session (ssh?)"
+command -v wlopm >/dev/null 2>&1 && ok "display power" "wlopm installed" \
+  || bad "display power" "wlopm missing — monitor idle power-off is unavailable"
 
 head "Microphone"
 # Two USB microphones on this device enumerate under names that differ only by

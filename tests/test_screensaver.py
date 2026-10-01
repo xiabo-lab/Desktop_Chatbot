@@ -16,7 +16,7 @@ from datetime import datetime
 
 from aipi5.core.presence import Presence, PresenceEvent, ScreensaverPolicy
 from aipi5.screensaver.manager import Mode, ScreensaverManager
-from aipi5.screensaver.power import IdleHardware
+from aipi5.screensaver.power import DisplayPower, IdleHardware
 from aipi5.screensaver.schedule import (ScheduleManager, Window, format_hhmm,
                                         parse_hhmm)
 
@@ -214,6 +214,24 @@ class TestManager(unittest.TestCase):
         # the mode is the new half.
         self.assertTrue(snapshot["showing"])
         self.assertEqual(snapshot["mode"], "night-weather")
+        self.assertTrue(snapshot["camera_idle"])
+        self.assertFalse(snapshot["display_off"])
+
+    def test_a_hold_suppresses_both_hardware_idle_stages(self):
+        self.empty_room(0.0)
+        self.manager.hold("a game")
+        snapshot = self.manager.snapshot(at("22:00"), 10_000.0)
+        self.assertFalse(snapshot["camera_idle"])
+        self.assertFalse(snapshot["display_off"])
+
+    def test_incoming_call_lights_display_without_waking_camera(self):
+        self.empty_room(0.0)
+        snapshot = self.manager.snapshot(
+            at("22:00"), 10_000.0, display_attention=True)
+        self.assertTrue(snapshot["camera_idle"],
+                        "ringing alone must not open the camera")
+        self.assertFalse(snapshot["display_off"],
+                         "an incoming ring must light the monitor")
 
     def test_describe_reports_the_timezone(self):
         described = self.manager.describe()
@@ -350,6 +368,56 @@ class TestIdleHardware(unittest.TestCase):
         idle.screen_changed(True)
         self.assertTrue(idle.describe()["camera_released"])
         self.assertTrue(idle.describe()["enabled"])
+
+
+class TestDisplayPower(unittest.TestCase):
+
+    def make(self, returncode: int = 0):
+        calls: list[list[str]] = []
+
+        class Result:
+            stderr = "not supported" if returncode else ""
+            stdout = ""
+
+            def __init__(self):
+                self.returncode = returncode
+
+        def run(command, **kwargs):
+            calls.append(command)
+            self.assertEqual(kwargs["timeout"], 5)
+            self.assertFalse(kwargs["check"])
+            return Result()
+
+        return DisplayPower(runner=run), calls
+
+    def test_first_reconcile_ensures_the_output_is_on(self):
+        power, calls = self.make()
+        power.screen_changed(False)
+        self.assertEqual(calls, [["wlopm", "--on", "*"]])
+        self.assertFalse(power.off)
+
+    def test_only_power_edges_run_commands(self):
+        power, calls = self.make()
+        power.screen_changed(False)
+        calls.clear()
+        for _ in range(20):
+            power.screen_changed(True)
+        for _ in range(20):
+            power.screen_changed(False)
+        self.assertEqual(calls, [["wlopm", "--off", "*"],
+                                 ["wlopm", "--on", "*"]])
+
+    def test_a_failed_command_is_reported(self):
+        power, _ = self.make(returncode=1)
+        power.screen_changed(True)
+        self.assertFalse(power.off)
+        self.assertEqual(power.describe()["error"], "not supported")
+
+    def test_it_can_be_disabled(self):
+        power, calls = self.make()
+        power.enabled = False
+        power.screen_changed(True)
+        self.assertEqual(calls, [])
 
 
 class TestReboot(unittest.TestCase):

@@ -25,7 +25,10 @@ class TestDefaults(unittest.TestCase):
         self.assertEqual((settings.display.width, settings.display.height),
                          (1280, 800))
         self.assertEqual(settings.location.zip, "95127")
-        self.assertEqual(settings.screensaver.timeout_seconds, 60.0)
+        self.assertEqual(settings.screensaver.camera_timeout_seconds, 60.0)
+        self.assertEqual(settings.screensaver.timeout_seconds, 600.0)
+        self.assertEqual(settings.screensaver.display_off_seconds, 1800.0)
+        self.assertEqual(settings.screensaver.wake_grace_seconds, 600.0)
         self.assertEqual(settings.games.round_seconds, 120)
         self.assertEqual(
             (settings.motion.capture_width, settings.motion.capture_height,

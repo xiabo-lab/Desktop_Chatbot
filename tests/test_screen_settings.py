@@ -284,7 +284,7 @@ class TestTheRoute(unittest.TestCase):
         """A caller inventing `timeout_seconds` must not set it here."""
         status, _ = self.post({"day_start": "06:00", "timeout_seconds": 5})
         self.assertEqual(200, status)
-        self.assertEqual(60, self.settings.describe()["timeout_s"])
+        self.assertEqual(600, self.settings.describe()["timeout_s"])
 
     def test_a_build_with_no_screensaver_says_so(self):
         self.web.screen_settings = None

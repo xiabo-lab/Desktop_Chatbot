@@ -84,6 +84,7 @@ HEF="$(sed -n 's/^[[:space:]]*model:[[:space:]]*\(.*\.hef\)[[:space:]]*$/\1/p' \
 [[ "$HEF" == /* ]] || HEF="$ROOT/${HEF:-models/none.hef}"
 note  "Hailo person model"  "$HEF"
 note  "Chromium"            "$(command -v chromium-browser || command -v chromium || echo /usr/bin/chromium)"
+check "display power control" "$(command -v wlopm || echo /usr/bin/wlopm)"
 
 (( missing )) && {
   warn "Fetch AIA's models first: cd $AIA_HOME && ./scripts/get_sensevoice.sh && ./scripts/get_wake_model.sh"

@@ -362,20 +362,23 @@ games:
 
 screensaver:
   enabled: true
-  # From the moment presence is lost, not from the last frame seen. 60 s is
-  # the specification's number and it is a config value because the right one
-  # depends on the room.
+  # Three independent idle stages, all measured from the same last activity:
   #
-  # This is the *certain* case: the camera watched somebody leave. The other
-  # case has its own number below.
-  timeout_seconds: 60
+  #       1 minute   park person detection and release the USB camera
+  #      10 minutes  show Google Photos by day or the clock at night
+  #      30 minutes  power off the monitor output
+  #
+  # A touch resets all three stages and powers the monitor back on. It does
+  # not start an assistant turn; saying the wake word still does.
+  camera_timeout_seconds: 60
+  timeout_seconds: 600
+  display_off_seconds: 1800
 
-  # Give the camera back while the screen is away, and take it again when the
-  # screen comes back.
+  # Give the camera back at the first idle stage, and take it again on activity.
   #
-  #     screensaver up   -> the detector parks, the Brio is released
+  #     one minute idle  -> the detector parks, the Brio is released
   #     touch the screen -> the Brio reopens, the detector looks again
-  #     nobody found in `wake_grace_seconds` -> screensaver, camera off again
+  #     nobody found in `wake_grace_seconds` -> idle screen appears
   #
   # The reason is cost, not tidiness. Person detection is the only thing on this
   # device that reads the camera continuously — every 500 ms it is a USB
@@ -389,14 +392,14 @@ screensaver:
   # screensaver down by itself again, at the cost of the camera running all day.
   release_camera: true
 
-  # How long the screen stays up after a touch woke it, before the camera not
-  # having found anybody is allowed to take it away again. Five minutes, and
-  # deliberately much longer than `timeout_seconds`: presence is UNKNOWN at that
-  # moment rather than absent — the detector has observed nothing yet — and the
-  # person who tapped may well be standing to one side of the panel, reading it,
-  # outside the Brio's 78 degrees. A minute here would blank the screen in front
-  # of somebody using it.
-  wake_grace_seconds: 300
+  # How long the active UI stays up after a touch when the reopened camera has
+  # not found anybody. It matches the normal ten-minute idle-screen delay; the
+  # person who tapped may be standing outside the Brio's field of view.
+  wake_grace_seconds: 600
+
+  # `wlopm` controls the Wayland output without suspending touch input, so the
+  # first touch can turn the panel on and is consumed by the idle overlay.
+  power_off_display: true
 
   # What the idle screen shows, and when. **This is the only place the
   # schedule is stored** — `aipi5/screensaver/schedule.py` reads it and

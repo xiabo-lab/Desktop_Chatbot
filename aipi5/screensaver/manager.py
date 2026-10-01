@@ -6,8 +6,9 @@ insisting on is the failure they prevent: two screensavers that each decide for
 themselves whether it is their turn will, at 21:01, both believe it is — and
 what reaches the display is whichever one's timer happened to fire last.
 
-    ACTIVE_UI ──idle timeout──> DAY_PHOTOS   (07:00–21:00)
-                            └─> NIGHT_WEATHER (21:01–06:59)
+    ACTIVE_UI ──1 min──> camera released
+              ─10 min──> DAY_PHOTOS / NIGHT_WEATHER
+              ─30 min──> monitor output off
 
     DAY_PHOTOS   ──activity──> ACTIVE_UI
     NIGHT_WEATHER──activity──> ACTIVE_UI
@@ -179,7 +180,8 @@ class ScreensaverManager:
     # ── publishing ───────────────────────────────────────────────────
 
     def snapshot(self, now: datetime | None = None,
-                 monotonic: float | None = None) -> dict:
+                 monotonic: float | None = None,
+                 display_attention: bool = False) -> dict:
         """What goes on the state poll the page makes twice a second.
 
         `showing` stays a plain boolean and keeps its old name because that is
@@ -189,10 +191,22 @@ class ScreensaverManager:
         thing that matters, which is whether the screen has gone away.
         """
         mode = self.mode(now, monotonic)
+        held = bool(self._held_by)
         return {
             "showing": mode.is_screensaver,
             "mode": WIRE[mode],
             "held_by": self._held_by,
+            # The hardware stages share the policy's one idle origin but are
+            # suppressed by anything that holds off the idle screen (a game,
+            # call, photo picker, or shutdown countdown).
+            "camera_idle": (not held
+                            and self.policy.should_release_camera(monotonic)),
+            # `display_attention` is deliberately narrower than a hold. An
+            # authenticated incoming call must light the panel while it is
+            # ringing, but must not reopen the camera before the call is
+            # answered. A hold would suppress both hardware stages.
+            "display_off": (not held and not display_attention
+                            and self.policy.should_power_off_display(monotonic)),
         }
 
     #: What each half of the day may show. Two, not three: `clock` and
@@ -240,7 +254,9 @@ class ScreensaverManager:
         """`/api/system`, for the settings page."""
         payload = {
             "enabled": self.policy.enabled,
+            "camera_timeout_s": self.policy.camera_timeout_seconds,
             "timeout_s": self.policy.timeout_seconds,
+            "display_off_s": self.policy.display_off_seconds,
             # The second countdown: how long the screen stays up after a touch
             # woke it and the camera has not found anybody yet. Reported because
             # "it went dark while I was reading it" is a question about this

@@ -46,6 +46,7 @@ class RouteCase(unittest.TestCase):
     def setUp(self):
         cfg = SimpleNamespace(host="127.0.0.1", port=0, url="http://127.0.0.1:0")
         self.asked: list[tuple] = []
+        self.wakes: list[str] = []
         self.proxy = FakeProxy()
         self.coordinator = Coordinator(
             events=EventLog(), agent=self.proxy,
@@ -53,7 +54,8 @@ class RouteCase(unittest.TestCase):
                 (text, language)) or "the volume is thirty percent")
         self.addCleanup(self.coordinator.close)
         self.web = WebUI(cfg, state=UiState(), history=None, info=lambda: {},
-                         coordinator=self.coordinator)
+                         coordinator=self.coordinator,
+                         on_wake=self.wakes.append)
         self.assertTrue(self.web.start())
         self.addCleanup(self.web.stop)
         self.port = self.web._server.server_address[1]
@@ -77,6 +79,14 @@ class RouteCase(unittest.TestCase):
 
 
 class TestTheFourRoutes(RouteCase):
+
+    def test_touch_activity_wakes_only_the_display(self):
+        status, answer = self.call("POST", "/api/display/wake")
+        self.assertEqual(200, status)
+        self.assertTrue(answer["ok"])
+        self.assertEqual(["touchscreen activity"], self.wakes)
+        self.assertIsNone(self.web.state.take_action(),
+                          "a wake-only touch must not start 小爱同学")
 
     def test_asking_reaches_the_short_turn_and_not_the_agent(self):
         """The regression the whole contract exists for: this used to be

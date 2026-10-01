@@ -17,11 +17,10 @@ rolling average because that is the property that is actually wanted — "the
 detector has agreed with itself N times running" — and because it is the one a
 person tuning it on the Pi can reason about from the log.
 
-**The screensaver is a second, slower decision on top of it.** Presence going
-away does not raise the screensaver; presence having been away for
-`timeout_seconds` does. Presence coming back takes it down at once, with no
-timer and nothing to touch — section 26 is explicit that the user must not have
-to touch the screen to get out of it.
+**Idle has three stages over one clock.** Presence going away starts one
+monotonic countdown. The USB camera is released first, the clock or photo
+screen appears later, and the monitor output powers off last. Activity resets
+all three together, so the stages cannot drift apart.
 
 The clock is passed in. Everything here is about durations, and a class that
 reads `time.monotonic()` itself can only be tested by sleeping.
@@ -137,23 +136,31 @@ class ScreensaverPolicy:
     second schedule to reason about, and the answer is a pure function of the
     last presence change and the current time.
 
-    **Two countdowns, not one, and they answer different questions.**
+    **One idle origin, three thresholds.** `camera_timeout_seconds` releases
+    the USB camera, `timeout_seconds` shows the idle screen, and
+    `display_off_seconds` powers off the monitor output. All three are measured
+    from `_empty_since`.
+
+    **Two kinds of idle-screen countdown, and they answer different questions.**
     `timeout_seconds` is for a room somebody has just walked out of: the camera
-    watched them leave, so it is certain, and being quick about it is what keeps
-    the camera and a core from running for an empty room.
+    watched them leave, so it is certain.
 
     `wake_grace_seconds` is for the other case, which only exists now that the
-    camera is released along with the screen: somebody touched the screen and
+    camera is released before the idle screen: somebody touched the screen and
     the camera has just started looking again. Presence is UNKNOWN, not absent —
     nothing has been observed yet — and the person who tapped may be standing to
-    one side reading it, out of the camera's view. Taking the screen away from
-    them after a minute because a detector has not agreed with itself yet is the
-    failure this number prevents, so it is minutes rather than seconds.
+    one side reading it, out of the camera's view. Taking the screen away early
+    because a detector has not agreed with itself yet is the failure this number
+    prevents.
     """
 
-    def __init__(self, timeout_seconds: float = 60.0, enabled: bool = True,
-                 wake_grace_seconds: float | None = None):
+    def __init__(self, timeout_seconds: float = 600.0, enabled: bool = True,
+                 wake_grace_seconds: float | None = None,
+                 camera_timeout_seconds: float = 60.0,
+                 display_off_seconds: float = 1800.0):
+        self.camera_timeout_seconds = camera_timeout_seconds
         self.timeout_seconds = timeout_seconds
+        self.display_off_seconds = display_off_seconds
         #: Defaults to `timeout_seconds`, so a deployment that never sets it
         #: behaves exactly as this class did before there were two.
         self.wake_grace_seconds = (timeout_seconds if wake_grace_seconds is None
@@ -194,9 +201,8 @@ class ScreensaverPolicy:
             # a touch wakes the screen, the detector is unparked and reset to
             # UNKNOWN, and four seconds later it reports its first opinion —
             # "nobody" — which looked exactly like somebody walking out and
-            # replaced the five-minute grace with the sixty-second timeout. The
-            # screen then went dark a minute after being touched, in front of
-            # whoever touched it.
+            # replaced the touch grace with the ordinary timeout. The screen
+            # then went dark too soon, in front of whoever touched it.
             if event.previous is Presence.PERSON_PRESENT:
                 # The camera watched them go. The certain case: short countdown,
                 # timed from the moment they left.
@@ -226,6 +232,25 @@ class ScreensaverPolicy:
                      now - self._empty_since)
             self._showing = True
         return self._showing
+
+    def idle_seconds(self, now: float | None = None) -> float | None:
+        """Elapsed inactivity, or None while a person is known to be present."""
+        if self._empty_since is None:
+            return None
+        now = time.monotonic() if now is None else now
+        return max(0.0, now - self._empty_since)
+
+    def should_release_camera(self, now: float | None = None) -> bool:
+        """Whether the first idle stage has been reached."""
+        elapsed = self.idle_seconds(now)
+        return (self.enabled and elapsed is not None
+                and elapsed >= self.camera_timeout_seconds)
+
+    def should_power_off_display(self, now: float | None = None) -> bool:
+        """Whether the final idle stage has been reached."""
+        elapsed = self.idle_seconds(now)
+        return (self.enabled and elapsed is not None
+                and elapsed >= self.display_off_seconds)
 
     def suppress(self, now: float | None = None,
                  person_present: bool = False) -> None:

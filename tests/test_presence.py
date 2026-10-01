@@ -13,7 +13,8 @@ import threading
 import time
 import unittest
 
-from aipi5.core.presence import (Presence, PresenceTracker, ScreensaverPolicy)
+from aipi5.core.presence import (Presence, PresenceEvent, PresenceTracker,
+                                 ScreensaverPolicy)
 from aipi5.vision.person_detection import PresenceWatcher
 
 
@@ -178,6 +179,47 @@ class TestScreensaverPolicy(unittest.TestCase):
         self.assertTrue(self.policy.should_show(now=200.0))
         self.policy.enabled = False
         self.assertFalse(self.policy.should_show(now=201.0))
+
+
+class TestStagedIdlePolicy(unittest.TestCase):
+    """Camera, idle screen, and monitor use one activity timestamp."""
+
+    def setUp(self):
+        self.policy = ScreensaverPolicy(
+            timeout_seconds=600.0,
+            camera_timeout_seconds=60.0,
+            display_off_seconds=1800.0,
+            wake_grace_seconds=600.0,
+        )
+        self.policy.presence_changed(
+            PresenceEvent(Presence.PERSON_PRESENT,
+                          Presence.PERSON_NOT_PRESENT, 100.0))
+
+    def test_the_three_edges_are_1_10_and_30_minutes(self):
+        self.assertFalse(self.policy.should_release_camera(now=159.9))
+        self.assertTrue(self.policy.should_release_camera(now=160.0))
+        self.assertFalse(self.policy.should_show(now=699.9))
+        self.assertTrue(self.policy.should_show(now=700.0))
+        self.assertFalse(self.policy.should_power_off_display(now=1899.9))
+        self.assertTrue(self.policy.should_power_off_display(now=1900.0))
+
+    def test_activity_resets_all_three_edges(self):
+        self.policy.should_show(now=700.0)
+        self.policy.suppress(now=1000.0)
+        self.assertFalse(self.policy.should_release_camera(now=1059.9))
+        self.assertTrue(self.policy.should_release_camera(now=1060.0))
+        self.assertFalse(self.policy.should_show(now=1599.9))
+        self.assertTrue(self.policy.should_show(now=1600.0))
+        self.assertFalse(self.policy.should_power_off_display(now=2799.9))
+        self.assertTrue(self.policy.should_power_off_display(now=2800.0))
+
+    def test_known_presence_cancels_every_idle_stage(self):
+        self.policy.presence_changed(
+            PresenceEvent(Presence.PERSON_NOT_PRESENT,
+                          Presence.PERSON_PRESENT, 150.0))
+        self.assertFalse(self.policy.should_release_camera(now=10_000.0))
+        self.assertFalse(self.policy.should_show(now=10_000.0))
+        self.assertFalse(self.policy.should_power_off_display(now=10_000.0))
 
 
 class _CountingCamera:

@@ -1,7 +1,8 @@
-"""What the idle screen switches off.
+"""What the staged idle policy switches off.
 
-The screensaver used to be a decision about pixels. This is the other half of
-it: while the screen is away, the camera goes with it.
+The screensaver used to be a decision about pixels. Idle now has two hardware
+edges around it: release the USB camera after one minute, then power the
+monitor output off after thirty. Both come back on activity.
 
 **Why.** Person detection is the only thing on this device that reads the camera
 continuously. Every 500 ms it is a USB transfer off the Brio, a JPEG decode and
@@ -9,11 +10,13 @@ an inference on the accelerator — and none of that is worth paying for a room
 with nobody in it and a screen nobody is looking at. Measured cost of one cycle
 on this hardware: 59–70 ms of camera read plus 40–49 ms of inference.
 
-    screensaver up       -> the detector parks, the Brio is released
+    one minute idle      -> the detector parks, the Brio is released
+    ten minutes idle     -> the clock or Google Photos appears
+    thirty minutes idle  -> the Wayland output powers off
     touch or wake word   -> the Brio reopens, the detector looks again
-    nobody found in the grace period -> back to the screensaver, camera off
+                           and the Wayland output powers on
 
-**What it costs is the promise that no touch is necessary.** Section 26 had
+**What it costs is the no-touch promise.** Section 26 had
 presence take the screensaver down by itself, which a closed camera cannot do.
 The wake word still can, because the microphone is never released — so a person
 who would rather speak than touch is no worse off, and `enabled=False` puts the
@@ -35,12 +38,14 @@ exactly the sort of thing that has to be checkable without either.
 from __future__ import annotations
 
 import logging
+import subprocess
+import threading
 
 log = logging.getLogger(__name__)
 
 
 class IdleHardware:
-    """Releases the camera while the screensaver is up, and takes it back after.
+    """Releases the camera at the first idle stage, and takes it back after.
 
     `watcher` is a *callable* returning the `PresenceWatcher`, or None. Late
     binding on purpose: the watcher is built in `Assistant.start()`, after the
@@ -49,15 +54,15 @@ class IdleHardware:
     """
 
     def __init__(self, camera, watcher=lambda: None, *, enabled: bool = True,
-                 why: str = "the screen is asleep and nobody is there"):
+                 why: str = "the room is idle and nobody is there"):
         self.camera = camera
         self._watcher = watcher
         self.enabled = enabled
         self.why = why
-        #: What the screen was doing last time we were told. An edge rather than
-        #: a state because both sides cost something — closing a UVC node and
-        #: reopening it are each hundreds of milliseconds — and the caller is
-        #: `Assistant.publish`, which runs several times a second.
+        #: What the camera stage was doing last time we were told. An edge
+        #: rather than a state because both sides cost something — closing a
+        #: UVC node and reopening it are each hundreds of milliseconds — and
+        #: the caller is `Assistant.publish`, which runs several times a second.
         self._asleep = False
 
     @property
@@ -65,20 +70,20 @@ class IdleHardware:
         """Whether the camera is currently released on our account."""
         return self._asleep
 
-    def screen_changed(self, screensaver_showing: bool) -> None:
-        """Called with the screensaver's answer, as often as you like.
+    def camera_changed(self, should_release: bool) -> None:
+        """Called with the camera idle-stage answer, as often as you like.
 
         Safe from any thread, including the detector's own: `pause` knows not to
         wait for a cycle it is itself inside.
         """
         if not self.enabled:
             return
-        if screensaver_showing == self._asleep:
+        if should_release == self._asleep:
             return
-        self._asleep = screensaver_showing
+        self._asleep = should_release
         watcher = self._watcher()
 
-        if screensaver_showing:
+        if should_release:
             # Parked first. See the module docstring: the alternative is a frame
             # in flight reopening the camera immediately after it was released.
             if watcher is not None:
@@ -89,6 +94,77 @@ class IdleHardware:
             if watcher is not None:
                 watcher.resume()
 
+    def screen_changed(self, screensaver_showing: bool) -> None:
+        """Compatibility alias for callers from before idle became staged."""
+        self.camera_changed(screensaver_showing)
+
     def describe(self) -> dict:
         """For `/api/system`, beside the camera and the detector it moves."""
         return {"enabled": self.enabled, "camera_released": self._asleep}
+
+
+class DisplayPower:
+    """Power the Wayland output down and back up with ``wlopm``.
+
+    Output power is separate from Chromium visibility. The kiosk and its
+    full-screen idle overlay stay alive while the panel is dark, so a
+    touchscreen pointer event can still reach the page and POST the wake-only
+    endpoint. ``wlopm`` does not suspend the process or the touchscreen.
+
+    ``runner`` is injectable because a development machine and the unit suite
+    have no Wayland compositor. It follows ``subprocess.run``'s signature.
+    """
+
+    def __init__(self, *, enabled: bool = True, command: str = "wlopm",
+                 runner=subprocess.run):
+        self.enabled = enabled
+        self.command = command
+        self._runner = runner
+        self._off: bool | None = None
+        self._wanted_off: bool | None = None
+        self._error = ""
+        self._lock = threading.Lock()
+
+    @property
+    def off(self) -> bool:
+        return self._off is True
+
+    def screen_changed(self, should_turn_off: bool) -> None:
+        """Apply an output-power edge once; repeated publishes are free."""
+        if not self.enabled:
+            return
+        with self._lock:
+            if should_turn_off == self._wanted_off:
+                return
+            self._wanted_off = should_turn_off
+            operation = "--off" if should_turn_off else "--on"
+            try:
+                result = self._runner(
+                    [self.command, operation, "*"],
+                    capture_output=True, text=True, timeout=5, check=False)
+            except (OSError, subprocess.SubprocessError) as exc:
+                self._error = str(exc)
+                log.warning("could not turn the display %s: %s",
+                            "off" if should_turn_off else "on", exc)
+                return
+
+            if result.returncode:
+                detail = (result.stderr or result.stdout or
+                          f"{self.command} exited {result.returncode}").strip()
+                self._error = detail
+                log.warning("could not turn the display %s: %s",
+                            "off" if should_turn_off else "on", detail)
+                return
+
+            self._off = should_turn_off
+            self._error = ""
+            log.info("display output %s", "off" if should_turn_off else "on")
+
+    def describe(self) -> dict:
+        return {
+            "enabled": self.enabled,
+            "off": self.off,
+            "requested_off": self._wanted_off is True,
+            "command": self.command,
+            "error": self._error or None,
+        }

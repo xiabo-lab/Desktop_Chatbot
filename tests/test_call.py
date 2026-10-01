@@ -718,6 +718,14 @@ class TestKeptAliveConnectionsStaySynchronised(unittest.TestCase):
         # The one that used to come back 501. Same connection, deliberately.
         self.assertEqual(self.request(conn, "GET", "/call/v1/state"), 200)
 
+    def test_an_incoming_ring_notifies_the_screen_immediately(self):
+        changes = []
+        self.server.on_change = lambda: changes.append(1)
+        conn = self.connection()
+        self.addCleanup(conn.close)
+        self.assertEqual(self.request(conn, "POST", "/call/v1/ring", "{}"), 200)
+        self.assertEqual(changes, [1])
+
     def test_several_posts_in_a_row_on_one_connection(self):
         conn = self.connection()
         self.addCleanup(conn.close)

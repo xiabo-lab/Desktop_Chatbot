@@ -451,7 +451,7 @@ class _Handler(BaseHTTPRequestHandler):
                         "/api/assistant/approval",
                         "/api/hand/debug", "/api/hand/pause",
                         "/api/calendar/birthdays", "/api/volume",
-                        "/api/screensaver"):
+                        "/api/screensaver", "/api/display/wake"):
             # Drained before it is refused. The 404 is written and the socket
             # closed, and a body still sitting in the kernel's receive queue at
             # that moment is an RST on Windows and a reset connection on the
@@ -506,6 +506,15 @@ class _Handler(BaseHTTPRequestHandler):
             self._screensaver_post(payload)
             return
 
+        if path == "/api/display/wake":
+            # Activity only. In particular this does not enter UiState's
+            # action queue: the first touch on a dark panel must power the
+            # output on and reset the idle stages without pretending the user
+            # said the wake word or starting a microphone turn.
+            self.ui.on_wake("touchscreen activity")
+            self._json({"ok": True})
+            return
+
         if path.startswith("/api/game/"):
             self._game_post(path, payload)
             return
@@ -557,15 +566,13 @@ class _Handler(BaseHTTPRequestHandler):
         if self.ui.state.request(action):
             if action == "wake":
                 # Here rather than only where the voice loop consumes the queued
-                # action, and the reason is the camera. The screensaver now takes
-                # the Brio with it, so a touch is the only thing that can bring
-                # either back — and the voice loop only reaches its queue when a
-                # microphone frame arrives. A dead microphone used to cost the
-                # assistant its ears; it must not also cost it its screen.
+                # action, and the reason is the camera. This is the Talk page's
+                # explicit Listen button; ordinary touchscreen activity uses
+                # `/api/display/wake` and never enters this queue.
                 #
                 # Idempotent with the voice loop's own `suppress`, which still
                 # runs when the action is dequeued.
-                self.ui.on_wake("a touch")
+                self.ui.on_wake("the Listen button")
             self._json({"ok": True, "action": action})
         else:
             self._json({"ok": False, "error": "not accepted"}, 400)
@@ -1762,9 +1769,9 @@ class WebUI:
                  dictation=None, coordinator=None):
         self.cfg = cfg
         self.state = state
-        # Called the moment a `wake` arrives, before it is queued for the voice
-        # loop. See `_post`: with the camera released while the screen is away, a
-        # touch is the only way back, and it must not wait on the microphone.
+        # Called the moment activity arrives. `/api/display/wake` uses it
+        # without queueing a voice action; the Talk page's explicit `wake`
+        # action also uses it before that action reaches the microphone loop.
         self.on_wake = on_wake
         # The AI Motion game manager, or None when games are off. This module
         # knows only that it can be asked to open, close and describe a game;

@@ -305,6 +305,7 @@ On the Pi, with an AIA checkout already working at `~/AI_Assit`:
 sudo apt install pipewire-alsa    `# without it every reply is synthesised and never heard` \
                  libportaudio2    `# sounddevice is a binding, not the library` \
                  playerctl        `# MPRIS transport control` \
+                 wlopm            `# monitor output off/on for the 30-minute idle stage` \
                  python3-opencv    `# the camera, over V4L2` \
                  hailo-all
 
@@ -392,11 +393,11 @@ Nothing in that tuple is destructive — shutting down, restarting and closing t
 player stay spoken commands that are confirmed out loud, because a button
 cannot hold that conversation.
 
-The screensaver is the full display and there are now two of them — a photo
-slideshow through the day and a clock over the weather at night. Either comes up
-60 seconds after the room empties and goes away the moment somebody returns — no
-touch required, which is section 26. Speaking to the device from outside the
-camera's view takes it down too.
+Idle is one clock with three stages. After the room becomes inactive, the USB
+camera is released at one minute, a photo slideshow or clock fills the display
+at ten minutes, and `wlopm` powers the monitor output off at thirty minutes.
+Touching the panel restores the display and camera without starting an assistant
+turn; saying the wake word restores them and starts a turn.
 
 ## The screensaver: photographs by day, a clock at night
 
@@ -474,8 +475,9 @@ Photos account.
 Section 16 says not to implement it without verifying the display supports it
 reliably. Checked on this device: `/sys/class/backlight/` is empty, there is no
 `ddcutil`, and `wlr-randr` does not do brightness — this is an HDMI panel with
-no software control. The night screen is dark because it is black with dim grey
-type, which is what actually reduces the light in the room.
+no software brightness control. The night screen is dark because it is black
+with dim grey type. Powering the output fully off is a different operation and
+uses `wlopm`'s Wayland output-power protocol at the thirty-minute idle stage.
 
 ## The screen: pages and cooldowns
 

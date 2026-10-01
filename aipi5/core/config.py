@@ -292,13 +292,20 @@ class ScreensaverConfig:
     """
 
     enabled: bool = True
-    timeout_seconds: float = 60.0
-    #: How long the screen stays up after a touch has woken it, before the
-    #: camera's silence is allowed to take it away again. Longer than
-    #: `timeout_seconds` on purpose — see `ScreensaverPolicy` for why the two
-    #: cases are not the same question.
-    wake_grace_seconds: float = 300.0
-    #: Release the camera while the screensaver is up. The point of the feature:
+    #: Release the USB camera first. Presence detection is the only continuous
+    #: camera consumer while the device is otherwise idle, so it should not run
+    #: for the full screensaver or display-power delay.
+    camera_timeout_seconds: float = 60.0
+    #: Show the clock or Google Photos after this much inactivity.
+    timeout_seconds: float = 600.0
+    #: Ask the Wayland compositor to power the monitor output down after this
+    #: much inactivity. Touch input stays live and powers it back up.
+    display_off_seconds: float = 1800.0
+    #: How long the active UI stays up after a touch has woken it when the
+    #: reopened camera still sees nobody. Kept separate because deployments
+    #: can give a person at the edge of the camera view a longer reading grace.
+    wake_grace_seconds: float = 600.0
+    #: Release the camera at its own first idle stage. The point of the feature:
     #: an idle screen should not cost a USB transfer and an inference every
     #: 500 ms for a room with nobody in it.
     #:
@@ -307,6 +314,10 @@ class ScreensaverConfig:
     #: wake word rather than presence — the trade the deployment asked for, and a
     #: setting rather than a rewrite so it can be taken back in one line.
     release_camera: bool = True
+    #: Use wlopm to turn the physical display output off at the final idle
+    #: stage. Separate from `enabled` so a deployment without output-power
+    #: protocol support can keep the clock/photos screensaver.
+    power_off_display: bool = True
     #: The specification's schedule. Inclusive start, and the night begins at
     #: 21:01 because section 24 puts 21:00 itself in the day.
     day_start: str = "07:00"
@@ -785,8 +796,8 @@ def load(path: Path | str | None = None) -> Settings:
     """Read the configuration. A missing file is defaults, not an error.
 
     Defaults rather than a failure because every default in this module is the
-    value the specification asks for — 1280x800, San Jose 95127, a 60 s
-    screensaver timeout. A deployment that loses its YAML should come back up
+    value the specification asks for — 1280x800, San Jose 95127, and the
+    1/10/30-minute idle stages. A deployment that loses its YAML should come back up
     as the assistant it was, not refuse to start.
 
     A *malformed* file is a different matter and raises: that is somebody
@@ -959,12 +970,19 @@ def _from_mapping(raw: dict, source: Path | None) -> Settings:
         ),
         screensaver=ScreensaverConfig(
             enabled=bool(screensaver.get("enabled", True)),
-            timeout_seconds=_positive(screensaver.get("timeout_seconds", 60.0), 60.0,
+            camera_timeout_seconds=_positive(
+                screensaver.get("camera_timeout_seconds", 60.0), 60.0,
+                "screensaver.camera_timeout_seconds"),
+            timeout_seconds=_positive(screensaver.get("timeout_seconds", 600.0), 600.0,
                                       "screensaver.timeout_seconds"),
+            display_off_seconds=_positive(
+                screensaver.get("display_off_seconds", 1800.0), 1800.0,
+                "screensaver.display_off_seconds"),
             wake_grace_seconds=_positive(
-                screensaver.get("wake_grace_seconds", 300.0), 300.0,
+                screensaver.get("wake_grace_seconds", 600.0), 600.0,
                 "screensaver.wake_grace_seconds"),
             release_camera=bool(screensaver.get("release_camera", True)),
+            power_off_display=bool(screensaver.get("power_off_display", True)),
             # Not validated here. `ScheduleManager` parses these and falls back
             # to the specification's times with a warning if they are not
             # HH:MM, which keeps one module responsible for what a time means.

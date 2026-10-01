@@ -18,6 +18,14 @@ from aipi5.ui.server import ASSET_ROOT, ASSET_TYPES, asset_file
 
 class TestBundledGameAssets(unittest.TestCase):
 
+    def test_screensaver_touch_wakes_the_display_without_voice(self):
+        page = (ASSET_ROOT.parent / "index.html").read_text(encoding="utf-8")
+        handler = page[page.index('screensaver.addEventListener("pointerdown"'):]
+        handler = handler[:handler.index("});") + 3]
+        self.assertIn("wakeDisplay()", handler)
+        self.assertNotIn('send("wake")', handler)
+        self.assertIn('fetch("/api/display/wake"', page)
+
     def test_every_game_asset_resolves_inside_the_asset_folder(self):
         paths = (
             "/assets/boxing/boxing.js",
