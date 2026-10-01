@@ -12,8 +12,7 @@ from __future__ import annotations
 import pathlib
 import shutil
 import subprocess
-
-import pytest
+import unittest
 
 import sys
 
@@ -22,8 +21,8 @@ SUITE = ROOT / "tests" / "coach3d.test.mjs"
 sys.path.insert(0, str(ROOT / "design"))
 
 
-@pytest.mark.skipif(shutil.which("node") is None,
-                    reason="node is not installed on this machine")
+@unittest.skipIf(shutil.which("node") is None,
+                 "node is not installed on this machine")
 def test_coach3d_suite_passes() -> None:
     result = subprocess.run(["node", "--test", str(SUITE)],
                             cwd=ROOT, capture_output=True, text=True)
