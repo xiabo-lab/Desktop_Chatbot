@@ -26,6 +26,13 @@ class TestBundledGameAssets(unittest.TestCase):
         self.assertNotIn('send("wake")', handler)
         self.assertIn('fetch("/api/display/wake"', page)
 
+    def test_final_idle_stage_is_black_but_keeps_the_touch_target(self):
+        page = (ASSET_ROOT.parent / "index.html").read_text(encoding="utf-8")
+        self.assertIn('#screensaver.display-off .ss-screen', page)
+        self.assertIn('screensaver.classList.toggle("display-off"', page)
+        self.assertIn('display_off=screen["display_off"]',
+                      (ASSET_ROOT.parents[2] / "main.py").read_text(encoding="utf-8"))
+
     def test_every_game_asset_resolves_inside_the_asset_folder(self):
         paths = (
             "/assets/boxing/boxing.js",

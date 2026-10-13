@@ -366,10 +366,10 @@ screensaver:
   #
   #       1 minute   park person detection and release the USB camera
   #      10 minutes  show Google Photos by day or the clock at night
-  #      30 minutes  power off the monitor output
+  #      30 minutes  cover the display with a black touch-wake layer
   #
-  # A touch resets all three stages and powers the monitor back on. It does
-  # not start an assistant turn; saying the wake word still does.
+  # A touch resets all three stages and restores the normal screen. It does not
+  # start an assistant turn; saying the wake word still does.
   camera_timeout_seconds: 60
   timeout_seconds: 600
   display_off_seconds: 1800
@@ -397,8 +397,9 @@ screensaver:
   # person who tapped may be standing outside the Brio's field of view.
   wake_grace_seconds: 600
 
-  # `wlopm` controls the Wayland output without suspending touch input, so the
-  # first touch can turn the panel on and is consumed by the idle overlay.
+  # Historical name: this now makes the kiosk completely black while keeping
+  # HDMI powered. The fitted panel disconnects ILITEK-TOUCH when wlopm turns
+  # the output off, so a true power-off cannot receive the first wake tap.
   power_off_display: true
 
   # What the idle screen shows, and when. **This is the only place the

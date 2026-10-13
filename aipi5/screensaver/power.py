@@ -1,8 +1,8 @@
 """What the staged idle policy switches off.
 
 The screensaver used to be a decision about pixels. Idle now has two hardware
-edges around it: release the USB camera after one minute, then power the
-monitor output off after thirty. Both come back on activity.
+edges around it: release the USB camera after one minute, then replace the
+idle screen with a black sleep layer after thirty. Both come back on activity.
 
 **Why.** Person detection is the only thing on this device that reads the camera
 continuously. Every 500 ms it is a USB transfer off the Brio, a JPEG decode and
@@ -12,9 +12,17 @@ on this hardware: 59–70 ms of camera read plus 40–49 ms of inference.
 
     one minute idle      -> the detector parks, the Brio is released
     ten minutes idle     -> the clock or Google Photos appears
-    thirty minutes idle  -> the Wayland output powers off
+    thirty minutes idle  -> the kiosk becomes completely black
     touch or wake word   -> the Brio reopens, the detector looks again
-                           and the Wayland output powers on
+                           and the normal UI returns
+
+The last stage deliberately leaves the Wayland output powered. On the fitted
+HDMI panel, ``wlopm --off`` also removes power from the panel's internal USB
+hub: ``ILITEK-TOUCH`` disappears from ``/proc/bus/input/devices`` and only
+enumerates again after the output is turned on. A device which no longer
+exists cannot report the first tap intended to wake it. The black layer costs
+the LCD backlight, but it is the only touch-to-wake implementation this
+hardware can support without a separate always-powered touch controller.
 
 **What it costs is the no-touch promise.** Section 26 had
 presence take the screensaver down by itself, which a closed camera cannot do.
@@ -104,12 +112,18 @@ class IdleHardware:
 
 
 class DisplayPower:
-    """Power the Wayland output down and back up with ``wlopm``.
+    """Own the final, black idle stage while keeping touch input alive.
 
-    Output power is separate from Chromium visibility. The kiosk and its
-    full-screen idle overlay stay alive while the panel is dark, so a
-    touchscreen pointer event can still reach the page and POST the wake-only
-    endpoint. ``wlopm`` does not suspend the process or the touchscreen.
+    The name is retained because it is part of `/api/system` and the config's
+    deployed vocabulary. ``off`` now means *visually asleep*: Chromium draws
+    black over the whole panel and consumes the first wake touch. The physical
+    Wayland output stays on because this panel disconnects its USB touchscreen
+    when output power is removed.
+
+    ``wlopm --on`` remains here as recovery. A device upgraded while its old
+    version left the output off must light up once, and every wake edge ensures
+    an external command has not powered it down behind us. No path in this
+    class sends ``--off``.
 
     ``runner`` is injectable because a development machine and the unit suite
     have no Wayland compositor. It follows ``subprocess.run``'s signature.
@@ -130,41 +144,51 @@ class DisplayPower:
         return self._off is True
 
     def screen_changed(self, should_turn_off: bool) -> None:
-        """Apply an output-power edge once; repeated publishes are free."""
+        """Publish a black-sleep edge and keep the physical output awake."""
         if not self.enabled:
             return
         with self._lock:
             if should_turn_off == self._wanted_off:
                 return
+            first = self._wanted_off is None
             self._wanted_off = should_turn_off
-            operation = "--off" if should_turn_off else "--on"
+            self._off = should_turn_off
+
+            # Entering black sleep needs no hardware command; the page already
+            # owns that layer. On the first reconcile we still force the
+            # output on, even if the machine booted after thirty idle minutes,
+            # to recover a panel left powered down by the previous release.
+            if should_turn_off and not first:
+                self._error = ""
+                log.info("display entered touch-wake black sleep")
+                return
+
             try:
                 result = self._runner(
-                    [self.command, operation, "*"],
+                    [self.command, "--on", "*"],
                     capture_output=True, text=True, timeout=5, check=False)
             except (OSError, subprocess.SubprocessError) as exc:
                 self._error = str(exc)
-                log.warning("could not turn the display %s: %s",
-                            "off" if should_turn_off else "on", exc)
+                log.warning("could not ensure the display is on: %s", exc)
                 return
 
             if result.returncode:
                 detail = (result.stderr or result.stdout or
                           f"{self.command} exited {result.returncode}").strip()
                 self._error = detail
-                log.warning("could not turn the display %s: %s",
-                            "off" if should_turn_off else "on", detail)
+                log.warning("could not ensure the display is on: %s", detail)
                 return
 
-            self._off = should_turn_off
             self._error = ""
-            log.info("display output %s", "off" if should_turn_off else "on")
+            log.info("display %s; physical output kept on for touch wake",
+                     "entered black sleep" if should_turn_off else "awake")
 
     def describe(self) -> dict:
         return {
             "enabled": self.enabled,
             "off": self.off,
             "requested_off": self._wanted_off is True,
+            "mode": "touch-wake-black",
             "command": self.command,
             "error": self._error or None,
         }

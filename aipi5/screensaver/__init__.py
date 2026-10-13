@@ -11,9 +11,10 @@ page already makes and the page renders it; that keeps the whole of the
 day/night rule testable on a machine with no display, which is where the
 awkward cases — 06:59, 21:00, 21:01, midnight — actually get checked.
 
-`IdleHardware` and `DisplayPower` apply the two hardware stages. The camera is
-released before the idle screen appears, and the monitor output powers off
-after it has been idle longer. See `power.py` for the ordering and wake path.
+`IdleHardware` and `DisplayPower` apply the two resource stages. The camera is
+released before the idle screen appears, and a black touch-catching layer
+replaces it after longer inactivity. See `power.py` for the ordering and wake
+path.
 """
 
 from aipi5.screensaver.manager import Mode, ScreensaverManager

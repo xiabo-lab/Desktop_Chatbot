@@ -106,6 +106,7 @@ class UiState:
             "assistant": "idle",
             "presence": "unknown",
             "screensaver": False,
+            "display_off": False,
             "listening_text": "",
             "weather": None,
             "now_playing": None,

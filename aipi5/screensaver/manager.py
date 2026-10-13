@@ -8,7 +8,7 @@ what reaches the display is whichever one's timer happened to fire last.
 
     ACTIVE_UI ──1 min──> camera released
               ─10 min──> DAY_PHOTOS / NIGHT_WEATHER
-              ─30 min──> monitor output off
+              ─30 min──> black touch-wake layer
 
     DAY_PHOTOS   ──activity──> ACTIVE_UI
     NIGHT_WEATHER──activity──> ACTIVE_UI

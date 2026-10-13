@@ -1596,6 +1596,16 @@
   }
   #screensaver.on { display: block; }
 
+  /* The final idle stage must look powered off without actually cutting HDMI
+     power. This panel powers its ILITEK USB controller from the display: with
+     `wlopm --off` Linux loses the touchscreen and no first tap exists to wake
+     it. Keep this full-screen element present as the touch target, make every
+     child invisible, and leave only its black background. */
+  #screensaver.display-off .ss-screen,
+  #screensaver.display-off #ss-hint {
+    opacity: 0; visibility: hidden; transition: none;
+  }
+
   /* Both layers exist all the time and cross-fade between each other, which
      is what makes 21:01 a fade rather than a cut — section 2's example. The
      hidden one is `visibility: hidden` as well as transparent so it is out of
@@ -4267,6 +4277,7 @@ function applyState(state) {
   lastAssistantState = assistant;
 
   const wanted = !!state.screensaver;
+  const displayOff = !!state.display_off;
   // A touch wins for a few seconds. Without this the screen the person just
   // woke goes straight back to sleep on the next poll, because the server has
   // not yet processed the action the touch queued.
@@ -4281,8 +4292,9 @@ function applyState(state) {
   // both places on purpose: the server knows about calls the page has not
   // heard of yet, and the page knows the moment its own call UI comes up,
   // half a poll before the server does.
-  setScreensaver(wanted && !recentlyDismissed && !callActive,
-                 state.screensaver_mode || "night-weather");
+  const showIdle = (wanted || displayOff) && !recentlyDismissed && !callActive;
+  setScreensaver(showIdle, state.screensaver_mode || "night-weather",
+                 showIdle && displayOff);
 
   // The playlist is re-read only when the Pi says it has changed. `photos_rev`
   // is one string on a poll the page was making anyway; the alternative is
@@ -4308,15 +4320,16 @@ function applyState(state) {
 // would disagree with the Pi for half a poll at every boundary, which is
 // exactly the flicker at 21:01 the single-manager rule exists to prevent.
 
-function setScreensaver(on, mode) {
-  const wantPhotos = on && mode === "day-photos" && slideshow.photos.length > 0;
-  const wantNight = on && !wantPhotos;
+function setScreensaver(on, mode, displayOff = false) {
+  const wantPhotos = on && !displayOff && mode === "day-photos" && slideshow.photos.length > 0;
+  const wantNight = on && !displayOff && !wantPhotos;
 
   if (on !== screensaverOn) {
     screensaverOn = on;
     screensaver.classList.toggle("on", on);
   }
   screensaver.classList.toggle("photos", wantPhotos);
+  screensaver.classList.toggle("display-off", on && displayOff);
 
   // Both layers are told every time rather than only on a change: the classes
   // are idempotent, and the alternative is tracking a second copy of the mode
@@ -7930,7 +7943,7 @@ el("assistant-listen").addEventListener("click", () => send("wake"));
 screensaver.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   dismissedAt = Date.now();
-  setScreensaver(false, "active");
+  setScreensaver(false, "active", false);
   wakeDisplay();
 });
 

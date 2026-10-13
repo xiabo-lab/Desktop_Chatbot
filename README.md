@@ -305,7 +305,7 @@ On the Pi, with an AIA checkout already working at `~/AI_Assit`:
 sudo apt install pipewire-alsa    `# without it every reply is synthesised and never heard` \
                  libportaudio2    `# sounddevice is a binding, not the library` \
                  playerctl        `# MPRIS transport control` \
-                 wlopm            `# monitor output off/on for the 30-minute idle stage` \
+                 wlopm            `# recover a display left off by an older release` \
                  python3-opencv    `# the camera, over V4L2` \
                  hailo-all
 
@@ -395,9 +395,9 @@ cannot hold that conversation.
 
 Idle is one clock with three stages. After the room becomes inactive, the USB
 camera is released at one minute, a photo slideshow or clock fills the display
-at ten minutes, and `wlopm` powers the monitor output off at thirty minutes.
-Touching the panel restores the display and camera without starting an assistant
-turn; saying the wake word restores them and starts a turn.
+at ten minutes, and a completely black sleep layer covers it at thirty minutes.
+Touching that layer restores the display and camera without starting an
+assistant turn; saying the wake word restores them and starts a turn.
 
 ## The screensaver: photographs by day, a clock at night
 
@@ -476,8 +476,15 @@ Section 16 says not to implement it without verifying the display supports it
 reliably. Checked on this device: `/sys/class/backlight/` is empty, there is no
 `ddcutil`, and `wlr-randr` does not do brightness — this is an HDMI panel with
 no software brightness control. The night screen is dark because it is black
-with dim grey type. Powering the output fully off is a different operation and
-uses `wlopm`'s Wayland output-power protocol at the thirty-minute idle stage.
+with dim grey type.
+
+The thirty-minute stage is black rather than a physical output power-off. This
+is a hardware fact discovered on the installed panel: `wlopm --off HDMI-A-1`
+removes `ILITEK-TOUCH` from Linux input devices, and it only enumerates again
+after the output is powered on. A disconnected controller cannot report the
+first tap meant to wake it. Keeping HDMI powered costs the LCD backlight, but
+lets the full-screen black layer receive and consume that tap. `wlopm --on`
+remains as startup recovery for a panel left off by an older release.
 
 ## The screen: pages and cooldowns
 

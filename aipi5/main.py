@@ -527,9 +527,10 @@ class Assistant:
         self.watcher: PresenceWatcher | None = None
         # The two hardware idle stages. The watcher is passed as a callable
         # because it does not exist yet: it is built in `start()`, after the
-        # camera has been opened. DisplayPower keeps Chromium alive and uses
-        # Wayland output power, so the touchscreen can still deliver the first
-        # wake-only touch while the panel is dark.
+        # camera has been opened. DisplayPower keeps both Chromium and the
+        # physical output alive; the fitted panel disconnects ILITEK-TOUCH
+        # when HDMI output power is cut, so the final stage is a black layer
+        # which can still receive and consume the first wake-only touch.
         self.idle_hardware = IdleHardware(
             self.camera, lambda: self.watcher,
             enabled=settings.screensaver.release_camera)
@@ -980,9 +981,10 @@ class Assistant:
         # will lend the camera only after answer.
         screen = self.screen.snapshot(
             display_attention=call.get("state") == "ringing")
-        # Power the monitor on first, so a wake touch becomes visible before
-        # reopening the slower USB camera. On the way to idle the booleans turn
-        # true in the opposite order: camera at 1 min, display at 30 min.
+        # Remove the black sleep layer first, so a wake touch becomes visible
+        # before reopening the slower USB camera. On the way to idle the
+        # booleans turn true in the opposite order: camera at 1 min, black
+        # display at 30 min.
         self.display_power.screen_changed(screen["display_off"])
         self.idle_hardware.camera_changed(screen["camera_idle"])
         self.ui_state.update(
@@ -993,6 +995,9 @@ class Assistant:
             # is the new half — `active`, `day-photos` or `night-weather`.
             screensaver=screen["showing"],
             screensaver_mode=screen["mode"],
+            # The 30-minute stage. The page turns its existing full-screen
+            # screensaver entirely black, but keeps it as the touch target.
+            display_off=screen["display_off"],
             kodama_running=self.player.available(),
             degraded=self.report.degraded if self.report else [],
             call=call,

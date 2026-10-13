@@ -298,8 +298,9 @@ class ScreensaverConfig:
     camera_timeout_seconds: float = 60.0
     #: Show the clock or Google Photos after this much inactivity.
     timeout_seconds: float = 600.0
-    #: Ask the Wayland compositor to power the monitor output down after this
-    #: much inactivity. Touch input stays live and powers it back up.
+    #: Replace the idle screen with a completely black, touch-catching layer
+    #: after this much inactivity. The HDMI output must stay powered because
+    #: this panel disconnects its USB touch controller when output power drops.
     display_off_seconds: float = 1800.0
     #: How long the active UI stays up after a touch has woken it when the
     #: reopened camera still sees nobody. Kept separate because deployments
@@ -314,9 +315,9 @@ class ScreensaverConfig:
     #: wake word rather than presence — the trade the deployment asked for, and a
     #: setting rather than a rewrite so it can be taken back in one line.
     release_camera: bool = True
-    #: Use wlopm to turn the physical display output off at the final idle
-    #: stage. Separate from `enabled` so a deployment without output-power
-    #: protocol support can keep the clock/photos screensaver.
+    #: Enable the final black sleep stage. The historical name remains in the
+    #: deployed YAML for compatibility; this no longer cuts physical output
+    #: power because doing so makes touch-to-wake impossible on this panel.
     power_off_display: bool = True
     #: The specification's schedule. Inclusive start, and the night begins at
     #: 21:01 because section 24 puts 21:00 itself in the day.

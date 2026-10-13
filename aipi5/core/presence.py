@@ -19,8 +19,8 @@ person tuning it on the Pi can reason about from the log.
 
 **Idle has three stages over one clock.** Presence going away starts one
 monotonic countdown. The USB camera is released first, the clock or photo
-screen appears later, and the monitor output powers off last. Activity resets
-all three together, so the stages cannot drift apart.
+screen appears later, and the touch-catching black sleep layer appears last.
+Activity resets all three together, so the stages cannot drift apart.
 
 The clock is passed in. Everything here is about durations, and a class that
 reads `time.monotonic()` itself can only be tested by sleeping.
@@ -138,8 +138,8 @@ class ScreensaverPolicy:
 
     **One idle origin, three thresholds.** `camera_timeout_seconds` releases
     the USB camera, `timeout_seconds` shows the idle screen, and
-    `display_off_seconds` powers off the monitor output. All three are measured
-    from `_empty_since`.
+    `display_off_seconds` replaces it with a black touch-catching layer. All
+    three are measured from `_empty_since`.
 
     **Two kinds of idle-screen countdown, and they answer different questions.**
     `timeout_seconds` is for a room somebody has just walked out of: the camera

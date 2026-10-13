@@ -404,13 +404,27 @@ class TestDisplayPower(unittest.TestCase):
             power.screen_changed(True)
         for _ in range(20):
             power.screen_changed(False)
-        self.assertEqual(calls, [["wlopm", "--off", "*"],
-                                 ["wlopm", "--on", "*"]])
+        self.assertEqual(calls, [["wlopm", "--on", "*"]])
+
+    def test_entering_sleep_never_disconnects_the_touchscreen(self):
+        power, calls = self.make()
+        power.screen_changed(False)
+        calls.clear()
+        power.screen_changed(True)
+        self.assertTrue(power.off)
+        self.assertEqual(calls, [])
+        self.assertEqual(power.describe()["mode"], "touch-wake-black")
+
+    def test_booting_at_the_sleep_stage_recovers_an_old_powered_off_panel(self):
+        power, calls = self.make()
+        power.screen_changed(True)
+        self.assertEqual(calls, [["wlopm", "--on", "*"]])
+        self.assertTrue(power.off)
 
     def test_a_failed_command_is_reported(self):
         power, _ = self.make(returncode=1)
         power.screen_changed(True)
-        self.assertFalse(power.off)
+        self.assertTrue(power.off)
         self.assertEqual(power.describe()["error"], "not supported")
 
     def test_it_can_be_disabled(self):
